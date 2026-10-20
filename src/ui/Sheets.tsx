@@ -125,7 +125,10 @@ export function SheetsView() {
   const { S, vb } = fitScale(design);
   const scaleLabel = `1:${S} @ A3`;
   const total = 7;
-  const footingText = p.footingType === 'stump' ? t('footing.stump', { dia: p.footingDiameter, depth: p.footingDepth }) : t('footing.stirrup', { pad: p.padSize, depth: p.padDepth });
+  const footingText =
+    p.footingType === 'stump' ? t('footing.stump', { dia: p.footingDiameter, depth: p.footingDepth })
+    : p.footingType === 'stirrup' ? t('footing.stirrup', { pad: p.padSize, depth: p.padDepth })
+    : t('footing.slab');
 
   const joistGroups = new Map<number, number>();
   for (const j of lay.joists) joistGroups.set(Math.round(j.length), (joistGroups.get(Math.round(j.length)) ?? 0) + 1);

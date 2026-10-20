@@ -187,6 +187,8 @@ function ParamsPanel() {
           <Num label={t('p.joistSpacing')} value={p.joistSpacing} onChange={(v) => set('joistSpacing', v)} step={50} min={200} max={900} />
         </div>
         <Chk label={t('p.fascia')} checked={p.fascia} onChange={(v) => set('fascia', v)} />
+        <Chk label={t('p.joistTape')} checked={p.joistTape} onChange={(v) => set('joistTape', v)} />
+        <Chk label={t('p.weedMat')} checked={p.weedMat} onChange={(v) => set('weedMat', v)} />
         <Chk label={t('p.oil')} checked={p.oil} onChange={(v) => set('oil', v)} />
       </Group>
       <Group title={t('p.group.frame')}>
@@ -225,6 +227,7 @@ function ParamsPanel() {
           label={t('p.bearerToPost')}
           value={p.bearerToPost}
           options={[
+            { value: 'checked', label: t('p.bearerToPost.checked') },
             { value: 'screwed', label: t('p.bearerToPost.screwed') },
             { value: 'bolted', label: t('p.bearerToPost.bolted') },
             { value: 'onTop', label: t('p.bearerToPost.onTop') },
@@ -240,10 +243,11 @@ function ParamsPanel() {
           options={[
             { value: 'stump', label: t('p.footingType.stump') },
             { value: 'stirrup', label: t('p.footingType.stirrup') },
+            { value: 'slab', label: t('p.footingType.slab') },
           ]}
           onChange={(v) => set('footingType', v as DeckParams['footingType'])}
         />
-        {p.footingType === 'stump' ? (
+        {p.footingType === 'slab' ? null : p.footingType === 'stump' ? (
           <div className="row">
             <Num label={t('p.footingDepth')} value={p.footingDepth} onChange={(v) => set('footingDepth', v)} step={50} min={300} />
             <Num label={t('p.footingDiameter')} value={p.footingDiameter} onChange={(v) => set('footingDiameter', v)} step={50} min={200} />

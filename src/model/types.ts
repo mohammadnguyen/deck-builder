@@ -52,13 +52,15 @@ export interface DeckParams {
   joistConnection: 'flush' | 'onTop';
   /** joist to bearer fixing when joists sit on top */
   joistFixing: 'skewNails' | 'tripleGrip';
-  bearerToPost: 'bolted' | 'screwed' | 'onTop';
+  /** checked: bearer housed in a 45 deep check at the post top; screwed/bolted: side of post; onTop: post cap */
+  bearerToPost: 'checked' | 'bolted' | 'screwed' | 'onTop';
   postProductId: 'auto' | string;
   /** freestanding: own posts near the wall; wall: house-side bearer anchored to the wall, no posts on that line */
   attachment: 'freestanding' | 'wall';
   /** anchor used for a wall bearer: Dynabolts into masonry, or M12 bolts into a timber frame */
   wallFixing: 'dynabolt' | 'bolt';
-  footingType: 'stump' | 'stirrup';
+  /** stump: post in a concrete-filled hole; stirrup: on a pad; slab: short block sitting on existing concrete */
+  footingType: 'stump' | 'stirrup' | 'slab';
   footingDepth: number;
   footingDiameter: number;
   padSize: number;
@@ -66,6 +68,8 @@ export interface DeckParams {
   concreteProductId: string;
   fascia: boolean;
   oil: boolean;
+  joistTape: boolean;
+  weedMat: boolean;
   balustrade: BalustradeParams;
   stairWidth: number;
   wasteDeckingPct: number;
@@ -136,7 +140,7 @@ export interface RuleSet {
   joistTapeRoll: number;
 }
 
-export type Unit = 'm' | 'ea' | 'm3' | 'L' | 'bag' | 'roll';
+export type Unit = 'm' | 'ea' | 'm2' | 'm3' | 'L' | 'bag' | 'roll';
 
 export type ProductCategory =
   | 'decking'

@@ -34,7 +34,8 @@ export function defaultRules(): RuleSet {
     deckingMaxJoistSpacing: Object.fromEntries(
       CATALOG.filter((p) => p.isDecking).map((p) => [p.id, p.maxJoistSpacing ?? 450]),
     ),
-    bearerEdgeInset: 100,
+    // perimeter bearer sits at the deck edge; joist ends finish flush with its outer face
+    bearerEdgeInset: 25,
     houseBearerInset: 200,
     flushHouseInset: 150,
     battenScrewsPerPost: 4,
@@ -91,7 +92,7 @@ export function defaultParams(): DeckParams {
     bearerLaminations: 1,
     joistConnection: 'onTop',
     joistFixing: 'skewNails',
-    bearerToPost: 'screwed',
+    bearerToPost: 'checked',
     postProductId: 'post-100x100-h4',
     attachment: 'wall',
     wallFixing: 'dynabolt',
@@ -103,6 +104,8 @@ export function defaultParams(): DeckParams {
     concreteProductId: 'rapid-set-20kg',
     fascia: true,
     oil: false,
+    joistTape: true,
+    weedMat: true,
     balustrade: {
       mode: 'auto',
       height: 1000,

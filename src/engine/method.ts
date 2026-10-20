@@ -47,9 +47,15 @@ export function buildMethod(m: MethodInput): MethodStep[] {
   steps.push({
     key: 'm.setout',
     params: { posts: m.postCount },
-    notes: [{ key: 'm.setout.n1' }, { key: 'm.setout.n2' }],
+    notes: [{ key: 'm.setout.n1' }, { key: 'm.setout.n2' }, ...(p.weedMat ? [{ key: 'm.setout.weedMat' }] : [])],
   });
-  if (p.footingType === 'stump') {
+  if (p.footingType === 'slab') {
+    steps.push({
+      key: 'm.footings.slab',
+      params: { count: m.postCount, post: m.postName, postLength: m.postLength },
+      notes: [{ key: 'm.footings.slab.n1' }, { key: 'm.footings.slab.n2' }],
+    });
+  } else if (p.footingType === 'stump') {
     steps.push({
       key: 'm.footings.stump',
       params: { count: m.postCount, dia: p.footingDiameter, depth: p.footingDepth, bags: m.bags, m3: m.concreteM3.toFixed(2), post: m.postName, postLength: m.postLength },
@@ -69,10 +75,10 @@ export function buildMethod(m: MethodInput): MethodStep[] {
   steps.push({
     key: 'm.posts',
     params: { postTop: Math.round(m.postTop), drop: dropToPostTop },
-    notes: [{ key: p.bearerToPost === 'onTop' ? 'm.posts.onTop' : p.bearerToPost === 'screwed' ? 'm.posts.screwed' : 'm.posts.bolted', params: { n: m.rules.battenScrewsPerPost } }],
+    notes: [{ key: p.bearerToPost === 'onTop' ? 'm.posts.onTop' : p.bearerToPost === 'screwed' ? 'm.posts.screwed' : p.bearerToPost === 'checked' ? 'm.posts.checked' : 'm.posts.bolted', params: { n: m.rules.battenScrewsPerPost, bearer: m.bearerName } }],
   });
   steps.push({
-    key: p.bearerToPost === 'screwed' ? 'm.bearers.screwed' : 'm.bearers',
+    key: p.bearerToPost === 'screwed' || p.bearerToPost === 'checked' ? 'm.bearers.screwed' : 'm.bearers',
     params: { bearer: m.bearerName, lam: p.bearerLaminations, count: m.layout.bearers.length, maxSpan: Math.round(m.layout.maxBearerSpanUsed), bolts: m.rules.boltsPerPost, screws: m.rules.battenScrewsPerPost },
     notes: [{ key: 'm.bearers.n1' }, { key: 'm.bearers.n2' }, ...(flush ? [{ key: 'm.bearers.flush' }] : [])],
   });
@@ -98,7 +104,7 @@ export function buildMethod(m: MethodInput): MethodStep[] {
     },
     notes: [
       { key: flush ? 'm.joists.flush.n1' : nails ? 'm.joists.n1.nails' : 'm.joists.n1', params: { n: m.rules.skewNailsPerCrossing } },
-      ...(m.composite ? [] : [{ key: 'm.joists.n2' }]),
+      ...(p.joistTape ? [{ key: 'm.joists.n2' }] : []),
       { key: 'm.joists.n3', params: { joins: m.layout.totals.boardJoins } },
     ],
   });

@@ -50,6 +50,8 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
   const sizeOf = (prod?: { id: string }) => (prod ? sizeLabel(prod.id) : '');
   const bolted = p.bearerToPost !== 'onTop';
   const screwed = p.bearerToPost === 'screwed';
+  const checked = p.bearerToPost === 'checked';
+  const slab = p.footingType === 'slab';
   const flush = p.joistConnection === 'flush';
   const stump = p.footingType === 'stump';
 
@@ -88,7 +90,15 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
             {/* joist */}
             <rect x={56} y={56} width={188} height={14} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
             {/* bearer */}
-            {bolted && p.bearerLaminations === 1 ? (
+            {checked ? (
+              <>
+                {/* post cheek beside the bearer, bearer bearing on the shoulder of the check */}
+                <rect x={142} y={70} width={8} height={30} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+                <rect x={150} y={70} width={16} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
+                <line x1={138} y1={78} x2={166} y2={80} stroke={INK} strokeWidth={1} />
+                <line x1={138} y1={92} x2={166} y2={94} stroke={INK} strokeWidth={1} />
+              </>
+            ) : bolted && p.bearerLaminations === 1 ? (
               <>
                 <rect x={158} y={70} width={16} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
                 {screwed ? (
@@ -117,14 +127,20 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
               </>
             )}
             {/* post */}
-            <rect x={142} y={bolted ? 70 : 100} width={16} height={stump ? (bolted ? 125 : 95) : bolted ? 75 : 45} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+            <rect x={142} y={checked ? 100 : bolted ? 70 : 100} width={16} height={stump ? (checked ? 95 : bolted ? 125 : 95) : slab ? (checked ? 50 : bolted ? 80 : 50) : checked ? 45 : bolted ? 75 : 45} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
           </>
         )}
         {/* ground */}
         <line x1={20} y1={150} x2={280} y2={150} stroke={INK} strokeWidth={0.8} />
-        <Hatch x={20} y={150} w={100} h={12} />
-        <Hatch x={180} y={150} w={100} h={12} />
-        {stump ? (
+        {!slab && <Hatch x={20} y={150} w={100} h={12} />}
+        {!slab && <Hatch x={180} y={150} w={100} h={12} />}
+        {slab ? (
+          <>
+            <rect x={20} y={150} width={260} height={10} fill={CONCRETE} stroke={INK} strokeWidth={0.6} />
+            <Lbl x={217} y={178}>{t('footing.slab')}</Lbl>
+            <Leader from={[180, 155]} to={[215, 175]} />
+          </>
+        ) : stump ? (
           <>
             <rect x={125} y={150} width={50} height={50} fill={CONCRETE} stroke={INK} strokeWidth={0.6} />
             <rect x={142} y={150} width={16} height={45} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
@@ -158,8 +174,9 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
         <Lbl x={294} y={77} anchor="end">{`${t('d.joist')} ${sizeOf(joist)} @ ${p.joistSpacing}`}</Lbl>
         <Leader from={[flush ? 164 : bolted ? 174 : 180, flush ? 84 : 90]} to={[205, 100]} />
         <Lbl x={294} y={103} anchor="end">{`${t('d.bearer')} ${p.bearerLaminations}/${sizeOf(bearer)}`}</Lbl>
-        {screwed && <Lbl x={294} y={113} anchor="end">{`${project.rules.battenScrewsPerPost} x 14g x 100`}</Lbl>}
-        {!screwed && bolted && <Lbl x={294} y={113} anchor="end">{t('d.bolts')}</Lbl>}
+        {(screwed || checked) && <Lbl x={294} y={113} anchor="end">{`${project.rules.battenScrewsPerPost} x 14g x 100`}</Lbl>}
+        {checked && <Lbl x={88} y={110} anchor="end" size={7}>{t('d.checked')}</Lbl>}
+        {!screwed && !checked && bolted && <Lbl x={294} y={113} anchor="end">{t('d.bolts')}</Lbl>}
         {!bolted && <Lbl x={294} y={113} anchor="end">{t('d.postCap')}</Lbl>}
         {flush && <Lbl x={294} y={123} anchor="end">{t('d.hanger')}</Lbl>}
         {!flush && <Lbl x={294} y={123} anchor="end">{p.joistFixing === 'skewNails' ? `${project.rules.skewNailsPerCrossing} x 75 ${t('d.skew')}` : 'triple grip'}</Lbl>}

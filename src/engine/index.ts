@@ -22,7 +22,7 @@ export interface Levels {
 
 export interface FootingInfo {
   count: number;
-  type: 'stump' | 'stirrup';
+  type: 'stump' | 'stirrup' | 'slab';
   depth: number;
   diameter: number;
   padSize: number;
@@ -124,7 +124,10 @@ export function computeDesign(project: Project): DesignResult {
   }
   const postProd = product(postProductId);
   const postW = postProd.width ?? 90;
-  const postLength = params.footingType === 'stump' ? Math.max(100, postTop + params.footingDepth) : Math.max(100, postTop - rules.stirrupLift);
+  const postLength =
+    params.footingType === 'stump' ? Math.max(100, postTop + params.footingDepth)
+    : params.footingType === 'stirrup' ? Math.max(100, postTop - rules.stirrupLift)
+    : Math.max(50, postTop);
 
   // ---- stairs ----
   const maxTreadSpan = rules.deckingMaxJoistSpacing[decking.id] ?? decking.maxJoistSpacing ?? 450;
@@ -163,10 +166,10 @@ export function computeDesign(project: Project): DesignResult {
     const hole = Math.PI * (params.footingDiameter / 2) ** 2 * params.footingDepth;
     const postVol = postW * postW * params.footingDepth;
     concreteM3 = (postCount * Math.max(0, hole - postVol)) / 1e9;
-  } else {
+  } else if (params.footingType === 'stirrup') {
     concreteM3 = (postCount * params.padSize * params.padSize * params.padDepth) / 1e9;
   }
-  concreteM3 += stairs.reduce((s, st) => s + st.padVolumeM3, 0);
+  if (params.footingType !== 'slab') concreteM3 += stairs.reduce((s, st) => s + st.padVolumeM3, 0);
   const bags = Math.ceil(concreteM3 / rules.concreteBagYield);
   const footings: FootingInfo = {
     count: postCount, type: params.footingType, depth: params.footingDepth, diameter: params.footingDiameter,
@@ -263,11 +266,12 @@ export function computeDesign(project: Project): DesignResult {
   }
   // ---- bearer to post ----
   if (params.bearerToPost === 'bolted') count('bolt-m12-hdg', postCount * rules.boltsPerPost, 'bearer');
-  else if (params.bearerToPost === 'screwed') count('screw-batten-14gx100', postCount * rules.battenScrewsPerPost, 'bearer');
+  else if (params.bearerToPost === 'screwed' || params.bearerToPost === 'checked') count('screw-batten-14gx100', postCount * rules.battenScrewsPerPost, 'bearer');
   else count('post-cap-hdg', postCount, 'bearer');
   if (params.footingType === 'stirrup') count('stirrup-hdg', postCount, 'footing');
   count('bolt-m12-hdg', braceCount * 2, 'brace');
-  if (!flush || decking.family !== 'composite') count('tape-joist', Math.ceil(layout.totals.joistLm / rules.joistTapeRoll), 'joist');
+  if (params.joistTape) count('tape-joist', Math.ceil(layout.totals.joistLm / rules.joistTapeRoll), 'joist');
+  if (params.weedMat) count('weed-mat', areaM2 * 1.1, 'ground');
   if (params.oil && decking.family !== 'composite') {
     count('oil-decking', (areaM2 * rules.oilCoats) / rules.oilCoverage, 'finish');
   }
@@ -288,6 +292,8 @@ export function computeDesign(project: Project): DesignResult {
     compliance.warnings.unshift({ severity: 'error', key: 'compliance.postTooTall', params: { height: Math.round(postTop), max: rules.postMaxHeight[postProductId] ?? 0 } });
   }
   if (params.bearerToPost === 'screwed') compliance.warnings.push({ severity: 'info', key: 'compliance.screwedBearers', params: { n: rules.battenScrewsPerPost } });
+  if (params.bearerToPost === 'checked') compliance.warnings.push({ severity: 'info', key: 'compliance.checkedPost', params: { n: rules.battenScrewsPerPost } });
+  if (params.footingType === 'slab') compliance.warnings.push({ severity: 'info', key: 'compliance.slabBlocks' });
   if (flush) compliance.warnings.push({ severity: 'info', key: 'compliance.flushNotes' });
   if (!flush && params.joistFixing === 'skewNails') compliance.warnings.push({ severity: 'info', key: 'compliance.skewNails', params: { n: rules.skewNailsPerCrossing } });
   if (layout.ledgers.length) compliance.warnings.push({ severity: 'info', key: params.wallFixing === 'dynabolt' ? 'compliance.wallBearerMasonry' : 'compliance.wallBearerTimber', params: { n: wallAnchors } });

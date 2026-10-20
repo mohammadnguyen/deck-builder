@@ -90,6 +90,11 @@ describe('design', () => {
     const clip = d.bom.lines.find((l) => l.productId === 'camo-edge-clip');
     expect(clip && clip.qty).toBeGreaterThan(100);
     expect(d.bom.lines.some((l) => l.productId === 'screw-batten-14gx100')).toBe(true);
+    expect(d.bom.lines.some((l) => l.productId === 'weed-mat')).toBe(true);
+    expect(d.bom.lines.some((l) => l.productId === 'tape-joist')).toBe(true);
+    // perimeter bearers sit at the deck edge (25 mm to centre), joist ends flush
+    const last = lay.supports[lay.supports.length - 1];
+    expect(Math.abs(last.pos - (4200 - 25))).toBeLessThan(1);
     expect(d.bom.pricesIncludeGst).toBe(true);
     expect(d.bom.total).toBeCloseTo(d.bom.linesTotal - d.bom.discount + d.bom.delivery, 6);
     expect(d.levels.groundClearance).toBe(450 - 23 - 90 - 140);
@@ -131,6 +136,17 @@ describe('design', () => {
     expect(d.balustrade.posts.length).toBeGreaterThan(4);
     expect(d.warnings.some((w) => w.key === 'compliance.heightExempt')).toBe(true);
     expect(d.braces.count).toBeGreaterThan(0);
+  });
+  it('puts blocks on an existing slab without concrete', () => {
+    const p = newProject('slab', true);
+    p.params.footingType = 'slab';
+    p.params.attachment = 'freestanding';
+    const d = computeDesign(p);
+    expect(d.footings.concreteM3).toBe(0);
+    expect(d.footings.bags).toBe(0);
+    expect(d.bom.lines.some((l) => l.productId === 'rapid-set-20kg')).toBe(false);
+    expect(d.postLength).toBe(Math.round(d.levels.postTop));
+    expect(d.warnings.some((w) => w.key === 'compliance.slabBlocks')).toBe(true);
   });
   it('rejects a non orthogonal polygon', () => {
     const p = newProject('bad');

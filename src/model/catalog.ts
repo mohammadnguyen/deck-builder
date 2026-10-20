@@ -144,6 +144,7 @@ export const CATALOG: Product[] = [
   { id: 'post-cap-hdg', category: 'hardware', name: { zh: '柱顶 bearer 连接件 HDG，估价', en: 'Post cap / bearer connector HDG, estimate' }, unit: 'ea', defaultPrice: 9.5 },
   { id: 'wire-kit', category: 'balustrade', name: { zh: '不锈钢拉线套件（每道线），估价', en: 'SS wire run kit (tensioner + terminals per run), estimate' }, unit: 'ea', defaultPrice: 28.0 },
   { id: 'wire-3.2-316', category: 'balustrade', name: { zh: '316 不锈钢钢丝 3.2mm，估价', en: '316 SS wire 3.2 mm, estimate' }, unit: 'm', defaultPrice: 2.4 },
+  { id: 'weed-mat', category: 'consumable', name: { zh: '黑色防草布 / 地膜（按 m²），估价', en: 'Black weed mat / ground film (per m²), estimate' }, unit: 'm2', defaultPrice: 1.8 },
   { id: 'tape-joist', category: 'consumable', name: { zh: 'Joist 保护胶带（20 m / 卷），估价', en: 'Joist protection tape (20 m roll), estimate' }, unit: 'roll', rollLength: 20000, defaultPrice: 26.0 },
   // ---- concrete and consumables ----
   { id: 'rapid-set-20kg', category: 'concrete', ref: 'Cement Rapid Set $11.55 (Pro Strength $13.50)',

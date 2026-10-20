@@ -213,14 +213,42 @@ export function setEdgeLengthAnchored(poly: Pt[], i: number, length: number, hou
   if (!e || length < MIN_EDGE) return null;
   const endOnHouse = houseEdges.includes((i + 1) % n);
   const startOnHouse = houseEdges.includes((i - 1 + n) % n);
-  let out: Pt[];
-  if (endOnHouse && !startOnHouse) {
-    out = moveVertex(poly, i, { x: e.b.x - e.dir.x * length, y: e.b.y - e.dir.y * length });
-  } else {
-    out = moveVertex(poly, (i + 1) % n, { x: e.a.x + e.dir.x * length, y: e.a.y + e.dir.y * length });
+  const moveStart = () => moveVertex(poly, i, { x: e.b.x - e.dir.x * length, y: e.b.y - e.dir.y * length });
+  const moveEnd = () => moveVertex(poly, (i + 1) % n, { x: e.a.x + e.dir.x * length, y: e.a.y + e.dir.y * length });
+  const valid = (out: Pt[]) => {
+    const norm = normalizePolygon(out);
+    return norm.length === n && validatePolygon(norm).ok && sane(norm);
+  };
+  // a wall end never moves; otherwise the far end first, and when that outline folds over itself
+  // the other end gives the same length
+  const attempts = endOnHouse && !startOnHouse ? [moveStart] : startOnHouse && !endOnHouse ? [moveEnd] : [moveEnd, moveStart];
+  for (const make of attempts) {
+    const out = make();
+    if (valid(out)) return out;
   }
-  const norm = normalizePolygon(out);
-  return norm.length === n && validatePolygon(norm).ok && sane(norm) ? out : null;
+  return null;
+}
+
+/** Edge-indexed data after an outline change: unchanged with the same corners (edges only translate), remapped by geometry otherwise. */
+export function carryEdgeData(p: Project, deck: Pt[]): Partial<Pick<Project, 'houseEdges' | 'stairs' | 'params'>> {
+  return deck.length === p.deck.length ? {} : remapEdgeData(p, deck);
+}
+
+/** Apply a moved outline: a house wall drawn on any of the given edges moves with its edge when that edge only translated. */
+export function applyDeckMove(p: Project, next: Pt[], edgeIndices: number[]): Project {
+  let house = p.house;
+  const before = edges(p.deck);
+  const after = edges(next);
+  for (const index of edgeIndices) {
+    if (!p.houseEdges.includes(index)) continue;
+    const b = before[index];
+    const a = after[index];
+    if (!b || !a || b.axis !== a.axis) continue;
+    const oldC = b.axis === 'x' ? b.a.y : b.a.x;
+    const newC = a.axis === 'x' ? a.a.y : a.a.x;
+    house = shiftHouseLine(house, b.axis, oldC, newC - oldC);
+  }
+  return { ...p, deck: next, house };
 }
 
 /** Shift the points of house polylines that lie on a moved deck edge, so the wall follows the edge. */

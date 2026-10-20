@@ -149,6 +149,8 @@ export interface LayoutResult {
   joistSpacingUsed: number;
   joistSpacingMin: number;
   boards: BoardRow[];
+  /** true when row 1 of the boards is laid from a house wall (else from the far edge board) */
+  startsAtHouse: boolean;
   /** boards that have to be ripped to width (last row, or rows meeting a notch), grouped by row and width */
   rips: RipInfo[];
   edgeBoards: EdgeBoardRun[];
@@ -561,31 +563,43 @@ export function computeLayout(
       warnings.push({ severity: 'warn', key: 'layout.bearerSpanExtrapolated' });
     }
     const maxSpan = Math.max(300, Math.floor((bs.span * factor) / 10) * 10);
-    // a wall bearer only exists where there is a wall: beyond the house edge the same line gets a normal bearer on posts
-    const segs: { iv: [number, number]; wall: boolean }[] = [];
+    // a wall bearer only exists where there is a wall (every house edge whose wall line is this line);
+    // beyond the walls the same line gets a normal bearer on posts. The pieces abut at the split, so a
+    // joist ending there keeps its bearing; only the outer ends are inset from the deck edge
+    interface BearerSeg { iv: [number, number]; wall: boolean; edgeIndex?: number; insetS: boolean; insetE: boolean }
+    const wallRanges =
+      line.kind === 'wall'
+        ? houseX
+            .map((i) => E[i])
+            .filter((e) => Math.abs(e.a.y - e.outward.y * (ctx.bearerWidth / 2) - line.pos) < 1)
+            .map((e) => ({ x0: Math.min(e.a.x, e.b.x), x1: Math.max(e.a.x, e.b.x), index: e.index }))
+            .sort((p, q) => p.x0 - q.x0)
+        : [];
+    const segs: BearerSeg[] = [];
     for (const iv of clipHorizontal(poly, line.pos)) {
-      const he = line.kind === 'wall' && line.edgeIndex !== undefined ? E[line.edgeIndex] : null;
-      if (!he) {
-        segs.push({ iv, wall: false });
-        continue;
+      const mine: BearerSeg[] = [];
+      let cursor = iv[0];
+      for (const w of wallRanges) {
+        let a = Math.max(cursor, w.x0);
+        const b = Math.min(iv[1], w.x1);
+        if (b - a <= 200) continue;
+        if (a - cursor > 200) mine.push({ iv: [cursor, a], wall: false, insetS: false, insetE: false });
+        else a = cursor; // a stub shorter than 200 rides on the wall bearer
+        mine.push({ iv: [a, b], wall: true, edgeIndex: w.index, insetS: false, insetE: false });
+        cursor = b;
       }
-      const hx0 = Math.min(he.a.x, he.b.x);
-      const hx1 = Math.max(he.a.x, he.b.x);
-      const a = Math.max(iv[0], hx0);
-      const b = Math.min(iv[1], hx1);
-      if (b - a <= 200) {
-        segs.push({ iv, wall: false });
-        continue;
-      }
-      if (a - iv[0] > 200) segs.push({ iv: [iv[0], a], wall: false });
-      segs.push({ iv: [a, b], wall: true });
-      if (iv[1] - b > 200) segs.push({ iv: [b, iv[1]], wall: false });
+      if (!mine.length) mine.push({ iv, wall: false, insetS: false, insetE: false });
+      else if (iv[1] - cursor > 200) mine.push({ iv: [cursor, iv[1]], wall: false, insetS: false, insetE: false });
+      else mine[mine.length - 1].iv[1] = iv[1];
+      mine[0].insetS = true;
+      mine[mine.length - 1].insetE = true;
+      segs.push(...mine);
     }
-    for (const { iv, wall } of segs) {
+    for (const { iv, wall, edgeIndex, insetS, insetE } of segs) {
       const [x0, x1] = iv;
       const onWall = wall;
-      const xs = x0 + rules.bearerEndInset;
-      const xe = x1 - rules.bearerEndInset;
+      const xs = x0 + (insetS ? rules.bearerEndInset : 0);
+      const xe = x1 - (insetE ? rules.bearerEndInset : 0);
       const length = xe - xs;
       if (length < 200) continue;
       const houseStart = onHouseVertical(x0, line.pos);
@@ -621,7 +635,7 @@ export function computeLayout(
       }
       if (onWall) {
         ledgers.push({
-          edgeIndex: line.edgeIndex ?? -1,
+          edgeIndex: edgeIndex ?? line.edgeIndex ?? -1,
           seg: { a: { x: xs, y: line.pos }, b: { x: xe, y: line.pos } },
           length,
           bolts: Math.ceil(length / rules.ledgerBoltSpacing) + 1,
@@ -715,6 +729,30 @@ export function computeLayout(
   const pitch = bw + gap;
   const fbb = bbox(fieldPoly);
   const houseAtBottom = houseX.length > 0 && Math.abs(E[houseX[0]].a.y - bb.maxY) < 1;
+  // row 1 starts at the house wall when the boards are laid from it, else at the far edge board
+  const startsAtHouse = houseAtBottom || houseX.some((i) => Math.abs(E[i].a.y - bb.minY) < 1);
+  // a breaker that ends part-way through a board row runs on to that row's boundary (when the field is
+  // there and no other breaker is), so the row's boards stop at it instead of overlapping or leaving a hole
+  const rowBounds = (y: number): [number, number] | null => {
+    let top: number;
+    let bot: number;
+    if (!houseAtBottom) {
+      top = fbb.minY + Math.floor((y - fbb.minY) / pitch) * pitch;
+      bot = Math.min(top + bw, fbb.maxY);
+    } else {
+      bot = fbb.maxY - Math.floor((fbb.maxY - y) / pitch) * pitch;
+      top = Math.max(bot - bw, fbb.minY);
+    }
+    return y > top + 0.5 && y < bot - 0.5 ? [top, bot] : null;
+  };
+  const fieldHas = (x0: number, x1: number, y: number): boolean => clipHorizontal(fieldPoly, y).some(([a, c]) => a <= x0 + 0.5 && c >= x1 - 0.5);
+  const clearOfOthers = (b: BandBreaker, y0: number, y1: number): boolean => breakerRuns.every((o) => o === b || Math.abs(o.xc - b.xc) >= strip || o.y1 <= y0 + 0.5 || o.y0 >= y1 - 0.5);
+  for (const b of breakerRuns) {
+    const r0 = rowBounds(b.y0);
+    if (r0 && fieldHas(b.xc - strip / 2, b.xc + strip / 2, (r0[0] + b.y0) / 2) && clearOfOthers(b, r0[0], b.y0)) b.y0 = r0[0];
+    const r1 = rowBounds(b.y1);
+    if (r1 && fieldHas(b.xc - strip / 2, b.xc + strip / 2, (b.y1 + r1[1]) / 2) && clearOfOthers(b, b.y1, r1[1])) b.y1 = r1[1];
+  }
   const boards: BoardRow[] = [];
   let boardLm = 0;
   let boardJoins = 0;
@@ -819,6 +857,8 @@ export function computeLayout(
       for (let i = 0; i + 1 < bounds.length; i++) {
         const pa = bounds[i];
         const pb = bounds[i + 1];
+        // a strip thinner than 40 mm is absorbed by the gaps rather than ripped (same rule as the last row)
+        if (pb - pa < 40) continue;
         const pc = (pa + pb) / 2;
         const partial = subtract(clipHorizontal(fieldPoly, pc), full);
         for (const [x0, x1] of partial.flatMap((iv) => splitAtBreakers(iv, pc))) {
@@ -886,8 +926,8 @@ export function computeLayout(
         // the mitre allowance at a concave corner belongs to the piece at that end
         const startIdx = e.dir.x > 0 ? 0 : pieces.length - 1;
         const endIdx = e.dir.x > 0 ? pieces.length - 1 : 0;
-        if (startCorner === 'concave') pieces[startIdx] += bw;
-        if (endCorner === 'concave') pieces[endIdx] += bw;
+        if (startCorner === 'concave') pieces[startIdx] += ebw;
+        if (endCorner === 'concave') pieces[endIdx] += ebw;
         joinTs = split.joins.map((x) => (e.dir.x > 0 ? x - e.a.x : e.a.x - x));
       }
       const crossings = alongJoists
@@ -951,6 +991,7 @@ export function computeLayout(
     joistSpacingUsed,
     joistSpacingMin,
     boards: boards.map((r) => ({ ...r, runs: r.runs.map(fix) })),
+    startsAtHouse,
     rips,
     edgeBoards: edgeBoards.map((eb) => ({ ...fix(eb), joinPts: swapped ? eb.joinPts.map(swapPt) : eb.joinPts })),
     breakers: breakers.map(fix),

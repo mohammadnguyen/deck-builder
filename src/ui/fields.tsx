@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useRef, useState, type ReactNode } from 'react';
 
 export function Num({ label, value, onChange, step = 1, min, max, hint }: { label: string; value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; hint?: string }) {
   const [text, setText] = useState<string | null>(null);
@@ -77,7 +77,14 @@ export function Seg<T extends string>({ value, options, onChange, label }: { val
 /** A small number box that commits on Enter or blur, so a value can be typed in full. */
 export function NumInline({ value, onCommit, step = 1, min, className }: { value: number; onCommit: (v: number) => void; step?: number; min?: number; className?: string }) {
   const [text, setText] = useState<string | null>(null);
+  const cancel = useRef(false);
   const commit = () => {
+    if (cancel.current) {
+      // Escape: the blur it triggers must not commit the typed text
+      cancel.current = false;
+      setText(null);
+      return;
+    }
     if (text === null) return;
     const v = parseFloat(text);
     if (Number.isFinite(v) && v !== value) onCommit(v);
@@ -95,7 +102,7 @@ export function NumInline({ value, onCommit, step = 1, min, className }: { value
       onKeyDown={(e) => {
         if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
         if (e.key === 'Escape') {
-          setText(null);
+          cancel.current = true;
           (e.target as HTMLInputElement).blur();
         }
         e.stopPropagation();

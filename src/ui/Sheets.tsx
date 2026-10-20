@@ -138,7 +138,9 @@ export function SheetsView() {
   const baySummary = lay.joistBays.map((b) => `${b.count} x @${Math.round(b.spacing)}`).join(', ');
   const edgeBoardLine = design.bom.lines.find((l) => l.tags.includes('edgeBoard'));
   const lastRow = lay.boards[lay.boards.length - 1];
-  const houseSide = project.houseEdges.length > 0;
+  const houseSide = lay.startsAtHouse;
+  // joists run across the boards: perpendicular to a house wall that the boards run along
+  const joistsToWall = project.houseEdges.some((i) => design.edges[i]?.axis === lay.boardAxis);
   const bw = PRODUCT_MAP[p.deckingProductId]?.width ?? 0;
 
   const clipLine = design.bom.lines.find((l) => l.tags.includes('clip'));
@@ -284,7 +286,7 @@ export function SheetsView() {
             <h3>{t('sheet.notes')}</h3>
             <p>{t('sheet.framingNote1', { lam: p.bearerLaminations, bearer: sizeLabel(p.bearerProductId), joist: sizeLabel(p.joistProductId), spacing: design.joistSpacingText, mode: spacingMode })}</p>
             <p>{t('sheet.framingNote2', { post: sizeLabel(design.postProductId), footing: footingText })}</p>
-            <p>{t(houseSide ? 'sheet.framingNote3' : 'sheet.framingNote3.free')}</p>
+            <p>{t(joistsToWall ? 'sheet.framingNote3' : 'sheet.framingNote3.free')}</p>
             {lay.totals.frameJoists > 0 && <p>{t('sheet.framingNote4')}</p>}
             {design.braces.count > 0 && <p>{t('m.bracing', { count: design.braces.count })}</p>}
             <Legend items={[{ color: COLORS.bearer, label: t('legend.bearer') }, { color: COLORS.joist, label: t('legend.joist') }, { color: COLORS.frameJoist, label: t('legend.frameJoist') }, { color: COLORS.post, label: t('legend.post') }, { color: COLORS.ledger, label: t('legend.wall') }]} />
@@ -305,7 +307,7 @@ export function SheetsView() {
             <p>{t(lay.breakers.length ? 'sheet.deckingNote2.breaker' : 'sheet.deckingNote2')}</p>
             {lay.rips.length ? (
               <p>
-                <b>{t(houseSide ? 'sheet.rows.house' : 'sheet.rows.edge')} {lay.rips.map((r) => t('sheet.ripRow', { row: r.row, width: r.width, n: r.boards })).join('；')}</b>
+                <b>{t(houseSide ? 'sheet.rows.house' : 'sheet.rows.edge')} {lay.rips.map((r) => t('sheet.ripRow', { row: r.row, width: r.width, n: r.boards })).join(t('list.sep'))}</b>
               </p>
             ) : (
               lastRow && <p>{t(houseSide ? 'sheet.rows.house' : 'sheet.rows.edge')} {t('sheet.deckingNote5', { last: Math.round(lastRow.width) })}</p>
@@ -389,7 +391,7 @@ export function SheetsView() {
                   <tr>
                     <th colSpan={4}>
                       {productName(c.productId, lang)} · {t('cut.waste')} {c.wastePct.toFixed(0)}%
-                      {lay.rips.length && c.productId === p.deckingProductId ? ` · ${lay.rips.map((r) => t('cut.rip', { n: r.boards, width: r.width })).join('；')}` : ''}
+                      {lay.rips.length && c.productId === p.deckingProductId ? ` · ${lay.rips.map((r) => t('cut.rip', { n: r.boards, width: r.width })).join(t('list.sep'))}` : ''}
                     </th>
                   </tr>
                   <tr>

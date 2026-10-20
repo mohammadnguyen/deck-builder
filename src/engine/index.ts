@@ -327,7 +327,7 @@ export function computeDesign(project: Project): DesignResult {
     bearerName: bearer.id, joistName: joist.id, deckingName: decking.id, boardThickness: boardT, joistDepth: joistD,
     bearerDepth: bearerD, balustrade, stairs, braceCount, pathway: compliance.pathway,
     clips: clipId ? clipCount : undefined, composite: decking.family === 'composite',
-    joistSpacingText, edgeBoardName: edgeBoardProductId, houseSide: houseEdges.length > 0,
+    joistSpacingText, edgeBoardName: edgeBoardProductId, houseSide: layout.startsAtHouse,
   });
 
   return {

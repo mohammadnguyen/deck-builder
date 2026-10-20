@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { newProject } from '../../model/defaults';
 import { canRedo, canUndo, initHistory, jumpHistory, pushHistory, redoHistory, undoHistory } from '../history';
-import { clampEdgeValue, insertNotch, isJogEdge, mirrorProject, moveEdgeTo, moveVertexTo, remapEdgeData, removeJog, samePoly, setEdgeLengthAnchored, shiftHouseLine } from '../shapes';
+import { applyDeckMove, carryEdgeData, clampEdgeValue, insertNotch, isJogEdge, mirrorProject, moveEdgeTo, moveVertexTo, remapEdgeData, removeJog, samePoly, setEdgeLengthAnchored, shiftHouseLine } from '../shapes';
 
 const L = [
   { x: 0, y: 0 },
@@ -131,5 +131,37 @@ describe('direct editing', () => {
     const moved = shiftHouseLine(house, 'x', 0, -200);
     expect(moved[0]).toEqual([{ x: -1500, y: -200 }, { x: 7500, y: -200 }]);
     expect(moved[1]).toEqual(house[1]);
+  });
+  it('keeps stairs and overrides when a length change only translates an edge', () => {
+    const p = newProject('c', true); // L deck, house [0], stair S1 on edge 4
+    p.params.balustrade.edgeOverride = { 4: true };
+    const next = setEdgeLengthAnchored(p.deck, 5, 4000, p.houseEdges)!;
+    expect(next[4]).toEqual({ x: 3600, y: 4000 });
+    const carried = { ...p, deck: next, ...carryEdgeData(p, next) };
+    expect(carried.stairs).toEqual(p.stairs);
+    expect(carried.houseEdges).toEqual([0]);
+    expect(carried.params.balustrade.edgeOverride).toEqual({ 4: true });
+    // a notch still remaps by geometry
+    const notched = insertNotch(p.deck, 5, 1200, 600, false)!;
+    expect(carryEdgeData(p, notched).stairs![0].edgeIndex).toBe(4);
+  });
+  it('shortens a freestanding edge from whichever end keeps the outline valid', () => {
+    // left edge of the L with no house: moving the far end would fold the top edge over the notch
+    const next = setEdgeLengthAnchored(L, 5, 1500, [])!;
+    expect(next).not.toBeNull();
+    expect(Math.abs(next[0].y - next[5].y)).toBe(1500);
+    expect(setEdgeLengthAnchored(L, 5, 2400, [0])).toBeNull(); // would collapse the notch
+  });
+  it('moves the house line with a nudged or dragged house edge', () => {
+    const p = newProject('n', true);
+    p.house = [[{ x: -1500, y: 0 }, { x: 7500, y: 0 }]];
+    const next = moveEdgeTo(p.deck, 0, -200)!;
+    const moved = applyDeckMove(p, next, [0]);
+    expect(moved.house[0].every((q) => q.y === -200)).toBe(true);
+    // a corner of the house edge moves the wall too; a corner elsewhere leaves it alone
+    const vNext = moveVertexTo(p.deck, 1, { x: 6000, y: -100 })!;
+    expect(applyDeckMove(p, vNext, [0, 1]).house[0][0].y).toBe(-100);
+    const far = moveVertexTo(p.deck, 4, { x: 3600, y: 4300 })!;
+    expect(applyDeckMove(p, far, [3, 4]).house).toBe(p.house);
   });
 });

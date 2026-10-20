@@ -3,7 +3,7 @@ import { detectHouseEdges, dist, edges as polyEdges, normalizePolygon, pointInPo
 import { useT } from '../i18n';
 import type { Pt } from '../model/types';
 import { useApp, type Tool } from '../state';
-import { housePolylineFor, insertNotch, isJogEdge, mirrorProject, moveEdgeTo, moveVertexTo, nextStairId, remapEdgeData, removeJog, samePoly, setEdgeLengthAnchored, shiftHouseLine } from '../utils/shapes';
+import { applyDeckMove, carryEdgeData, housePolylineFor, insertNotch, isJogEdge, mirrorProject, moveEdgeTo, moveVertexTo, nextStairId, removeJog, samePoly, setEdgeLengthAnchored } from '../utils/shapes';
 import { NumInline } from './fields';
 import { COLORS, DesignLayers } from './PlanLayers';
 
@@ -26,6 +26,11 @@ type Dir = 'auto' | 'E' | 'W' | 'N' | 'S';
 const MIN_SCALE = 0.004;
 const MAX_SCALE = 2.5;
 const MemoLayers = memo(DesignLayers);
+
+/** A box the user types into (its blur commits a value). */
+function isTextInput(el: Element | null): boolean {
+  return !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'range', 'button', 'submit'].includes((el as HTMLInputElement).type)));
+}
 
 function snapTo(v: number, s: number): number {
   return Math.round(v / s) * s;
@@ -211,9 +216,9 @@ export function CanvasEditor() {
         if (resetDependents) {
           return { ...p, deck: norm, houseEdges: detectHouseEdges(norm, p.house), stairs: [], params: { ...p.params, balustrade: { ...p.params.balustrade, edgeOverride: {} } } };
         }
-        // house flags, stairs and balustrade overrides follow their edges by geometry, so inserted
-        // or removed corners never shift them onto the wrong edge
-        return { ...p, deck: norm, ...remapEdgeData(p, norm) };
+        // with the same corners the edge indices are stable (a length change only translates edges); when
+        // corners were inserted or removed, house flags, stairs and balustrade overrides follow their edges by geometry
+        return { ...p, deck: norm, ...carryEdgeData(p, norm) };
       }, label);
       return true;
     },
@@ -351,14 +356,15 @@ export function CanvasEditor() {
     const active = document.activeElement as HTMLElement | null;
     if (active && active !== lenRef.current && typeof active.blur === 'function') {
       active.blur();
-      // a dimension chip commits on blur: let that land before anything else starts
-      if (active.classList.contains('dimchip')) return;
+      // a text box commits on blur: let that land before anything else starts
+      if (isTextInput(active)) return;
     }
     setHistOpen(false);
     setHelpOpen(false);
     svgRef.current?.setPointerCapture(e.pointerId);
     if (!dragRef.current) pointersRef.current.clear(); // nothing in progress: any remembered pointer is stale
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointersRef.current.size > 2) return; // a third finger changes nothing
     if (pointersRef.current.size === 2) {
       // second finger: pinch to zoom, two fingers to pan; whatever the first finger started is dropped
       pinchedRef.current = true;
@@ -519,21 +525,10 @@ export function CanvasEditor() {
     if (d?.type === 'edge' || d?.type === 'vertex') {
       if (d.moved && !samePoly(d.last, d.orig)) {
         const last = d.last;
-        const index = d.type === 'edge' ? d.index : -1;
-        updateProject((p) => {
-          let house = p.house;
-          if (d.type === 'edge' && p.houseEdges.includes(index)) {
-            // the drawn wall follows a house edge that is moved
-            const before = polyEdges(p.deck)[index];
-            const after = polyEdges(last)[index];
-            if (before && after && before.axis === after.axis) {
-              const oldC = before.axis === 'x' ? before.a.y : before.a.x;
-              const newC = after.axis === 'x' ? after.a.y : after.a.x;
-              house = shiftHouseLine(p.house, before.axis, oldC, newC - oldC);
-            }
-          }
-          return { ...p, deck: last, house };
-        }, d.type === 'edge' ? 'h.moveEdge' : 'h.moveVertex');
+        const n = d.orig.length;
+        // the drawn wall follows a house edge that is moved (a corner moves its two edges)
+        const touched = d.type === 'edge' ? [d.index] : [(d.index - 1 + n) % n, d.index];
+        updateProject((p) => applyDeckMove(p, last, touched), d.type === 'edge' ? 'h.moveEdge' : 'h.moveVertex');
       }
       setLivePoly(null);
     }
@@ -562,13 +557,16 @@ export function CanvasEditor() {
         if (!ed) return false;
         const cur = ed.axis === 'x' ? ed.a.y : ed.a.x;
         const next = moveEdgeTo(project.deck, sel.index, cur + (ed.axis === 'x' ? dy : dx));
-        if (next) updateProject((p) => ({ ...p, deck: next }), 'h.nudge');
+        const index = sel.index;
+        if (next) updateProject((p) => applyDeckMove(p, next, [index]), 'h.nudge');
         return true;
       }
       if (sel.type === 'vertex') {
         const v = project.deck[sel.index];
         const next = moveVertexTo(project.deck, sel.index, { x: v.x + dx, y: v.y + dy });
-        if (next) updateProject((p) => ({ ...p, deck: next }), 'h.nudge');
+        const n = project.deck.length;
+        const touched = [(sel.index - 1 + n) % n, sel.index];
+        if (next) updateProject((p) => applyDeckMove(p, next, touched), 'h.nudge');
         return true;
       }
       return false;
@@ -584,16 +582,7 @@ export function CanvasEditor() {
         e.preventDefault();
         return;
       }
-      if (inLen) {
-        // the length box: arrows pick the direction of the next leg, Enter and Escape are its own
-        const dirs: Record<string, Dir> = { ArrowLeft: 'W', ArrowRight: 'E', ArrowUp: 'N', ArrowDown: 'S' };
-        if (dirs[e.key]) {
-          e.preventDefault();
-          setDir(dirs[e.key]);
-        }
-        return;
-      }
-      if (editable) return;
+      if (inLen || editable) return; // the length box handles its own keys
       if (e.key === 'Escape') {
         if (draft.length) {
           setDraft([]);
@@ -955,13 +944,19 @@ export function CanvasEditor() {
             inputMode="numeric"
             onChange={(e) => setLenText(e.target.value.replace(/[^0-9.]/g, ''))}
             onKeyDown={(e) => {
-              if (e.key === 'Enter') {
+              // the box owns its keys (the canvas never sees them): Enter places the leg, Escape clears
+              // the number only, arrows pick the direction of the next leg
+              e.stopPropagation();
+              const dirs: Record<string, Dir> = { ArrowLeft: 'W', ArrowRight: 'E', ArrowUp: 'N', ArrowDown: 'S' };
+              if (dirs[e.key]) {
+                e.preventDefault();
+                setDir(dirs[e.key]);
+              } else if (e.key === 'Enter') {
                 e.preventDefault();
                 if (lenText.trim()) placeByLength();
                 else if (ui.tool === 'deck') finishDeck(draft);
                 else finishHouse(draft);
-              }
-              if (e.key === 'Escape') {
+              } else if (e.key === 'Escape') {
                 setLenText('');
                 (e.target as HTMLInputElement).blur();
               }

@@ -66,7 +66,7 @@ export function MaterialsView() {
                 <tr>
                   <th colSpan={4}>
                     {productName(c.productId, lang)} · {t('cut.waste')} {c.wastePct.toFixed(0)}%
-                    {design.layout?.rips.length && c.productId === project.params.deckingProductId ? ` · ${design.layout.rips.map((r) => t('cut.rip', { n: r.boards, width: r.width })).join('；')}` : ''}
+                    {design.layout?.rips.length && c.productId === project.params.deckingProductId ? ` · ${design.layout.rips.map((r) => t('cut.rip', { n: r.boards, width: r.width })).join(t('list.sep'))}` : ''}
                   </th>
                 </tr>
                 <tr>

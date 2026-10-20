@@ -281,6 +281,7 @@ ol.steps ul { margin: 6px 0 0 30px; padding: 0 0 0 14px; color: #374151; font-si
 @media (max-width: 960px) {
   .topbar { height: auto; padding: 8px 12px; flex-wrap: wrap; }
   .tabs-main, .topbar .saved { display: none; }
+  .topbar .saved.bad { display: inline; }
   .topbar .project-name { width: 160px; flex: 1; }
   .tabbar { display: flex; position: fixed; left: 0; right: 0; bottom: 0; height: 60px; background: #1f2937; border-top: 1px solid #374151; z-index: 30; }
   .tabbar button { flex: 1; flex-direction: column; gap: 2px; font-size: 11px; }
@@ -337,9 +338,9 @@ ol.steps ul { margin: 6px 0 0 30px; padding: 0 0 0 14px; color: #374151; font-si
 
 /* medium screens (iPad landscape): narrower side columns, results under the drawing */
 @media (max-width: 1280px) and (min-width: 961px) {
-  main.design-grid { grid-template-columns: 300px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) auto; }
+  /* the drawing keeps 440px; on a short window the page scrolls instead of the results covering it */
+  main.design-grid { grid-template-columns: 300px minmax(0, 1fr); grid-template-rows: minmax(440px, 1fr) auto; overflow: auto; }
   .guide-col { grid-row: 1 / span 2; }
-  .canvas-col { min-height: 440px; }
   .results-col { grid-column: 2; border-left: 0; border-top: 1px solid var(--border); max-height: 40vh; }
   .results { flex-direction: row; flex-wrap: wrap; align-items: flex-start; }
   .results .card { flex: 1 1 280px; }

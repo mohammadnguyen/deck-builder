@@ -626,9 +626,10 @@ export const en: Record<string, string> = {
   'tag.breaker': 'Breaker board',
   'g.breakerNote': 'Composite runs over 5.4 m are divided by symmetric breaker boards instead of staggered joins.',
 
-  'layout.rip': 'The last row (row {row}) is ripped to {width} mm wide, {n} boards.',
+  'layout.rip': 'Row {row} is ripped to {width} mm wide, {n} boards.',
   'layout.narrowRip': 'The last row is only {width} mm wide; adjust the gap or the deck depth.',
-  'm.decking.rip': 'Rip the last row (row {row}) to {width} mm wide, {n} boards, cut edge towards the edge board.',
+  'm.decking.rip': 'Rip row {row} to {width} mm wide, {n} boards, cut edge towards the edge board.',
+  'list.sep': '; ',
   'm.decking.n2.breaker': 'Two joists under each breaker board, one under each joint, carrying the breaker edge on one half and the board ends on the other; face screwed.',
   'm.joists.frame': 'Double joist under the edge board joint: a touching pair with the joint ({inset} mm from the deck edge) between them; one joist under each breaker joint. {n} in all.',
   'sheet.deckingNote5.rip': 'Rows numbered from row 1 at the house. The last row (row {row}) is ripped to {width} mm wide, {n} boards, hatched on the plan.',

@@ -626,9 +626,10 @@ export const zh: Record<string, string> = {
   'tag.breaker': 'Breaker board',
   'g.breakerNote': '复合板超过 5.4 m 时自动用 breaker board 对称断开，不留错缝。',
 
-  'layout.rip': '最后一行（第 {row} 行）面板要裁到 {width} mm 宽，共 {n} 块。',
+  'layout.rip': '第 {row} 行面板要裁到 {width} mm 宽，共 {n} 块。',
   'layout.narrowRip': '最后一行只有 {width} mm 宽，太窄不好看，建议调整板缝或 deck 进深。',
-  'm.decking.rip': '最后一行（第 {row} 行）要把板裁到 {width} mm 宽，共 {n} 块，裁边朝 edge board 一侧。',
+  'm.decking.rip': '第 {row} 行要把板裁到 {width} mm 宽，共 {n} 块，裁边朝 edge board 一侧。',
+  'list.sep': '；',
   'm.decking.n2.breaker': 'Breaker board 下面两根 joist，各在两侧接缝正下方，一半托 breaker、一半托板端；面钉彩头螺丝。',
   'm.joists.frame': 'Edge board 与面板的接缝下面做双 joist：两根贴在一起，接缝（距 deck 边 {inset} mm）落在中间；breaker 两侧接缝下各一根。共 {n} 根。',
   'sheet.deckingNote5.rip': '板行从贴墙侧第 1 行开始编号。最后一行（第 {row} 行）要裁到 {width} mm 宽，共 {n} 块，图上斜线标出。',

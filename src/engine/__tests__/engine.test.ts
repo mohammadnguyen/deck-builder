@@ -341,6 +341,66 @@ describe('design', () => {
     const sameLine = lay.bearers.filter((b) => Math.abs(b.seg.a.y - wallLine[0].seg.a.y) < 0.5 && !b.onWall);
     expect(sameLine.length).toBe(1);
     expect(sameLine[0].posts.length).toBeGreaterThan(0);
-    expect(Math.round(sameLine[0].seg.b.x)).toBeLessThanOrEqual(3600);
+    // the two pieces abut at the wall end, so the joists ending there keep their bearing
+    expect(Math.round(sameLine[0].seg.b.x)).toBe(3600);
+    expect(Math.round(wallLine[0].seg.a.x)).toBe(3600);
+    expect(Math.round(wallLine[0].seg.b.x)).toBe(6000 - defaultRules().bearerEndInset);
+  });
+  it('gives every house wall on a line its wall bearer and keeps the rows clear of the breakers', () => {
+    // a deck wrapping a projecting room: two walls on y = 0 either side of the bump-in
+    const p = newProject('bump', true);
+    p.deck = [{ x: 0, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 1000 }, { x: 4000, y: 1000 }, { x: 4000, y: 0 }, { x: 6000, y: 0 }, { x: 6000, y: 3000 }, { x: 0, y: 3000 }];
+    p.houseEdges = [0, 1, 2, 3, 4];
+    p.house = [[{ x: -1500, y: 0 }, { x: 2000, y: 0 }, { x: 2000, y: 1000 }, { x: 4000, y: 1000 }, { x: 4000, y: 0 }, { x: 7500, y: 0 }]];
+    p.stairs = [];
+    const d = computeDesign(p);
+    expect(d.ok).toBe(true);
+    const lay = d.layout!;
+    const topLine = lay.bearers.filter((b) => b.seg.a.y < 100);
+    expect(topLine.length).toBe(2);
+    expect(topLine.every((b) => b.onWall && b.posts.length === 0)).toBe(true);
+    expect(lay.ledgers.map((l) => l.edgeIndex).sort()).toEqual([0, 2, 4]);
+    // no strip thinner than 40 mm is ripped
+    expect(lay.rips.every((r) => r.width >= 40)).toBe(true);
+    expect(lay.boards.flatMap((r) => r.runs).every((r) => r.width >= 40 && r.length >= 50)).toBe(true);
+  });
+  it('stops the boards at a breaker that crosses a notch line', () => {
+    // wide composite L: the upper band's breaker and the lower band's breaker sit at different x
+    const p = newProject('wide', true);
+    p.deck = [{ x: 0, y: 0 }, { x: 7000, y: 0 }, { x: 7000, y: 2400 }, { x: 6000, y: 2400 }, { x: 6000, y: 4200 }, { x: 0, y: 4200 }];
+    p.houseEdges = [0];
+    p.house = [[{ x: -1500, y: 0 }, { x: 8500, y: 0 }]];
+    p.stairs = [];
+    const d = computeDesign(p);
+    expect(d.ok).toBe(true);
+    const lay = d.layout!;
+    expect(lay.breakers.length).toBeGreaterThanOrEqual(2);
+    type S = { a: { x: number; y: number }; b: { x: number; y: number } };
+    const rect = (seg: S, w: number) => {
+      const horizontal = Math.abs(seg.a.y - seg.b.y) < 0.5;
+      return horizontal
+        ? { x0: Math.min(seg.a.x, seg.b.x), x1: Math.max(seg.a.x, seg.b.x), y0: seg.a.y - w / 2, y1: seg.a.y + w / 2 }
+        : { x0: seg.a.x - w / 2, x1: seg.a.x + w / 2, y0: Math.min(seg.a.y, seg.b.y), y1: Math.max(seg.a.y, seg.b.y) };
+    };
+    const overlaps: string[] = [];
+    for (const br of lay.breakers) {
+      const B = rect(br.seg, br.width);
+      for (const row of lay.boards) {
+        for (const run of row.runs) {
+          const R = rect(run.seg, run.width);
+          const ox = Math.min(B.x1, R.x1) - Math.max(B.x0, R.x0);
+          const oy = Math.min(B.y1, R.y1) - Math.max(B.y0, R.y0);
+          if (ox > 1 && oy > 1) overlaps.push('row ' + (row.index + 1) + ' x ' + Math.round(R.x0) + '..' + Math.round(R.x1) + ' vs breaker ' + Math.round(B.x0) + '..' + Math.round(B.x1));
+        }
+      }
+    }
+    expect(overlaps).toEqual([]);
+    // the breakers end on board-row boundaries, never part-way through a row they cross
+    for (const br of lay.breakers) {
+      for (const y of [br.seg.a.y, br.seg.b.y]) {
+        const inRow = lay.boards.some((row) => y > row.pos - row.width / 2 + 0.5 && y < row.pos + row.width / 2 - 0.5 && row.runs.some((r) => Math.min(r.seg.a.x, r.seg.b.x) <= br.seg.a.x && Math.max(r.seg.a.x, r.seg.b.x) >= br.seg.a.x));
+        expect(inRow).toBe(false);
+      }
+    }
   });
 });

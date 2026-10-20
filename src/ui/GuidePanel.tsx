@@ -230,13 +230,13 @@ export function GuidePanel() {
         </h3>
         <div className="stair-row">
           <div className="seg counter" role="group" aria-label={t('g.stairs')}>
-            <button type="button" onClick={() => updateProject((pr) => ({ ...pr, stairs: pr.stairs.slice(0, -1) }), 'h.stairs')} disabled={!project.stairs.length} aria-label="-">
+            <button type="button" onClick={() => updateProject((pr) => ({ ...pr, stairs: pr.stairs.slice(0, -1) }), 'h.deleteStair')} disabled={!project.stairs.length} aria-label="-">
               −
             </button>
             <button type="button" className="on">
               {t('g.stairCount', { n: project.stairs.length })}
             </button>
-            <button type="button" onClick={() => updateProject((pr) => addStairOnLongestEdge(pr), 'h.stairs')} disabled={!exposedEdges.length} aria-label="+">
+            <button type="button" onClick={() => updateProject((pr) => addStairOnLongestEdge(pr), 'h.addStair')} disabled={!exposedEdges.length} aria-label="+">
               +
             </button>
           </div>

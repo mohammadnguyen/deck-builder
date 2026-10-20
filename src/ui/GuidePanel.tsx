@@ -103,6 +103,11 @@ export function GuidePanel() {
   };
 
   const exposedEdges = project.deck.length >= 4 ? polyEdges(project.deck).filter((e) => !project.houseEdges.includes(e.index)) : [];
+  const stairRise = project.stairs.length ? Math.round(project.stairs[0].rise ?? p.deckHeight - project.stairs[0].groundOffset) : p.deckHeight;
+  const setStairRise = (v: number) => {
+    const rise = Math.max(100, v);
+    updateProject((pr) => ({ ...pr, stairs: pr.stairs.map((s) => ({ ...s, rise: rise === pr.params.deckHeight ? undefined : rise, groundOffset: 0 })) }));
+  };
   const setStairWidth = (w: number) => {
     const width = Math.max(600, w);
     updateProject((pr) => {
@@ -232,7 +237,19 @@ export function GuidePanel() {
           <Num label="" value={p.stairWidth} onChange={setStairWidth} step={50} min={600} />
           <span className="unit">mm</span>
         </div>
-        <p className="hint">{t('g.stairHint')}</p>
+        {project.stairs.length > 0 && (
+          <div className="stair-row" style={{ marginTop: 6 }}>
+            <span className="unit">{t('g.stairRise')}</span>
+            <Num label="" value={stairRise} onChange={setStairRise} step={10} min={100} />
+            <span className="unit">mm</span>
+            {design.ok && design.stairs[0] && (
+              <span className="unit">
+                {design.stairs[0].risers} × {Math.round(design.stairs[0].riser)} / {design.stairs[0].going}
+              </span>
+            )}
+          </div>
+        )}
+        <p className="hint">{project.stairs.length ? t('g.stairRiseHint') : t('g.stairHint')}</p>
       </section>
 
       <button type="button" className="more" onClick={() => setUi({ advanced: true, panelTab: 'params' })}>

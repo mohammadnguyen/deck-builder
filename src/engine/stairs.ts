@@ -40,13 +40,37 @@ export function designStair(
 ): StairDesign {
   const r = rules.stair;
   const warnings: WarningItem[] = [];
-  const rise = Math.max(0, params.deckHeight - stair.groundOffset);
+  // the builder gives the height; everything else follows the NCC housing stair limits
+  const rise = Math.max(0, stair.rise ?? params.deckHeight - stair.groundOffset);
+  const minRisers = Math.max(1, Math.ceil(rise / r.maxRiser - 1e-9));
+  const maxRisersFit = Math.max(minRisers, Math.floor(rise / r.minRiser + 1e-9));
   let risers = Math.max(1, Math.round(rise / r.targetRiser));
-  while (rise / risers > r.maxRiser) risers += 1;
-  while (risers > 1 && rise / risers < r.minRiser) risers -= 1;
+  risers = Math.min(Math.max(risers, minRisers), maxRisersFit);
   const riser = rise / risers;
-  let going = Math.round((620 - 2 * riser) / 5) * 5;
-  going = Math.max(r.minGoing, Math.min(r.maxGoing, going));
+  const pitch = boardWidth + boardGap;
+  // going from a whole number of deck boards per tread (tread depth less the nosing overhang),
+  // choosing the count that keeps 2R+G closest to the comfortable middle of the allowed band
+  const comfort = (r.min2RG + r.max2RG) / 2 - 5;
+  let going = 0;
+  let boardsPerTread = 0;
+  let best = Infinity;
+  for (let k = 1; k <= 6; k++) {
+    const depth = k * boardWidth + (k - 1) * boardGap;
+    const g = depth - r.nosing;
+    const sum = 2 * riser + g;
+    if (g < r.minGoing || g > r.maxGoing || sum < r.min2RG || sum > r.max2RG) continue;
+    const score = Math.abs(sum - comfort);
+    if (score < best) {
+      best = score;
+      going = g;
+      boardsPerTread = k;
+    }
+  }
+  if (!boardsPerTread) {
+    // no whole-board tread satisfies the band: fall back to the formula and rip the last board
+    going = Math.max(r.minGoing, Math.min(r.maxGoing, Math.round((comfort - 2 * riser) / 5) * 5));
+    boardsPerTread = Math.max(1, Math.ceil((going + r.nosing) / pitch));
+  }
   const twoRG = 2 * riser + going;
   if (twoRG < r.min2RG || twoRG > r.max2RG) warnings.push({ severity: 'warn', key: 'stair.twoRG', params: { id: stair.id, value: Math.round(twoRG) } });
   if (riser < r.minRiser || riser > r.maxRiser) warnings.push({ severity: 'warn', key: 'stair.riserRange', params: { id: stair.id, value: Math.round(riser) } });
@@ -60,7 +84,6 @@ export function designStair(
   // governs (default 500), capped by the decking's own joist spacing plus 50 mm tolerance
   const spacing = Math.min(r.stringerSpacing, maxTreadSpan + 50);
   const stringerCount = Math.max(2, Math.ceil(stair.width / spacing) + 1);
-  const boardsPerTread = Math.max(1, Math.ceil((going + r.nosing) / (boardWidth + boardGap)));
   const treadBoardLength = stair.width + 20;
   const handrail = rise > rules.handrailTriggerRise;
   const handrailPosts = handrail ? 4 : 0;

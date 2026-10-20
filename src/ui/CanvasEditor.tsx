@@ -717,6 +717,19 @@ export function CanvasEditor() {
               }}
             />
           </label>
+          <label className="inline">
+            {t('canvas.rise')}
+            <input
+              type="number"
+              step={10}
+              min={100}
+              value={Math.round(project.stairs.find((st) => st.id === sel.id)?.rise ?? project.params.deckHeight - (project.stairs.find((st) => st.id === sel.id)?.groundOffset ?? 0))}
+              onChange={(ev) => {
+                const rise = Math.max(100, Number(ev.target.value) || 100);
+                updateProject((p) => ({ ...p, stairs: p.stairs.map((st) => (st.id === sel.id ? { ...st, rise, groundOffset: 0 } : st)) }));
+              }}
+            />
+          </label>
           <button
             className="tool danger"
             onClick={() => {

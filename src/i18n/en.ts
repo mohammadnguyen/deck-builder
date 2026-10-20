@@ -284,7 +284,6 @@ export const en: Record<string, string> = {
   'm.decking.fascia': 'Fit fascia boards to the exposed edges.',
   'm.stairs': 'Stairs {id}: width {width} mm, {risers} risers x {riser} mm, going {going} mm, {treads} treads, total run {run} mm, {stringers} stringers {stringerLength} mm long, {boards} boards per tread.',
   'm.stairs.n1': 'Stringers bolted to the deck frame at the top, on an H4 kicker and concrete pad at the base.',
-  'm.stairs.n2': 'Equal risers. Treads slip resistant (P4 / R11) or fit a nosing strip.',
   'm.stairs.handrail': 'Rise over 1 m: handrail or barrier both sides, 865 mm above the nosing line.',
   'm.balustrade': 'Balustrade: {posts} posts at max {spacing} mm, {height} mm high, {length} m long, infill: {infill}.',
   'm.balustrade.n1': 'Posts bolted with 2 x M12 through a joist or bearer, never notched.',
@@ -636,4 +635,12 @@ export const en: Record<string, string> = {
   'canvas.stair': 'Stair {id}',
   'canvas.width': 'width',
   'canvas.delete': 'Delete',
+
+  'g.stairRise': 'height',
+  'g.stairRiseHint': 'Stair height: ground at the bottom step to the deck surface. Defaults to the deck height; change it where the ground differs. Risers and goings follow the NCC housing stair limits.',
+  'sel.stairRise': 'Stair height (mm), ground at the bottom to the deck surface',
+  'sel.stairRiseFollow': 'Follow the deck height',
+  'canvas.rise': 'height',
+  'm.stairs.n2': 'Equal risers. NCC housing stairs: riser 115 to 190, going 240 to 355, 2R+G 550 to 700. Slip-resistant treads (P4 / R11) or nosing strips.',
+  'm.stairs.n3': 'The stair height {rise} mm is measured to the ground at the bottom step; change it if the ground on site differs.',
 };

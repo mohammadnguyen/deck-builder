@@ -137,7 +137,7 @@ export function buildMethod(m: MethodInput): MethodStep[] {
         id: s.id, width: s.width, risers: s.risers, riser: Math.round(s.riser), going: s.going, treads: s.treads,
         stringers: s.stringerCount, stringerLength: s.stringerLength, boards: s.boardsPerTread, run: Math.round(s.totalRun),
       },
-      notes: [{ key: 'm.stairs.n1' }, { key: 'm.stairs.n2' }, ...(s.handrail ? [{ key: 'm.stairs.handrail' }] : [])],
+      notes: [{ key: 'm.stairs.n1' }, { key: 'm.stairs.n2' }, { key: 'm.stairs.n3', params: { rise: Math.round(s.rise) } }, ...(s.handrail ? [{ key: 'm.stairs.handrail' }] : [])],
     });
   }
   if (m.balustrade.enabled) {

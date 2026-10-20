@@ -128,6 +128,7 @@ export function buildMethod(m: MethodInput): MethodStep[] {
         : []),
       { key: m.clips ? 'm.decking.clips.n1' : 'm.decking.n1' },
       { key: m.layout.breakers.length ? 'm.decking.n2.breaker' : 'm.decking.n2' },
+      ...(m.layout.rip ? [{ key: 'm.decking.rip', params: { row: m.layout.rip.row, width: m.layout.rip.width, n: m.layout.rip.boards } }] : []),
       { key: 'm.decking.n3' },
       ...(m.composite ? [{ key: 'm.decking.composite' }] : []),
       ...(p.fascia ? [{ key: 'm.decking.fascia' }] : []),

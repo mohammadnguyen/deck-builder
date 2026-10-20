@@ -113,10 +113,11 @@ describe('design', () => {
     expect(lay.edgeBoards.find((e) => e.edgeIndex === 2)!.endCorner).toBe('concave');
     expect(lay.edgeBoards.find((e) => e.edgeIndex === 2)!.length).toBeCloseTo(2400 + 140, 3);
     expect(lay.fieldPoly).toEqual([{ x: 145, y: 0 }, { x: 5855, y: 0 }, { x: 5855, y: 2255 }, { x: 3455, y: 2255 }, { x: 3455, y: 4055 }, { x: 145, y: 4055 }]);
-    // a touching pair under each of the three exposed joist-parallel edges, plus the breaker's own joist
-    // and the one under the board ends on its right (its left one coincides with the notch pair)
-    expect(lay.totals.frameJoists).toBe(8);
-    expect(lay.joists.filter((j) => j.kind === 'frame').map((j) => Math.round(j.pos * 10) / 10)).toEqual([122.5, 167.5, 3432.5, 3477.5, 3530, 3627.5, 5832.5, 5877.5]);
+    // a touching pair under each of the three exposed joist-parallel edges; the breaker's left joint is
+    // already carried by the notch pair, its right joint gets one joist touching the notch edge joist
+    expect(lay.totals.frameJoists).toBe(7);
+    expect(lay.joists.filter((j) => j.kind === 'frame').map((j) => Math.round(j.pos * 10) / 10)).toEqual([122.5, 167.5, 3432.5, 3477.5, 3622.5, 5832.5, 5877.5]);
+    expect(lay.rip).toBeNull(); // 4055 of field is exactly 28 rows
     expect(d.footings.diameter).toBe(200);
     expect(d.footings.bags).toBeLessThan(30);
     expect(d.edgeBoardProductId).toBe('modelo-endboard-140x23');
@@ -226,9 +227,21 @@ describe('design', () => {
     expect(lay.breakers[0].length).toBeCloseTo(3455, 3); // wall to the inner side of the far edge board
     expect(lay.boards[0].runs.map((r) => Math.round(r.length))).toEqual([2780, 2780]);
     expect(lay.totals.boardJoins).toBe(0);
-    // three joists carry the breaker and the board ends either side
+    // one joist under each breaker joint, centred on the gap so it carries both the breaker and the board ends
     const frames = lay.joists.filter((j) => j.kind === 'frame').map((j) => Math.round(j.pos * 10) / 10);
-    expect(frames).toEqual(expect.arrayContaining([2902.5, 3000, 3097.5]));
+    expect(frames).toEqual([122.5, 167.5, 2927.5, 3072.5, 5832.5, 5877.5]);
+    // 3455 of field = 23 full rows + 120: the last row is ripped and reported
+    expect(lay.rip).toEqual({ row: 24, width: 120, boards: 2 });
+    expect(d.warnings.some((w) => w.key === 'layout.rip')).toBe(true);
+    // 2780 bays cannot nest two to a 5.4 m board; the tool says that three breakers would
+    const saving = d.warnings.find((w) => w.key === 'layout.breakerSaving');
+    expect(saving && saving.params && saving.params.n).toBe(3);
+    p.params.breakerCount = 3;
+    const d3 = computeDesign(p);
+    expect(d3.layout!.breakers.length).toBe(3);
+    expect(d3.layout!.breakers.map((b) => Math.round(b.seg.a.x))).toEqual([1535, 3000, 4465]);
+    const boards = (dd: typeof d) => dd.bom.lines.find((l) => l.productId === 'modelo-140x23')!.qty;
+    expect(boards(d3)).toBeLessThan(boards(d) - 10);
     const hw = newProject('hw', true);
     hw.params.deckingProductId = 'hw-86x19';
     hw.params.boardGap = 4;

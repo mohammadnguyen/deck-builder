@@ -171,7 +171,7 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
         <Leader from={[228, 53]} to={[250, 40]} />
         <Lbl x={294} y={43} anchor="end">{`${t('d.decking')} ${sizeOf(decking)}`}</Lbl>
         <Leader from={[244, 64]} to={[250, 74]} />
-        <Lbl x={294} y={77} anchor="end">{`${t('d.joist')} ${sizeOf(joist)} @ ${p.joistSpacing}`}</Lbl>
+        <Lbl x={294} y={77} anchor="end">{`${t('d.joist')} ${sizeOf(joist)} @ ${design.joistSpacingText}`}</Lbl>
         <Leader from={[flush ? 164 : bolted ? 174 : 180, flush ? 84 : 90]} to={[205, 100]} />
         <Lbl x={294} y={103} anchor="end">{`${t('d.bearer')} ${p.bearerLaminations}/${sizeOf(bearer)}`}</Lbl>
         {(screwed || checked) && <Lbl x={294} y={113} anchor="end">{`${project.rules.battenScrewsPerPost} x 14g x 100`}</Lbl>}
@@ -230,7 +230,7 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
         <Lbl x={120} y={212}>{t('d.screws')}</Lbl>
         <Lbl x={166} y={95}>{t('d.block')}</Lbl>
         <Leader from={[164, 97]} to={[162, 105]} />
-        <Lbl x={236} y={16} anchor="middle" size={7}>{`${t('d.joist')} @ ${p.joistSpacing}`}</Lbl>
+        <Lbl x={236} y={16} anchor="middle" size={7}>{`${t('d.joist')} @ ${design.joistSpacingText}`}</Lbl>
       </Frame>
 
       {design.balustrade.enabled && (
@@ -348,7 +348,7 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
               <Leader from={[108, 167]} to={[90, 86]} />
             </>
           )}
-          <Lbl x={110} y={186} size={7}>{`${t('d.joist')} ${sizeOf(joist)} @ ${p.joistSpacing}`}</Lbl>
+          <Lbl x={110} y={186} size={7}>{`${t('d.joist')} ${sizeOf(joist)} @ ${design.joistSpacingText}`}</Lbl>
           <Lbl x={24} y={205} size={7}>{t('d.ground')}</Lbl>
           <line x1={60} y1={200} x2={280} y2={200} stroke={INK} strokeWidth={0.6} />
         </Frame>

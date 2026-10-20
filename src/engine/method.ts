@@ -33,6 +33,9 @@ export interface MethodInput {
   /** hidden clip count when the decking uses clips */
   clips?: number;
   composite: boolean;
+  /** joist spacing as laid out, e.g. "439" or "400-461" */
+  joistSpacingText: string;
+  edgeBoardName: string;
 }
 
 export function buildMethod(m: MethodInput): MethodStep[] {
@@ -98,12 +101,14 @@ export function buildMethod(m: MethodInput): MethodStep[] {
   steps.push({
     key: flush ? 'm.joists.flush' : nails ? 'm.joists.nails' : 'm.joists',
     params: {
-      joist: m.joistName, spacing: p.joistSpacing, count: m.layout.joists.length, span: Math.round(m.layout.joistSpanUsed),
+      joist: m.joistName, spacing: m.joistSpacingText, count: m.layout.joists.length, span: Math.round(m.layout.joistSpanUsed),
       crossings: m.layout.totals.joistBearerCrossings, hangers: m.layout.totals.hangers,
       nails: m.layout.totals.joistBearerCrossings * m.rules.skewNailsPerCrossing, perCrossing: m.rules.skewNailsPerCrossing,
     },
     notes: [
       { key: flush ? 'm.joists.flush.n1' : nails ? 'm.joists.n1.nails' : 'm.joists.n1', params: { n: m.rules.skewNailsPerCrossing } },
+      ...(p.joistSpacingMode === 'auto' ? [{ key: 'm.joists.auto', params: { max: Math.round(p.joistSpacingMax), spacing: m.joistSpacingText } }] : []),
+      ...(m.layout.totals.frameJoists > 0 ? [{ key: 'm.joists.frame', params: { n: m.layout.totals.frameJoists, inset: Math.round(m.layout.edgeBoards[0]?.width ?? 0) + p.boardGap } }] : []),
       ...(p.joistTape ? [{ key: 'm.joists.n2' }] : []),
       { key: 'm.joists.n3', params: { joins: m.layout.totals.boardJoins } },
     ],
@@ -115,6 +120,9 @@ export function buildMethod(m: MethodInput): MethodStep[] {
     key: m.clips ? 'm.decking.clips' : 'm.decking',
     params: { decking: m.deckingName, gap: p.boardGap, rows: m.layout.totals.boardRows, screws: m.layout.totals.screws, perCrossing: m.rules.screwsPerCrossing, clips: m.clips ?? 0 },
     notes: [
+      ...(m.layout.edgeBoards.length
+        ? [{ key: 'm.decking.edgeBoard', params: { n: m.layout.edgeBoards.length, mitres: m.layout.totals.mitres, product: m.edgeBoardName, lm: (m.layout.totals.edgeBoardLm / 1000).toFixed(1) } }]
+        : []),
       { key: m.clips ? 'm.decking.clips.n1' : 'm.decking.n1' },
       { key: 'm.decking.n2' },
       { key: 'm.decking.n3' },

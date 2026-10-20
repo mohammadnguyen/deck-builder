@@ -1,5 +1,5 @@
 import type { Axis, DeckParams, Pt, RuleSet, Seg } from '../model/types';
-import { bbox, clipHorizontal, clipVertical, edges, swapPoly, swapPt, type Edge } from './geometry';
+import { bbox, clipHorizontal, clipVertical, edges, pointInPolygon, swapPoly, swapPt, validatePolygon, type Edge } from './geometry';
 import { splitRun } from './cutlist';
 import type { WarningItem } from './warnings';
 
@@ -31,6 +31,9 @@ export interface SupportLine {
   edgeIndex?: number;
 }
 
+/** edge: flush with a deck edge; frame: under the edge board / field board joint; field: evenly spaced in between */
+export type JoistKind = 'edge' | 'frame' | 'field';
+
 export interface JoistRun {
   id: string;
   pos: number;
@@ -41,6 +44,16 @@ export interface JoistRun {
   bearerCrossings: number;
   hangers: number;
   isEdge: boolean;
+  kind: JoistKind;
+}
+
+/** a run of evenly spaced joists between two fixed (edge or frame) joists, positions along the board axis */
+export interface JoistBay {
+  from: number;
+  to: number;
+  /** number of spaces */
+  count: number;
+  spacing: number;
 }
 
 export interface BoardRun {
@@ -58,6 +71,29 @@ export interface BoardRow {
   width: number;
   ripped: boolean;
   runs: BoardRun[];
+}
+
+/** convex: outside corner mitred 45; concave: inside corner mitred 45; butt: square cut against the house */
+export type CornerKind = 'convex' | 'concave' | 'butt';
+
+/** picture-frame edge board along one exposed deck edge */
+export interface EdgeBoardRun {
+  edgeIndex: number;
+  /** outer line = the deck edge, a -> b in edge direction */
+  seg: Seg;
+  width: number;
+  /** cut length including the mitre allowance at concave corners */
+  length: number;
+  pieces: number[];
+  /** join positions on the outer edge line */
+  joinPts: Pt[];
+  startCorner: CornerKind;
+  endCorner: CornerKind;
+  /** joists crossed (board perpendicular to joists) or screw pairs along a continuous edge joist */
+  crossings: number;
+  screws: number;
+  /** true when the board runs along the joists (sits on the edge joist) */
+  alongJoists: boolean;
 }
 
 export interface PostInfo {
@@ -84,7 +120,16 @@ export interface LayoutResult {
   bearers: BearerRun[];
   posts: PostInfo[];
   joists: JoistRun[];
+  /** joist centre positions measured along the board axis */
+  joistPositions: number[];
+  joistBays: JoistBay[];
+  /** largest and smallest actual centre spacing over the real bays */
+  joistSpacingUsed: number;
+  joistSpacingMin: number;
   boards: BoardRow[];
+  edgeBoards: EdgeBoardRun[];
+  /** polygon the field boards fill (deck outline inset behind the edge boards) */
+  fieldPoly: Pt[];
   ledgers: Ledger[];
   attachment: 'freestanding' | 'wall';
   maxJoistSpan: number;
@@ -101,6 +146,11 @@ export interface LayoutResult {
     joistBearerCrossings: number;
     hangers: number;
     ledgerBolts: number;
+    edgeBoardLm: number;
+    edgeBoardPieces: number;
+    edgeBoardScrews: number;
+    mitres: number;
+    frameJoists: number;
   };
 }
 
@@ -112,18 +162,36 @@ export interface LayoutContext {
   bearerWidth: number;
   /** joists hung flush between bearers (joist supports) instead of sitting on top */
   flush: boolean;
+  /** picture-frame edge boards around the exposed edges */
+  edgeBoard: boolean;
+  /** the decking's own joist spacing limit */
+  deckingMaxJoistSpacing: number;
   deckingMaxStock: number;
+  edgeBoardMaxStock: number;
   joistMaxStock: number;
   bearerMaxStock: number;
 }
 
+/**
+ * Max joist span for a spacing. Exact table values are used as is; spacings between
+ * two table columns are interpolated linearly; beyond the last column the span is
+ * scaled down and flagged.
+ */
 export function joistMaxSpan(rules: RuleSet, joistId: string, spacing: number): { span: number; extrapolated: boolean } {
   const table = rules.joistSpan[joistId];
   if (!table) return { span: 0, extrapolated: true };
-  const keys = Object.keys(table).map(Number).sort((p, q) => p - q);
+  const keys = Object.keys(table).map(Number).filter((k) => Number.isFinite(k)).sort((p, q) => p - q);
+  if (!keys.length) return { span: 0, extrapolated: true };
   if (table[String(spacing)] !== undefined) return { span: table[String(spacing)], extrapolated: false };
-  const larger = keys.find((k) => k >= spacing);
-  if (larger !== undefined) return { span: table[String(larger)], extrapolated: false };
+  if (spacing <= keys[0]) return { span: table[String(keys[0])], extrapolated: false };
+  const upper = keys.find((k) => k >= spacing);
+  if (upper !== undefined) {
+    const lower = [...keys].reverse().find((k) => k < spacing) ?? keys[0];
+    const s0 = table[String(lower)];
+    const s1 = table[String(upper)];
+    const span = s0 + ((s1 - s0) * (spacing - lower)) / (upper - lower);
+    return { span: Math.floor(span / 10) * 10, extrapolated: false };
+  }
   const last = keys[keys.length - 1];
   return { span: Math.floor((table[String(last)] * last) / spacing / 50) * 50, extrapolated: true };
 }
@@ -147,8 +215,52 @@ export function resolveBoardAxis(poly: Pt[], houseEdges: number[], pref: 'auto' 
   return bb.width >= bb.height ? 'x' : 'y';
 }
 
+/**
+ * Number of joist spaces in a bay of width w. Fixed mode never exceeds the nominal
+ * spacing; auto mode never exceeds the cap and lands as close to the target as the
+ * bay allows, spreading the joists evenly.
+ */
+export function joistSpaces(w: number, params: DeckParams, rules: RuleSet, cap: number): number {
+  if (w <= 1) return 1;
+  if (params.joistSpacingMode === 'fixed') {
+    const s = Math.max(100, params.joistSpacing);
+    return Math.max(1, Math.ceil(w / s - 1e-9));
+  }
+  const limit = Math.max(100, cap);
+  const target = Math.min(limit, Math.max(100, rules.joistSpacingTarget || limit));
+  return Math.max(1, Math.ceil(w / limit - 1e-9), Math.round(w / target));
+}
+
 function swapSeg(s: Seg): Seg {
   return { a: swapPt(s.a), b: swapPt(s.b) };
+}
+
+/** Offset every edge inward by its own amount and rebuild the vertices (orthogonal polygons only). */
+export function insetPolygon(poly: Pt[], E: Edge[], insetOf: (e: Edge) => number): Pt[] {
+  const n = poly.length;
+  const out: Pt[] = [];
+  for (let i = 0; i < n; i++) {
+    const prev = E[(i - 1 + n) % n];
+    const cur = E[i];
+    const vertical = prev.axis === 'y' ? prev : cur;
+    const horizontal = prev.axis === 'y' ? cur : prev;
+    out.push({
+      x: vertical.a.x - vertical.outward.x * insetOf(vertical),
+      y: horizontal.a.y - horizontal.outward.y * insetOf(horizontal),
+    });
+  }
+  return out;
+}
+
+/** convex (outside) or concave (inside) corner at vertex i, by counting the inside quadrants around it */
+export function cornerShape(poly: Pt[], i: number): 'convex' | 'concave' {
+  const v = poly[i];
+  const d = 2;
+  let inside = 0;
+  for (const [sx, sy] of [[1, 1], [1, -1], [-1, 1], [-1, -1]]) {
+    if (pointInPolygon({ x: v.x + sx * d, y: v.y + sy * d }, poly)) inside++;
+  }
+  return inside >= 3 ? 'concave' : 'convex';
 }
 
 export function computeLayout(
@@ -166,10 +278,24 @@ export function computeLayout(
   const bb = bbox(poly);
   const elevated = params.deckHeight >= ELEVATED_HEIGHT;
   const factor = elevated ? rules.elevatedFactor : 1;
+  const exposed = (e: Edge): boolean => !houseEdges.includes(e.index);
+  const bw = ctx.boardWidth;
+  const gap = ctx.boardGap;
+  const jt = ctx.joistThickness;
 
-  const js = joistMaxSpan(rules, params.joistProductId, params.joistSpacing);
-  if (js.extrapolated) warnings.push({ severity: 'warn', key: 'layout.joistSpanExtrapolated' });
-  const maxJoistSpan = Math.max(300, Math.floor((js.span * factor) / 10) * 10);
+  // ---- picture-frame edge boards: field polygon inset behind them ----
+  let edgeBoardOn = ctx.edgeBoard && E.some(exposed);
+  let fieldPoly: Pt[] = poly;
+  if (edgeBoardOn) {
+    const inset = insetPolygon(poly, E, (e) => (exposed(e) ? bw + gap : 0));
+    const fE = edges(inset);
+    const ok = validatePolygon(inset).ok && fE.every((e) => e.length > 2 * (bw + gap) + 50) && fE.length === E.length;
+    if (ok) fieldPoly = inset;
+    else {
+      edgeBoardOn = false;
+      warnings.push({ severity: 'warn', key: 'layout.edgeBoardTooSmall' });
+    }
+  }
 
   const houseX = houseEdges.filter((i) => E[i] && E[i].axis === 'x');
   const houseY = houseEdges.filter((i) => E[i] && E[i].axis === 'y');
@@ -178,6 +304,44 @@ export function computeLayout(
     attachment = 'freestanding';
     if (houseEdges.length) warnings.push({ severity: 'warn', key: 'layout.wallBearerNotPossible' });
   }
+
+  // ---- joist positions along x: edge joists, frame joists, then even fill per bay ----
+  const fixedXs: { x: number; kind: JoistKind }[] = [];
+  for (const e of E) {
+    if (e.axis !== 'y') continue;
+    fixedXs.push({ x: e.a.x - e.outward.x * (jt / 2), kind: 'edge' });
+    if (edgeBoardOn && rules.frameJoist && exposed(e)) fixedXs.push({ x: e.a.x - e.outward.x * (bw + gap), kind: 'frame' });
+  }
+  fixedXs.sort((p, q) => p.x - q.x);
+  const fixedSorted: { x: number; kind: JoistKind }[] = [];
+  for (const f of fixedXs) {
+    const last = fixedSorted[fixedSorted.length - 1];
+    if (last && f.x - last.x <= 60) {
+      if (f.kind === 'edge') last.kind = 'edge';
+      continue;
+    }
+    fixedSorted.push({ ...f });
+  }
+  const spacingCap = Math.min(params.joistSpacingMax || 500, ctx.deckingMaxJoistSpacing || 500);
+  const joistXs: { x: number; kind: JoistKind }[] = [];
+  const joistBays: JoistBay[] = [];
+  for (let i = 0; i < fixedSorted.length; i++) {
+    joistXs.push(fixedSorted[i]);
+    if (i + 1 < fixedSorted.length) {
+      const w = fixedSorted[i + 1].x - fixedSorted[i].x;
+      const n = joistSpaces(w, params, rules, spacingCap);
+      for (let k = 1; k < n; k++) joistXs.push({ x: fixedSorted[i].x + (w * k) / n, kind: 'field' });
+      // the edge-to-frame double is structural, not a spacing bay
+      if (w > 200) joistBays.push({ from: fixedSorted[i].x, to: fixedSorted[i + 1].x, count: n, spacing: w / n });
+    }
+  }
+  const realBays = joistBays.filter((b) => b.count >= 1);
+  const joistSpacingUsed = realBays.length ? Math.max(...realBays.map((b) => b.spacing)) : params.joistSpacing;
+  const joistSpacingMin = realBays.length ? Math.min(...realBays.map((b) => b.spacing)) : params.joistSpacing;
+  const spanSpacing = Math.ceil(joistSpacingUsed / 10) * 10;
+  const js = joistMaxSpan(rules, params.joistProductId, spanSpacing);
+  if (js.extrapolated) warnings.push({ severity: 'warn', key: 'layout.joistSpanExtrapolated' });
+  const maxJoistSpan = Math.max(300, Math.floor((js.span * factor) / 10) * 10);
 
   // ---- support lines (bearer centrelines and ledgers), measured along y ----
   let lines: SupportLine[] = [];
@@ -213,9 +377,9 @@ export function computeLayout(
   for (let i = 0; i < mergedLines.length; i++) {
     lines.push(mergedLines[i]);
     if (i + 1 < mergedLines.length) {
-      const gap = mergedLines[i + 1].pos - mergedLines[i].pos;
-      const n = Math.ceil(gap / maxJoistSpan);
-      for (let k = 1; k < n; k++) lines.push({ pos: mergedLines[i].pos + (gap * k) / n, kind: 'inter' });
+      const gapY = mergedLines[i + 1].pos - mergedLines[i].pos;
+      const n = Math.ceil(gapY / maxJoistSpan);
+      for (let k = 1; k < n; k++) lines.push({ pos: mergedLines[i].pos + (gapY * k) / n, kind: 'inter' });
     }
   }
   lines.sort((p, q) => p.pos - q.pos);
@@ -307,24 +471,6 @@ export function computeLayout(
   });
 
   // ---- joists ----
-  // Edge joists sit flush with every edge parallel to the joists; regular joists are
-  // spaced evenly within each bay between edge joists so the spacing never exceeds
-  // the nominated maximum.
-  const jt = ctx.joistThickness;
-  const edgeXs = new Set<number>([bb.minX + jt / 2, bb.maxX - jt / 2]);
-  for (const e of E) {
-    if (e.axis === 'y') edgeXs.add(e.a.x - e.outward.x * (jt / 2));
-  }
-  const edgeSorted = [...edgeXs].sort((p, q) => p - q).filter((x, i, arr) => i === 0 || x - arr[i - 1] > 60);
-  const joistXs: { x: number; edge: boolean }[] = [];
-  for (let i = 0; i < edgeSorted.length; i++) {
-    joistXs.push({ x: edgeSorted[i], edge: true });
-    if (i + 1 < edgeSorted.length) {
-      const w = edgeSorted[i + 1] - edgeSorted[i];
-      const n = Math.max(1, Math.ceil(w / params.joistSpacing));
-      for (let k = 1; k < n; k++) joistXs.push({ x: edgeSorted[i] + (w * k) / n, edge: false });
-    }
-  }
   const bearerPositions = lines.map((l) => l.pos);
   const ledgerPositions: number[] = [];
   const allSupports = lines.map((l) => l.pos).sort((p, q) => p - q);
@@ -333,11 +479,13 @@ export function computeLayout(
   let totalHangers = 0;
   let joistBearerCrossings = 0;
   let offSupportJoins = false;
+  let frameJoists = 0;
   for (const c of joistXs) {
     const intervals = clipVertical(poly, c.x);
     for (const [y0, y1] of intervals) {
       const length = y1 - y0;
       if (length < 100) continue;
+      if (c.kind === 'frame') frameJoists++;
       if (ctx.flush) {
         // one piece per bay between consecutive supports, hung on a joist support at each end
         const sup = allSupports.filter((p) => p > y0 - 1 && p < y1 + 1);
@@ -358,7 +506,8 @@ export function computeLayout(
           splices: sup.slice(1, -1),
           bearerCrossings: 0,
           hangers,
-          isEdge: c.edge,
+          isEdge: c.kind === 'edge',
+          kind: c.kind,
         });
         continue;
       }
@@ -378,18 +527,19 @@ export function computeLayout(
         splices: split.joins,
         bearerCrossings: crossings,
         hangers,
-        isEdge: c.edge,
+        isEdge: c.kind === 'edge',
+        kind: c.kind,
       });
     }
   }
   for (const l of ledgers) l.hangers = ctx.flush ? joists.filter((j) => Math.abs(j.seg.a.y - l.seg.a.y) < 1 || Math.abs(j.seg.b.y - l.seg.a.y) < 1).length : 0;
+  const joistPositions = joistXs.map((c) => c.x);
 
-  // ---- boards ----
-  const bw = ctx.boardWidth;
-  const pitch = bw + ctx.boardGap;
+  // ---- field boards (inside the picture frame when edge boards are on) ----
+  const pitch = bw + gap;
+  const fbb = bbox(fieldPoly);
   const houseAtBottom = houseX.length > 0 && Math.abs(E[houseX[0]].a.y - bb.maxY) < 1;
   const boards: BoardRow[] = [];
-  const joistPositions = joistXs.map((c) => c.x);
   let boardLm = 0;
   let boardJoins = 0;
   let screws = 0;
@@ -398,17 +548,17 @@ export function computeLayout(
     let yc: number;
     let visible: number;
     if (!houseAtBottom) {
-      const top = bb.minY + k * pitch;
-      if (top >= bb.maxY - 1) break;
-      visible = Math.min(bw, bb.maxY - top);
+      const top = fbb.minY + k * pitch;
+      if (top >= fbb.maxY - 1) break;
+      visible = Math.min(bw, fbb.maxY - top);
       yc = top + visible / 2;
     } else {
-      const bottom = bb.maxY - k * pitch;
-      if (bottom <= bb.minY + 1) break;
-      visible = Math.min(bw, bottom - bb.minY);
+      const bottom = fbb.maxY - k * pitch;
+      if (bottom <= fbb.minY + 1) break;
+      visible = Math.min(bw, bottom - fbb.minY);
       yc = bottom - visible / 2;
     }
-    const intervals = clipHorizontal(poly, yc);
+    const intervals = clipHorizontal(fieldPoly, yc);
     if (!intervals.length) continue;
     const runs: BoardRun[] = [];
     for (const [x0, x1] of intervals) {
@@ -440,6 +590,75 @@ export function computeLayout(
     warnings.push({ severity: 'info', key: 'layout.narrowRip', params: { width: Math.round(lastRow.width) } });
   }
 
+  // ---- edge boards: one run per exposed edge, mitred where two exposed edges meet ----
+  const edgeBoards: EdgeBoardRun[] = [];
+  let edgeBoardLm = 0;
+  let edgeBoardPieces = 0;
+  let edgeBoardScrews = 0;
+  let mitres = 0;
+  if (edgeBoardOn) {
+    const n = E.length;
+    const maxEdge = ctx.edgeBoardMaxStock - rules.boardEndAllowance;
+    const cornerAt = (i: number): CornerKind => {
+      const prev = E[(i - 1 + n) % n];
+      const cur = E[i];
+      if (!exposed(prev) || !exposed(cur)) return 'butt';
+      return cornerShape(poly, i);
+    };
+    for (const e of E) {
+      if (!exposed(e)) continue;
+      const startCorner = cornerAt(e.index);
+      const endCorner = cornerAt((e.index + 1) % n);
+      const extra = (startCorner === 'concave' ? bw : 0) + (endCorner === 'concave' ? bw : 0);
+      const length = e.length + extra;
+      const alongJoists = e.axis === 'y';
+      let pieces: number[];
+      let joinTs: number[];
+      if (length <= maxEdge) {
+        pieces = [length];
+        joinTs = [];
+      } else if (alongJoists) {
+        // continuous support from the edge joist: split evenly
+        const parts = Math.ceil(length / maxEdge);
+        pieces = Array.from({ length: parts }, () => length / parts);
+        joinTs = Array.from({ length: parts - 1 }, (_, k) => ((k + 1) * e.length) / parts);
+      } else {
+        const lo = Math.min(e.a.x, e.b.x);
+        const hi = Math.max(e.a.x, e.b.x);
+        const sup = joistPositions.filter((x) => x > lo + rules.minBoardPiece && x < hi - rules.minBoardPiece);
+        const split = splitRun(lo, hi, sup, maxEdge, rules.minBoardPiece);
+        pieces = [...split.pieces];
+        // the mitre allowance at a concave corner belongs to the piece at that end
+        const startIdx = e.dir.x > 0 ? 0 : pieces.length - 1;
+        const endIdx = e.dir.x > 0 ? pieces.length - 1 : 0;
+        if (startCorner === 'concave') pieces[startIdx] += bw;
+        if (endCorner === 'concave') pieces[endIdx] += bw;
+        joinTs = split.joins.map((x) => (e.dir.x > 0 ? x - e.a.x : e.a.x - x));
+      }
+      const crossings = alongJoists
+        ? Math.floor(e.length / 450) + 1
+        : joistPositions.filter((x) => x > Math.min(e.a.x, e.b.x) - 1 && x < Math.max(e.a.x, e.b.x) + 1).length;
+      const runScrews = (crossings + joinTs.length) * rules.screwsPerCrossing;
+      if (startCorner !== 'butt') mitres++;
+      edgeBoardLm += length;
+      edgeBoardPieces += pieces.length;
+      edgeBoardScrews += runScrews;
+      edgeBoards.push({
+        edgeIndex: e.index,
+        seg: { a: e.a, b: e.b },
+        width: bw,
+        length,
+        pieces: pieces.map((p) => p + rules.boardEndAllowance),
+        joinPts: joinTs.map((tt) => ({ x: e.a.x + e.dir.x * tt, y: e.a.y + e.dir.y * tt })),
+        startCorner,
+        endCorner,
+        crossings,
+        screws: runScrews,
+        alongJoists,
+      });
+    }
+  }
+
   // ---- posts (numbered by line then position) ----
   const posts: PostInfo[] = [];
   let pc = 0;
@@ -455,7 +674,13 @@ export function computeLayout(
     bearers: bearers.map((b) => ({ ...fix(b), posts: swapped ? b.posts.map(swapPt) : b.posts })),
     posts: posts.map((p) => ({ ...p, pt: swapped ? swapPt(p.pt) : p.pt })),
     joists: joists.map(fix),
+    joistPositions,
+    joistBays,
+    joistSpacingUsed,
+    joistSpacingMin,
     boards: boards.map((r) => ({ ...r, runs: r.runs.map(fix) })),
+    edgeBoards: edgeBoards.map((eb) => ({ ...fix(eb), joinPts: swapped ? eb.joinPts.map(swapPt) : eb.joinPts })),
+    fieldPoly: swapped ? swapPoly(fieldPoly) : fieldPoly,
     ledgers: ledgers.map(fix),
     attachment,
     maxJoistSpan,
@@ -472,6 +697,11 @@ export function computeLayout(
       joistBearerCrossings,
       hangers: totalHangers,
       ledgerBolts: ledgers.reduce((s, l) => s + l.bolts, 0),
+      edgeBoardLm,
+      edgeBoardPieces,
+      edgeBoardScrews,
+      mitres,
+      frameJoists,
     },
   };
   return result;

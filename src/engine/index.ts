@@ -55,6 +55,10 @@ export interface DesignResult {
   footings: FootingInfo;
   fascia: FasciaRun[];
   fasciaProductId: string;
+  /** product used for the picture-frame edge boards */
+  edgeBoardProductId: string;
+  /** joist spacing as built, e.g. "439" or "400-461" */
+  joistSpacingText: string;
   bom: BomResult;
   warnings: WarningItem[];
   pathway: Pathway;
@@ -94,7 +98,8 @@ export function computeDesign(project: Project): DesignResult {
       ok: false, problem: valid.problem, poly, edges: [], areaM2: 0, perimeterM: 0, bb: bbox(poly), datum: { x: 0, y: 0 },
       layout: null, levels, postProductId: 'post-90x90-h4', postLength: 0, stairs: [], balustrade: emptyBal,
       braces: { count: 0, length: 0 }, footings: { count: 0, type: params.footingType, depth: params.footingDepth, diameter: params.footingDiameter, padSize: params.padSize, padDepth: params.padDepth, concreteM3: 0, bags: 0 },
-      fascia: [], fasciaProductId: decking.fasciaProductId ?? decking.id, bom: emptyBom,
+      fascia: [], fasciaProductId: decking.fasciaProductId ?? decking.id, edgeBoardProductId: decking.edgeBoardProductId ?? decking.id,
+      joistSpacingText: String(params.joistSpacing), bom: emptyBom,
       warnings: [{ severity: 'error', key: `polygon.${valid.problem}` }], pathway: 'approvalRequired', method: [],
     };
   }
@@ -105,16 +110,29 @@ export function computeDesign(project: Project): DesignResult {
   const perimeterM = perimeter(poly) / 1000;
   const houseEdges = project.houseEdges.filter((i) => i >= 0 && i < E.length);
 
+  // ---- edge board product: the decking's solid-edge board, or the decking itself ----
+  const edgeBoardProductId =
+    params.edgeBoardProductId !== 'auto' && PRODUCT_MAP[resolveProductId(params.edgeBoardProductId)]
+      ? resolveProductId(params.edgeBoardProductId)
+      : decking.edgeBoardProductId && PRODUCT_MAP[decking.edgeBoardProductId] ? decking.edgeBoardProductId : decking.id;
+  const maxTreadSpan = rules.deckingMaxJoistSpacing[decking.id] ?? decking.maxJoistSpacing ?? 450;
+
   const layout = computeLayout(poly, houseEdges, params, rules, {
     boardWidth: decking.width ?? 86,
     boardGap: params.boardGap,
     joistThickness: joist.width ?? 45,
     bearerWidth,
     flush,
+    edgeBoard: params.edgeBoard,
+    deckingMaxJoistSpacing: maxTreadSpan,
     deckingMaxStock: maxStock(decking.id),
+    edgeBoardMaxStock: maxStock(edgeBoardProductId),
     joistMaxStock: maxStock(joist.id),
     bearerMaxStock: maxStock(bearer.id),
   });
+  const spMin = Math.round(layout.joistSpacingMin);
+  const spMax = Math.round(layout.joistSpacingUsed);
+  const joistSpacingText = params.joistSpacingMode === 'fixed' && spMax <= params.joistSpacing ? (spMin === spMax ? `${spMax}` : `${spMin}-${spMax}`) : spMin === spMax ? `${spMax}` : `${spMin}-${spMax}`;
 
   // ---- posts ----
   let postProductId = params.postProductId;
@@ -130,7 +148,6 @@ export function computeDesign(project: Project): DesignResult {
     : Math.max(50, postTop);
 
   // ---- stairs ----
-  const maxTreadSpan = rules.deckingMaxJoistSpacing[decking.id] ?? decking.maxJoistSpacing ?? 450;
   const clampedStairs = project.stairs
     .filter((s) => s.edgeIndex >= 0 && s.edgeIndex < E.length && !houseEdges.includes(s.edgeIndex))
     .map((s) => {
@@ -196,6 +213,7 @@ export function computeDesign(project: Project): DesignResult {
   for (const j of layout.joists) for (const len of j.pieces) push(joist.id, flush ? len : len, 'joist');
   for (let i = 0; i < layout.totals.boardJoins; i++) push(joist.id, 300, 'joinBlock');
   for (const row of layout.boards) for (const run of row.runs) for (const len of run.pieces) push(decking.id, len, 'decking');
+  for (const eb of layout.edgeBoards) for (const len of eb.pieces) push(edgeBoardProductId, len, 'edgeBoard');
   const fasciaMax = maxStock(fasciaProductId) - rules.boardEndAllowance;
   let fasciaScrews = 0;
   for (const f of fascia) {
@@ -248,9 +266,10 @@ export function computeDesign(project: Project): DesignResult {
       }
     });
     count(clipId, clipCount, 'clip');
-    count(deckScrew, edgeScrews + treadScrews + fasciaScrews, 'edgeScrew');
+    // edge boards have no groove on the exposed side: face screwed with colour screws
+    count(deckScrew, edgeScrews + layout.totals.edgeBoardScrews + treadScrews + fasciaScrews, 'edgeScrew');
   } else {
-    count(deckScrew, layout.totals.screws + treadScrews + fasciaScrews, 'decking');
+    count(deckScrew, layout.totals.screws + layout.totals.edgeBoardScrews + treadScrews + fasciaScrews, 'decking');
   }
   // ---- joist to bearer ----
   if (flush) {
@@ -287,6 +306,7 @@ export function computeDesign(project: Project): DesignResult {
   const compliance = assessCompliance({
     params, rules, areaM2, postClear: postTop, groundClearance, layout, balustrade, stairs, houseEdges,
     edgeCount: E.length, deckingMaxJoistSpacing: maxTreadSpan, deckingFamily: decking.family ?? '',
+    joistSpacingUsed: layout.joistSpacingUsed,
   });
   if (postTop > (rules.postMaxHeight[postProductId] ?? Infinity)) {
     compliance.warnings.unshift({ severity: 'error', key: 'compliance.postTooTall', params: { height: Math.round(postTop), max: rules.postMaxHeight[postProductId] ?? 0 } });
@@ -303,11 +323,12 @@ export function computeDesign(project: Project): DesignResult {
     bearerName: bearer.id, joistName: joist.id, deckingName: decking.id, boardThickness: boardT, joistDepth: joistD,
     bearerDepth: bearerD, balustrade, stairs, braceCount, pathway: compliance.pathway,
     clips: clipId ? clipCount : undefined, composite: decking.family === 'composite',
+    joistSpacingText, edgeBoardName: edgeBoardProductId,
   });
 
   return {
     ok: true, poly, edges: E, areaM2, perimeterM, bb, datum: { x: bb.minX, y: bb.minY }, layout, levels, postProductId, postLength,
-    stairs, balustrade, braces: { count: braceCount, length: braceLength }, footings, fascia, fasciaProductId, bom,
+    stairs, balustrade, braces: { count: braceCount, length: braceLength }, footings, fascia, fasciaProductId, edgeBoardProductId, joistSpacingText, bom,
     warnings: compliance.warnings, pathway: compliance.pathway, method,
   };
 }

@@ -4,6 +4,10 @@ import type { Product } from './types';
  * Product catalog. Prices are the supplier's GST-inclusive unit prices taken from
  * Green Forest Timber invoices (May to October 2026) where available; the rest
  * are estimates flagged `estimate`. All prices are editable in the Prices panel.
+ *
+ * maxJoistSpacing follows the company practice (23 mm composite and 22 mm pine at
+ * up to 500 centres, 19 mm hardwood at 450); the Rules panel can tighten it to a
+ * manufacturer's figure.
  */
 const HW_LENGTHS = [1800, 2100, 2400, 2700, 3000, 3300, 3600, 3900, 4200, 4500, 4800, 5100, 5400];
 const TP_DECK_LENGTHS = [3000, 3600, 4200, 4800, 5400, 6000];
@@ -17,12 +21,12 @@ export const CATALOG: Product[] = [
     name: { zh: 'Modelo 复合板 140x23 grooved 5.4 m（双色可翻面）', en: 'Modelo composite 140x23 grooved 5.4 m (reversible)' },
     ref: 'Modelo 140x23mm 5.4m Grooved',
     width: 140, thickness: 23, stockLengths: [5400], unit: 'm', defaultPrice: 16.33,
-    defaultGap: 5, maxJoistSpacing: 400, fasciaProductId: 'modelo-endboard-140x23',
+    defaultGap: 5, maxJoistSpacing: 500, fasciaProductId: 'modelo-endboard-140x23', edgeBoardProductId: 'modelo-endboard-140x23',
     hiddenClipProductId: 'camo-edge-clip', screwProductId: 'screw-colour-10gx65',
   },
   {
     id: 'modelo-endboard-140x23', category: 'decking', family: 'composite',
-    name: { zh: 'Modelo endboard 140x23 5.4 m（封边 / 实心边板）', en: 'Modelo endboard 140x23 5.4 m (solid edge board)' },
+    name: { zh: 'Modelo endboard 140x23 5.4 m（edge board，侧面封边）', en: 'Modelo endboard 140x23 5.4 m (solid edge board)' },
     ref: 'Modelo 140x23mm 5.4m Endboard',
     width: 140, thickness: 23, stockLengths: [5400], unit: 'm', defaultPrice: 17.5,
   },
@@ -31,7 +35,7 @@ export const CATALOG: Product[] = [
     name: { zh: 'NewTechWood Terrace groove board US49 5.4 m', en: 'NewTechWood Terrace groove board US49 5.4 m' },
     ref: 'NewTechWood Terrace - Groove Board (US49)',
     width: 138, thickness: 23, stockLengths: [5400], unit: 'm', defaultPrice: 21.3,
-    defaultGap: 5.5, maxJoistSpacing: 400, fasciaProductId: 'ntw-edge-us63',
+    defaultGap: 5.5, maxJoistSpacing: 500, fasciaProductId: 'ntw-edge-us63', edgeBoardProductId: 'ntw-edge-us63',
     hiddenClipProductId: 'ntw-cobra-tclip', screwProductId: 'screw-colour-10gx65',
   },
   {
@@ -57,13 +61,13 @@ export const CATALOG: Product[] = [
     id: 'tp-90x22', category: 'decking', isDecking: true, family: 'treatedPine',
     name: { zh: 'Treated pine 地板 90x22 H3，估价', en: 'Treated pine decking 90x22 H3, estimate' },
     width: 90, thickness: 22, stockLengths: TP_DECK_LENGTHS, unit: 'm', defaultPrice: 4.6,
-    defaultGap: 3, maxJoistSpacing: 450, fasciaProductId: 'tp-140x22', screwProductId: 'screw-deck-10gx50',
+    defaultGap: 3, maxJoistSpacing: 500, fasciaProductId: 'tp-140x22', screwProductId: 'screw-deck-10gx50',
   },
   {
     id: 'tp-140x22', category: 'decking', isDecking: true, family: 'treatedPine',
     name: { zh: 'Treated pine 地板 140x22 H3，估价', en: 'Treated pine decking 140x22 H3, estimate' },
     width: 140, thickness: 22, stockLengths: TP_DECK_LENGTHS, unit: 'm', defaultPrice: 7.5,
-    defaultGap: 3, maxJoistSpacing: 450, fasciaProductId: 'tp-140x22', screwProductId: 'screw-deck-10gx50',
+    defaultGap: 3, maxJoistSpacing: 500, fasciaProductId: 'tp-140x22', screwProductId: 'screw-deck-10gx50',
   },
   // ---- framing: H3 treated pine F7/MGP10 (Green Forest Timber) ----
   {

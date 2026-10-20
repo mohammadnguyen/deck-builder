@@ -67,6 +67,11 @@ export function migrateProject(p: Partial<Project>): Project {
   for (const [key, oldJson] of Object.entries(superseded)) {
     if (JSON.stringify(rules.bearerSpan[key]) === oldJson) rules.bearerSpan[key] = dr.bearerSpan[key];
   }
+  // decking spacing caps that still hold the old 400 default follow the company practice (500)
+  rules.deckingMaxJoistSpacing = { ...dr.deckingMaxJoistSpacing, ...(rules.deckingMaxJoistSpacing ?? {}) };
+  for (const id of ['modelo-140x23', 'ntw-terrace-us49']) {
+    if (rules.deckingMaxJoistSpacing[id] === 400) rules.deckingMaxJoistSpacing[id] = dr.deckingMaxJoistSpacing[id];
+  }
   const params: DeckParams = {
     ...dp,
     ...(p.params ?? {}),

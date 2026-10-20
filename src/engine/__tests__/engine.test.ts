@@ -70,7 +70,6 @@ describe('design', () => {
     expect(lay.posts.length).toBeGreaterThan(6);
     expect(lay.joists.length).toBeGreaterThan(10);
     for (const j of lay.joists) expect(j.pieces.length).toBeGreaterThanOrEqual(1);
-    for (const j of lay.joists) expect(j.hangers).toBeGreaterThanOrEqual(2);
     expect(lay.joistSpanUsed).toBeLessThanOrEqual(lay.maxJoistSpan + 1);
     for (const b of lay.bearers) expect(b.postSpacing).toBeLessThanOrEqual(b.maxSpan + 1);
     expect(d.stairs.length).toBe(1);
@@ -80,23 +79,34 @@ describe('design', () => {
     expect(d.method.length).toBeGreaterThan(5);
     const boardLm = lay.totals.boardLm / 1000;
     expect(boardLm).toBeGreaterThan((d.areaM2 * 1000) / (140 + 5) * 0.9);
-    // flush framing: every joist piece hangs on two supports, perimeter bearers at the edge
+    // joists on top of single 140x45 bearers, skew nailed, composite boards on hidden clips
+    expect(lay.totals.joistBearerCrossings).toBeGreaterThan(20);
+    expect(lay.totals.hangers).toBe(0);
+    expect(d.bom.lines.some((l) => l.productId === 'nail-75x3.05')).toBe(true);
+    expect(d.bom.lines.some((l) => l.productId === 'triple-grip')).toBe(false);
+    const clip = d.bom.lines.find((l) => l.productId === 'camo-edge-clip');
+    expect(clip && clip.qty).toBeGreaterThan(100);
+    expect(d.bom.lines.some((l) => l.productId === 'screw-batten-14gx100')).toBe(true);
+    expect(d.bom.pricesIncludeGst).toBe(true);
+    expect(d.bom.total).toBeCloseTo(d.bom.linesTotal - d.bom.discount + d.bom.delivery, 6);
+    expect(d.levels.groundClearance).toBe(450 - 23 - 90 - 140);
+  });
+  it('hangs joists flush between bearers on joist supports', () => {
+    const p = newProject('flush', true);
+    p.params.joistConnection = 'flush';
+    const d = computeDesign(p);
+    const lay = d.layout!;
     expect(lay.totals.hangers).toBe(lay.joists.reduce((s, j) => s + j.pieces.length * 2, 0));
     expect(lay.totals.joistBearerCrossings).toBe(0);
     expect(Math.abs(lay.supports[0].pos - 150)).toBeLessThan(1); // house side inset
     expect(Math.abs(lay.supports[lay.supports.length - 1].pos - 4200 + 45)).toBeLessThan(1); // perimeter bearer at the edge
-    // composite boards use hidden clips plus face screws on edge rows
-    const clip = d.bom.lines.find((l) => l.productId === 'camo-edge-clip');
-    expect(clip && clip.qty).toBeGreaterThan(100);
     expect(d.bom.lines.some((l) => l.productId === 'js-9045')).toBe(true);
-    expect(d.bom.lines.some((l) => l.productId === 'screw-batten-14gx100')).toBe(true);
-    expect(d.bom.pricesIncludeGst).toBe(true);
-    expect(d.bom.total).toBeCloseTo(d.bom.linesTotal - d.bom.discount + d.bom.delivery, 6);
     expect(d.levels.groundClearance).toBe(450 - 23 - 140);
   });
   it('supports joists on top of bearers with triple grips', () => {
     const p = newProject('ontop', true);
     p.params.joistConnection = 'onTop';
+    p.params.joistFixing = 'tripleGrip';
     p.params.bearerToPost = 'bolted';
     p.params.deckingProductId = 'hw-86x19';
     p.params.boardGap = 4;

@@ -50,6 +50,8 @@ export interface DeckParams {
   bearerLaminations: 1 | 2;
   /** joists hung flush between bearers on joist supports, or sitting on top of bearers */
   joistConnection: 'flush' | 'onTop';
+  /** joist to bearer fixing when joists sit on top */
+  joistFixing: 'skewNails' | 'tripleGrip';
   bearerToPost: 'bolted' | 'screwed' | 'onTop';
   postProductId: 'auto' | string;
   attachment: 'freestanding' | 'ledger';
@@ -103,6 +105,7 @@ export interface RuleSet {
   flushHouseInset: number;
   battenScrewsPerPost: number;
   hangerNails: number;
+  skewNailsPerCrossing: number;
   postEndSetback: number;
   minBearerGap: number;
   bearerEndInset: number;

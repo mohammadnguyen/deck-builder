@@ -199,6 +199,17 @@ function ParamsPanel() {
           ]}
           onChange={(v) => set('joistConnection', v as DeckParams['joistConnection'])}
         />
+        {p.joistConnection === 'onTop' && (
+          <Sel
+            label={t('p.joistFixing')}
+            value={p.joistFixing}
+            options={[
+              { value: 'skewNails', label: t('p.joistFixing.skewNails') },
+              { value: 'tripleGrip', label: t('p.joistFixing.tripleGrip') },
+            ]}
+            onChange={(v) => set('joistFixing', v as DeckParams['joistFixing'])}
+          />
+        )}
         <Sel
           label={t('p.bearerToPost')}
           value={p.bearerToPost}
@@ -479,7 +490,8 @@ function RulesPanel() {
     'elevatedFactor', 'bearerEdgeInset', 'houseBearerInset', 'postEndSetback', 'minBearerGap', 'braceHeight', 'engineerHeight',
     'lowDeckClearance', 'minGroundClearance', 'balustradeTriggerHeight', 'handrailTriggerRise', 'exemptMaxArea', 'exemptMaxHeight',
     'kerf', 'staggerOffset', 'minBoardPiece', 'boardEndAllowance', 'joistEndAllowance', 'screwsPerCrossing', 'boltsPerPost',
-    'ledgerBoltSpacing', 'oilCoverage', 'oilCoats', 'stirrupLift', 'concreteBagYield',
+    'ledgerBoltSpacing', 'oilCoverage', 'oilCoats', 'stirrupLift', 'concreteBagYield', 'flushHouseInset', 'battenScrewsPerPost',
+    'hangerNails', 'skewNailsPerCrossing',
   ];
   const stairKeys = ['minRiser', 'maxRiser', 'targetRiser', 'minGoing', 'maxGoing', 'min2RG', 'max2RG', 'maxRisers', 'stringerSpacing', 'nosing'] as const;
   return (

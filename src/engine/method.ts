@@ -83,10 +83,19 @@ export function buildMethod(m: MethodInput): MethodStep[] {
       notes: [{ key: 'm.ledger.n1' }, { key: 'm.ledger.n2' }],
     });
   }
+  const nails = p.joistFixing === 'skewNails';
   steps.push({
-    key: flush ? 'm.joists.flush' : 'm.joists',
-    params: { joist: m.joistName, spacing: p.joistSpacing, count: m.layout.joists.length, span: Math.round(m.layout.joistSpanUsed), crossings: m.layout.totals.joistBearerCrossings, hangers: m.layout.totals.hangers },
-    notes: [{ key: flush ? 'm.joists.flush.n1' : 'm.joists.n1' }, { key: 'm.joists.n2' }, { key: 'm.joists.n3', params: { joins: m.layout.totals.boardJoins } }],
+    key: flush ? 'm.joists.flush' : nails ? 'm.joists.nails' : 'm.joists',
+    params: {
+      joist: m.joistName, spacing: p.joistSpacing, count: m.layout.joists.length, span: Math.round(m.layout.joistSpanUsed),
+      crossings: m.layout.totals.joistBearerCrossings, hangers: m.layout.totals.hangers,
+      nails: m.layout.totals.joistBearerCrossings * m.rules.skewNailsPerCrossing, perCrossing: m.rules.skewNailsPerCrossing,
+    },
+    notes: [
+      { key: flush ? 'm.joists.flush.n1' : nails ? 'm.joists.n1.nails' : 'm.joists.n1', params: { n: m.rules.skewNailsPerCrossing } },
+      ...(m.composite ? [] : [{ key: 'm.joists.n2' }]),
+      { key: 'm.joists.n3', params: { joins: m.layout.totals.boardJoins } },
+    ],
   });
   if (m.braceCount > 0) {
     steps.push({ key: 'm.bracing', params: { count: m.braceCount }, notes: [{ key: 'm.bracing.n1' }] });

@@ -88,7 +88,22 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
             {/* joist */}
             <rect x={56} y={56} width={188} height={14} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
             {/* bearer */}
-            {bolted ? (
+            {bolted && p.bearerLaminations === 1 ? (
+              <>
+                <rect x={158} y={70} width={16} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
+                {screwed ? (
+                  <>
+                    <line x1={176} y1={76} x2={146} y2={80} stroke={INK} strokeWidth={1} />
+                    <line x1={176} y1={92} x2={146} y2={96} stroke={INK} strokeWidth={1} />
+                  </>
+                ) : (
+                  <>
+                    <line x1={138} y1={78} x2={178} y2={78} stroke={INK} strokeWidth={1.2} />
+                    <line x1={138} y1={92} x2={178} y2={92} stroke={INK} strokeWidth={1.2} />
+                  </>
+                )}
+              </>
+            ) : bolted ? (
               <>
                 <rect x={126} y={70} width={16} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
                 <rect x={158} y={70} width={16} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
@@ -147,6 +162,7 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
         {!screwed && bolted && <Lbl x={294} y={113} anchor="end">{t('d.bolts')}</Lbl>}
         {!bolted && <Lbl x={294} y={113} anchor="end">{t('d.postCap')}</Lbl>}
         {flush && <Lbl x={294} y={123} anchor="end">{t('d.hanger')}</Lbl>}
+        {!flush && <Lbl x={294} y={123} anchor="end">{p.joistFixing === 'skewNails' ? `${project.rules.skewNailsPerCrossing} x 75 ${t('d.skew')}` : 'triple grip'}</Lbl>}
         <Leader from={[142, 125]} to={[90, 125]} />
         <Lbl x={88} y={128} anchor="end">{`${t('d.post')} ${sizeOf(post)}`}</Lbl>
         <Lbl x={24} y={146}>{t('d.ground')}</Lbl>

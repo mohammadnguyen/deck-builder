@@ -256,8 +256,12 @@ export function computeDesign(project: Project): DesignResult {
     count(hangerFor(joist.id), layout.totals.hangers, 'joist');
     count('nail-75x3.05', layout.totals.hangers * rules.hangerNails, 'joist');
   } else {
-    count('triple-grip', layout.totals.joistBearerCrossings, 'joist');
-    count('nail-30x2.8-galv', layout.totals.joistBearerCrossings * 6, 'joist');
+    if (params.joistFixing === 'tripleGrip') {
+      count('triple-grip', layout.totals.joistBearerCrossings, 'joist');
+      count('nail-30x2.8-galv', layout.totals.joistBearerCrossings * 6, 'joist');
+    } else {
+      count('nail-75x3.05', layout.totals.joistBearerCrossings * rules.skewNailsPerCrossing, 'joist');
+    }
     count(hangerFor(joist.id), layout.totals.hangers, 'ledger');
     count('nail-75x3.05', layout.totals.hangers * rules.hangerNails, 'ledger');
   }
@@ -289,6 +293,7 @@ export function computeDesign(project: Project): DesignResult {
   }
   if (params.bearerToPost === 'screwed') compliance.warnings.push({ severity: 'info', key: 'compliance.screwedBearers', params: { n: rules.battenScrewsPerPost } });
   if (flush) compliance.warnings.push({ severity: 'info', key: 'compliance.flushNotes' });
+  if (!flush && params.joistFixing === 'skewNails') compliance.warnings.push({ severity: 'info', key: 'compliance.skewNails', params: { n: rules.skewNailsPerCrossing } });
 
   const method = buildMethod({
     params, rules, layout, areaM2, postCount, postTop, postLength, postName: postProductId, concreteM3, bags,

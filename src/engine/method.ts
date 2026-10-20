@@ -108,7 +108,7 @@ export function buildMethod(m: MethodInput): MethodStep[] {
     notes: [
       { key: flush ? 'm.joists.flush.n1' : nails ? 'm.joists.n1.nails' : 'm.joists.n1', params: { n: m.rules.skewNailsPerCrossing } },
       ...(p.joistSpacingMode === 'auto' ? [{ key: 'm.joists.auto', params: { max: Math.round(p.joistSpacingMax), spacing: m.joistSpacingText } }] : []),
-      ...(m.layout.totals.frameJoists > 0 ? [{ key: 'm.joists.frame', params: { n: m.layout.totals.frameJoists, inset: Math.round(m.layout.edgeBoards[0]?.width ?? 0) + p.boardGap } }] : []),
+      ...(m.layout.totals.frameJoists > 0 ? [{ key: 'm.joists.frame', params: { n: m.layout.totals.frameJoists, pairs: Math.ceil(m.layout.totals.frameJoists / 2), inset: Math.round(m.layout.edgeBoards[0]?.width ?? 0) + p.boardGap } }] : []),
       ...(p.joistTape ? [{ key: 'm.joists.n2' }] : []),
       { key: 'm.joists.n3', params: { joins: m.layout.totals.boardJoins } },
     ],

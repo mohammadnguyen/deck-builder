@@ -19,14 +19,18 @@ npm test           # engine tests (vitest)
 npm run build      # type-check + production build to dist/
 ```
 
-画图：选择「画 deck 轮廓」，点击放角点（自动正交、吸附），或输入长度后按 Enter 沿当前方向放点；
-Enter 闭合，Esc 取消，Backspace 退一点。贴着房屋的边在「选中」面板勾选「贴墙」，或先画房屋墙线让工具自动识别。
-楼梯用「添加楼梯」工具点在一条非贴墙边上，可沿边拖动。
+一个界面给所有人用：顶部四个标签「画图 / 图纸 / 材料 / 步骤」，窄屏时标签在底部。
+画图页左边 5 步照着填：形状（矩形 / L 形 / U 形，或「自己画」）、靠什么墙和什么地面、完成面离地高度、面板、楼梯。
+尺寸直接点图上的蓝色数字改；点一条边可以设为贴墙或加楼梯。右边实时出数量、价钱、提醒，以及打印图纸、订货单、施工步骤三个按钮。
+构件规格、joist 间距、折扣、送货和全部规则、价格在「更多设置」里。「步骤」页是可勾选的施工清单，进度随项目保存。
 
-Drawing: pick "Draw deck outline", click corners (orthogonal and snapped) or type a length and press
-Enter to place the next point along the current direction. Enter closes, Esc cancels, Backspace removes
-a point. Mark edges that touch the house in the Selection panel, or draw the house wall first and the
-tool detects them. Place stairs with the "Add stairs" tool on any open edge and drag them along it.
+One screen for the counter, the builder and the crew: four tabs at the top (bottom on phones): Draw, Sheets,
+Materials, Steps. The Draw page walks through five steps: shape (rectangle / L / U, or draw it), wall and
+ground, finished height, decking, stairs. Change sizes by clicking the blue numbers on the drawing; click an
+edge to mark it against the house or add stairs. The right column shows quantities, price and reminders with
+buttons for the sheets, the supplier order and the construction steps. Member sizes, joist spacing, discount,
+delivery and the full rules and price lists sit under "More settings". The Steps page is a checklist the crew
+ticks off; progress is saved with the project.
 
 ## 材料与价格 / Materials and prices
 

@@ -305,18 +305,24 @@ export function computeLayout(
     if (houseEdges.length) warnings.push({ severity: 'warn', key: 'layout.wallBearerNotPossible' });
   }
 
-  // ---- joist positions along x: edge joists, frame joists, then even fill per bay ----
+  // ---- joist positions along x: edge joists, double joists under the edge board joint, then even fill per bay ----
   const fixedXs: { x: number; kind: JoistKind }[] = [];
   for (const e of E) {
     if (e.axis !== 'y') continue;
     fixedXs.push({ x: e.a.x - e.outward.x * (jt / 2), kind: 'edge' });
-    if (edgeBoardOn && rules.frameJoist && exposed(e)) fixedXs.push({ x: e.a.x - e.outward.x * (bw + gap), kind: 'frame' });
+    if (edgeBoardOn && rules.frameJoist && exposed(e)) {
+      // a pair of joists touching each other, the joint (board width + gap from the edge) falls between them
+      const joint = e.a.x - e.outward.x * (bw + gap);
+      fixedXs.push({ x: joint - jt / 2, kind: 'frame' });
+      fixedXs.push({ x: joint + jt / 2, kind: 'frame' });
+    }
   }
   fixedXs.sort((p, q) => p.x - q.x);
   const fixedSorted: { x: number; kind: JoistKind }[] = [];
   for (const f of fixedXs) {
     const last = fixedSorted[fixedSorted.length - 1];
-    if (last && f.x - last.x <= 60) {
+    const pair = last && last.kind === 'frame' && f.kind === 'frame' && Math.abs(f.x - last.x - jt) < 1;
+    if (last && f.x - last.x <= 60 && !pair) {
       if (f.kind === 'edge') last.kind = 'edge';
       continue;
     }

@@ -1,72 +1,12 @@
-import { useState, type ReactNode } from 'react';
-import { edges as polyEdges, normalizePolygon, validatePolygon } from '../engine/geometry';
+import { useState } from 'react';
+import { edges as polyEdges, moveVertex, normalizePolygon, validatePolygon } from '../engine/geometry';
 import { productName, useT } from '../i18n';
 import { CATALOG, CONCRETE_PRODUCTS, DECKING_PRODUCTS, FRAMING_PRODUCTS, POST_PRODUCTS, PRODUCT_MAP } from '../model/catalog';
 import { defaultRules } from '../model/defaults';
 import type { DeckParams, Pt, RuleSet } from '../model/types';
 import { useApp, type PanelTab } from '../state';
 import { money } from '../utils/format';
-
-function Num({ label, value, onChange, step = 1, min, max, hint }: { label: string; value: number; onChange: (v: number) => void; step?: number; min?: number; max?: number; hint?: string }) {
-  const [text, setText] = useState<string | null>(null);
-  return (
-    <label className="field">
-      <span>{label}</span>
-      <input
-        type="number"
-        step={step}
-        min={min}
-        max={max}
-        value={text ?? String(value)}
-        onChange={(e) => setText(e.target.value)}
-        onBlur={() => {
-          if (text !== null) {
-            const v = parseFloat(text);
-            if (Number.isFinite(v)) onChange(v);
-            setText(null);
-          }
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-        }}
-      />
-      {hint && <small>{hint}</small>}
-    </label>
-  );
-}
-
-function Sel({ label, value, options, onChange }: { label: string; value: string; options: { value: string; label: string }[]; onChange: (v: string) => void }) {
-  return (
-    <label className="field">
-      <span>{label}</span>
-      <select value={value} onChange={(e) => onChange(e.target.value)}>
-        {options.map((o) => (
-          <option key={o.value} value={o.value}>
-            {o.label}
-          </option>
-        ))}
-      </select>
-    </label>
-  );
-}
-
-function Chk({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
-  return (
-    <label className="field chk">
-      <input type="checkbox" checked={checked} onChange={(e) => onChange(e.target.checked)} />
-      <span>{label}</span>
-    </label>
-  );
-}
-
-function Group({ title, children }: { title: string; children: ReactNode }) {
-  return (
-    <fieldset className="group">
-      <legend>{title}</legend>
-      {children}
-    </fieldset>
-  );
-}
+import { Chk, Group, Num, Sel } from './fields';
 
 export function SidePanel() {
   const { ui, setUi } = useApp();
@@ -336,20 +276,6 @@ function ParamsPanel() {
       </Group>
     </div>
   );
-}
-
-function moveVertex(poly: Pt[], i: number, v: Pt): Pt[] {
-  const n = poly.length;
-  const out = poly.map((p) => ({ ...p }));
-  const old = poly[i];
-  const pi = (i - 1 + n) % n;
-  const ni = (i + 1) % n;
-  out[i] = { ...v };
-  if (Math.abs(poly[pi].y - old.y) < 0.5) out[pi].y = v.y;
-  else out[pi].x = v.x;
-  if (Math.abs(poly[ni].y - old.y) < 0.5) out[ni].y = v.y;
-  else out[ni].x = v.x;
-  return out;
 }
 
 function SelectionPanel() {
@@ -645,7 +571,7 @@ function RulesPanel() {
   );
 }
 
-function PricesPanel() {
+export function PricesPanel() {
   const { project, updateProject, saveDefaultPrices, lang } = useApp();
   const { t } = useT();
   const [saved, setSaved] = useState(false);

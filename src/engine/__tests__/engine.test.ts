@@ -77,7 +77,12 @@ describe('design', () => {
     for (const b of lay.bearers) expect(b.maxSpan).toBe(1500);
     expect(Math.max(...lay.bearers.map((b) => b.postSpacing))).toBeLessThanOrEqual(1500);
     expect(d.stairs.length).toBe(1);
-    expect(d.stairs[0].risers).toBeGreaterThanOrEqual(3);
+    // 450 rise: 3 risers of 150, two 140 boards per tread give a 270 going, 2R+G = 570
+    expect(d.stairs[0].risers).toBe(3);
+    expect(d.stairs[0].riser).toBeCloseTo(150, 3);
+    expect(d.stairs[0].going).toBe(270);
+    expect(d.stairs[0].boardsPerTread).toBe(2);
+    expect(d.stairs[0].twoRG).toBeCloseTo(570, 3);
     expect(d.bom.lines.length).toBeGreaterThan(5);
     expect(d.bom.total).toBeGreaterThan(0);
     expect(d.method.length).toBeGreaterThan(5);
@@ -206,6 +211,32 @@ describe('design', () => {
     expect(lay.fieldPoly).toEqual(d.poly);
     expect(lay.boards[0].runs[0].length).toBeCloseTo(6000, 3);
     expect(d.bom.lines.some((l) => l.productId === 'modelo-endboard-140x23')).toBe(false);
+  });
+  it('sizes stairs from a given height to the NCC band', () => {
+    const p = newProject('stairs', true);
+    p.stairs[0].rise = 1200;
+    const d = computeDesign(p);
+    const s = d.stairs[0];
+    expect(s.rise).toBe(1200);
+    expect(s.risers).toBe(7); // 171 risers
+    expect(s.riser).toBeGreaterThanOrEqual(115);
+    expect(s.riser).toBeLessThanOrEqual(190);
+    expect(s.going).toBeGreaterThanOrEqual(240);
+    expect(s.going).toBeLessThanOrEqual(355);
+    expect(s.twoRG).toBeGreaterThanOrEqual(550);
+    expect(s.twoRG).toBeLessThanOrEqual(700);
+    expect(s.boardsPerTread * (140 + 5) - 5 - 15).toBe(s.going);
+    expect(s.warnings.length).toBe(0);
+    expect(s.handrail).toBe(true);
+    // 19 mm hardwood: three 86 boards make a 251 going
+    const hw = newProject('hw stairs', true);
+    hw.params.deckHeight = 700;
+    hw.params.deckingProductId = 'hw-86x19';
+    hw.params.boardGap = 4;
+    const sh = computeDesign(hw).stairs[0];
+    expect(sh.boardsPerTread).toBe(3);
+    expect(sh.going).toBe(251);
+    expect(sh.twoRG).toBeGreaterThanOrEqual(550);
   });
   it('rejects a non orthogonal polygon', () => {
     const p = newProject('bad');

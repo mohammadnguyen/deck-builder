@@ -284,7 +284,6 @@ export const zh: Record<string, string> = {
   'm.decking.fascia': '外露边装封边板。',
   'm.stairs': '楼梯 {id}：宽 {width} mm，{risers} 级 x {riser} mm，going {going} mm，{treads} 个踏板，总进深 {run} mm，{stringers} 根 stringer 长 {stringerLength} mm，每踏 {boards} 块板。',
   'm.stairs.n1': 'Stringer 顶部螺栓固定到 deck 框架，底部坐在 H4 kicker 和混凝土垫上。',
-  'm.stairs.n2': '各级等高。踏板防滑 (P4 / R11) 或加防滑条。',
   'm.stairs.handrail': '高差超过 1 m：两侧设扶手或栏杆，距 nosing 线 865 mm。',
   'm.balustrade': '栏杆：{posts} 根柱，间距最大 {spacing} mm，高 {height} mm，总长 {length} m，填充：{infill}。',
   'm.balustrade.n1': '柱用 2 x M12 穿过 joist 或 bearer 固定，不能开槽。',
@@ -636,4 +635,12 @@ export const zh: Record<string, string> = {
   'canvas.stair': '楼梯 {id}',
   'canvas.width': '宽',
   'canvas.delete': '删除',
+
+  'g.stairRise': '高',
+  'g.stairRiseHint': '楼梯高度：底部地面到 deck 完成面。默认跟 deck 高度一样，地面有高差就改这里。riser、going 按 NCC 住宅楼梯规定自动算。',
+  'sel.stairRise': '楼梯高度 (mm)，底部地面到完成面',
+  'sel.stairRiseFollow': '跟随 deck 高度',
+  'canvas.rise': '高',
+  'm.stairs.n2': '各级等高。按 NCC 住宅楼梯：riser 115 到 190，going 240 到 355，2R+G 550 到 700。踏板防滑 (P4 / R11) 或加防滑条。',
+  'm.stairs.n3': '楼梯高度 {rise} mm 是按底部地面量的；现场地面不一样就改楼梯高度重新算。',
 };

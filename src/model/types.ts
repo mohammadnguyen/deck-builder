@@ -20,8 +20,10 @@ export interface Stair {
   /** distance from the edge start vertex to the stair's first side, along the edge */
   offset: number;
   width: number;
-  /** ground level at the stair base relative to general ground (+ = ground is higher, less rise) */
+  /** ground level at the stair base relative to general ground (+ = ground is higher, less rise); legacy, see rise */
   groundOffset: number;
+  /** total rise from the ground at the bottom step to the deck surface; defaults to the deck height */
+  rise?: number;
 }
 
 export type BalustradeInfill = 'slats' | 'wire' | 'none';

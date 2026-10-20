@@ -397,7 +397,12 @@ function SelectionPanel() {
         <small>{t('sel.edge', { n: s.edgeIndex + 1 })}</small>
         <Num label={t('sel.stairOffset')} value={s.offset} onChange={(v) => upd({ offset: Math.max(0, Math.min(v, (e?.length ?? v) - s.width)) })} step={10} min={0} />
         <Num label={t('sel.stairWidth')} value={s.width} onChange={(v) => upd({ width: Math.max(300, v) })} step={50} min={300} />
-        <Num label={t('sel.stairGround')} value={s.groundOffset} onChange={(v) => upd({ groundOffset: v })} step={10} />
+        <Num label={t('sel.stairRise')} value={Math.round(s.rise ?? project.params.deckHeight - s.groundOffset)} onChange={(v) => upd({ rise: Math.max(100, v), groundOffset: 0 })} step={10} min={100} />
+        {s.rise !== undefined && (
+          <button className="btn ghost" onClick={() => upd({ rise: undefined, groundOffset: 0 })}>
+            {t('sel.stairRiseFollow')}
+          </button>
+        )}
         {d && (
           <div className="kv">
             <div>

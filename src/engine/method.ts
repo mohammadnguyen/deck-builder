@@ -123,8 +123,11 @@ export function buildMethod(m: MethodInput): MethodStep[] {
       ...(m.layout.edgeBoards.length
         ? [{ key: 'm.decking.edgeBoard', params: { n: m.layout.edgeBoards.length, mitres: m.layout.totals.mitres, product: m.edgeBoardName, lm: (m.layout.totals.edgeBoardLm / 1000).toFixed(1) } }]
         : []),
+      ...(m.layout.breakers.length
+        ? [{ key: 'm.decking.breaker', params: { n: m.layout.breakers.length, lm: (m.layout.totals.breakerLm / 1000).toFixed(1) } }]
+        : []),
       { key: m.clips ? 'm.decking.clips.n1' : 'm.decking.n1' },
-      { key: 'm.decking.n2' },
+      { key: m.layout.breakers.length ? 'm.decking.n2.breaker' : 'm.decking.n2' },
       { key: 'm.decking.n3' },
       ...(m.composite ? [{ key: 'm.decking.composite' }] : []),
       ...(p.fascia ? [{ key: 'm.decking.fascia' }] : []),

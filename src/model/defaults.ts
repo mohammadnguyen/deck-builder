@@ -109,6 +109,7 @@ export function defaultParams(): DeckParams {
     edgeBoard: true,
     edgeBoardProductId: 'auto',
     fascia: false,
+    breakerBoards: 'auto',
     oil: false,
     joistTape: true,
     weedMat: true,

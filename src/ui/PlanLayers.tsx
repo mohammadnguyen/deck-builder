@@ -46,6 +46,7 @@ export const COLORS = {
   boardStroke: '#c9a874',
   edgeBoard: '#c98f4f',
   edgeBoardStroke: '#7c4a1d',
+  breaker: '#d8b07a',
   frameJoist: '#7c4a1d',
   join: '#7c2d12',
   balPost: '#0f766e',
@@ -103,7 +104,7 @@ export function DimChain({ positions, fixed, axis, fs, color = COLORS.dim, sw }:
     els.push(<line key="l" x1={pos[0]} y1={fixed} x2={pos[pos.length - 1]} y2={fixed} stroke={color} strokeWidth={sw} />);
     pos.forEach((p, i) => {
       els.push(<line key={`t${i}`} x1={p} y1={fixed - tick} x2={p} y2={fixed + tick} stroke={color} strokeWidth={sw} />);
-      if (i > 0) {
+      if (i > 0 && p - pos[i - 1] >= fs * 2.4) {
         els.push(
           <text key={`x${i}`} x={(p + pos[i - 1]) / 2} y={fixed - tick * 0.8} fontSize={fs} fill={color} textAnchor="middle">
             {p - pos[i - 1]}
@@ -115,7 +116,7 @@ export function DimChain({ positions, fixed, axis, fs, color = COLORS.dim, sw }:
     els.push(<line key="l" x1={fixed} y1={pos[0]} x2={fixed} y2={pos[pos.length - 1]} stroke={color} strokeWidth={sw} />);
     pos.forEach((p, i) => {
       els.push(<line key={`t${i}`} x1={fixed - tick} y1={p} x2={fixed + tick} y2={p} stroke={color} strokeWidth={sw} />);
-      if (i > 0) {
+      if (i > 0 && p - pos[i - 1] >= fs * 2.4) {
         const cy = (p + pos[i - 1]) / 2;
         els.push(
           <text key={`y${i}`} x={fixed - tick * 0.8} y={cy} fontSize={fs} fill={color} textAnchor="middle" transform={`rotate(-90 ${fixed - tick * 0.8} ${cy})`}>
@@ -202,6 +203,11 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
               ))}
             </g>
           );
+        })}
+      {L.boards && lay &&
+        lay.breakers.map((br, i) => {
+          const r = segRect(br.seg, br.width);
+          return <rect key={`br${i}`} x={r.x} y={r.y} width={r.w} height={r.h} fill={COLORS.breaker} stroke={COLORS.edgeBoardStroke} strokeWidth={sw * 1.2} />;
         })}
       {L.boards && L.rowNumbers && lay &&
         lay.boards.map((row, i, rows) => {

@@ -1,0 +1,115 @@
+import type { DeckParams, RuleSet } from '../model/types';
+import type { BalustradeDesign } from './balustrade';
+import type { LayoutResult } from './layout';
+import type { StairDesign } from './stairs';
+
+export interface MethodStep {
+  key: string;
+  params: Record<string, string | number>;
+  notes: { key: string; params?: Record<string, string | number> }[];
+}
+
+export interface MethodInput {
+  params: DeckParams;
+  rules: RuleSet;
+  layout: LayoutResult;
+  areaM2: number;
+  postCount: number;
+  postTop: number;
+  postLength: number;
+  postName: string;
+  concreteM3: number;
+  bags: number;
+  bearerName: string;
+  joistName: string;
+  deckingName: string;
+  boardThickness: number;
+  joistDepth: number;
+  bearerDepth: number;
+  balustrade: BalustradeDesign;
+  stairs: StairDesign[];
+  braceCount: number;
+  pathway: string;
+}
+
+export function buildMethod(m: MethodInput): MethodStep[] {
+  const p = m.params;
+  const steps: MethodStep[] = [];
+  const frameDrop = m.boardThickness + m.joistDepth;
+  steps.push({
+    key: 'm.approvals',
+    params: { area: m.areaM2.toFixed(1), height: p.deckHeight, pathway: m.pathway },
+    notes: [{ key: 'm.approvals.n1' }, { key: 'm.approvals.n2' }, { key: 'm.approvals.n3' }],
+  });
+  steps.push({
+    key: 'm.setout',
+    params: { posts: m.postCount },
+    notes: [{ key: 'm.setout.n1' }, { key: 'm.setout.n2' }],
+  });
+  if (p.footingType === 'stump') {
+    steps.push({
+      key: 'm.footings.stump',
+      params: { count: m.postCount, dia: p.footingDiameter, depth: p.footingDepth, bags: m.bags, m3: m.concreteM3.toFixed(2), post: m.postName, postLength: m.postLength },
+      notes: [{ key: 'm.footings.stump.n1' }, { key: 'm.footings.stump.n2' }, { key: 'm.footings.n3' }],
+    });
+  } else {
+    steps.push({
+      key: 'm.footings.stirrup',
+      params: { count: m.postCount, pad: p.padSize, depth: p.padDepth, bags: m.bags, m3: m.concreteM3.toFixed(2), post: m.postName, postLength: m.postLength },
+      notes: [{ key: 'm.footings.stirrup.n1' }, { key: 'm.footings.n3' }],
+    });
+  }
+  steps.push({
+    key: 'm.posts',
+    params: { postTop: Math.round(m.postTop), drop: p.bearerToPost === 'onTop' ? frameDrop + m.bearerDepth : frameDrop },
+    notes: [{ key: p.bearerToPost === 'onTop' ? 'm.posts.onTop' : 'm.posts.bolted' }],
+  });
+  steps.push({
+    key: 'm.bearers',
+    params: { bearer: m.bearerName, lam: p.bearerLaminations, count: m.layout.bearers.length, maxSpan: Math.round(m.layout.maxBearerSpanUsed), bolts: m.rules.boltsPerPost },
+    notes: [{ key: 'm.bearers.n1' }, { key: 'm.bearers.n2' }],
+  });
+  if (m.layout.ledgers.length) {
+    steps.push({
+      key: 'm.ledger',
+      params: { count: m.layout.ledgers.length, spacing: m.rules.ledgerBoltSpacing },
+      notes: [{ key: 'm.ledger.n1' }, { key: 'm.ledger.n2' }],
+    });
+  }
+  steps.push({
+    key: 'm.joists',
+    params: { joist: m.joistName, spacing: p.joistSpacing, count: m.layout.joists.length, span: Math.round(m.layout.joistSpanUsed), crossings: m.layout.totals.joistBearerCrossings },
+    notes: [{ key: 'm.joists.n1' }, { key: 'm.joists.n2' }, { key: 'm.joists.n3', params: { joins: m.layout.totals.boardJoins } }],
+  });
+  if (m.braceCount > 0) {
+    steps.push({ key: 'm.bracing', params: { count: m.braceCount }, notes: [{ key: 'm.bracing.n1' }] });
+  }
+  steps.push({
+    key: 'm.decking',
+    params: { decking: m.deckingName, gap: p.boardGap, rows: m.layout.totals.boardRows, screws: m.layout.totals.screws, perCrossing: m.rules.screwsPerCrossing },
+    notes: [{ key: 'm.decking.n1' }, { key: 'm.decking.n2' }, { key: 'm.decking.n3' }, ...(p.fascia ? [{ key: 'm.decking.fascia' }] : [])],
+  });
+  for (const s of m.stairs) {
+    steps.push({
+      key: 'm.stairs',
+      params: {
+        id: s.id, width: s.width, risers: s.risers, riser: Math.round(s.riser), going: s.going, treads: s.treads,
+        stringers: s.stringerCount, stringerLength: s.stringerLength, boards: s.boardsPerTread, run: Math.round(s.totalRun),
+      },
+      notes: [{ key: 'm.stairs.n1' }, { key: 'm.stairs.n2' }, ...(s.handrail ? [{ key: 'm.stairs.handrail' }] : [])],
+    });
+  }
+  if (m.balustrade.enabled) {
+    steps.push({
+      key: 'm.balustrade',
+      params: { posts: m.balustrade.posts.length, height: p.balustrade.height, spacing: p.balustrade.postSpacing, infill: p.balustrade.infill, length: (m.balustrade.totalLength / 1000).toFixed(1) },
+      notes: [{ key: 'm.balustrade.n1' }, { key: 'm.balustrade.n2' }, { key: `m.balustrade.${p.balustrade.infill}` }],
+    });
+  }
+  steps.push({
+    key: 'm.finish',
+    params: {},
+    notes: [{ key: 'm.finish.n1' }, { key: 'm.finish.n2' }, { key: 'm.finish.n3' }],
+  });
+  return steps;
+}

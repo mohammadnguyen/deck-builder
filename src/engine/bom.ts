@@ -40,12 +40,25 @@ export interface CutList {
   oversize: number[];
 }
 
+export interface BomOptions {
+  pricesIncludeGst: boolean;
+  supplierDiscountPct: number;
+  deliveryFee: number;
+}
+
 export interface BomResult {
   lines: BomLine[];
   cutlists: CutList[];
+  /** sum of all lines before discount */
+  linesTotal: number;
+  discount: number;
+  delivery: number;
+  /** after discount and delivery, before GST is separated */
   subtotal: number;
+  exGst: number;
   gst: number;
   total: number;
+  pricesIncludeGst: boolean;
 }
 
 const CATEGORY_ORDER: ProductCategory[] = ['decking', 'framing', 'post', 'balustrade', 'hardware', 'concrete', 'consumable'];
@@ -58,6 +71,7 @@ export function buildBom(
   wasteDeckingPct: number,
   wasteFramingPct: number,
   gstPct: number,
+  opts: BomOptions = { pricesIncludeGst: false, supplierDiscountPct: 0, deliveryFee: 0 },
 ): BomResult {
   const lines: BomLine[] = [];
   const cutlists: CutList[] = [];
@@ -136,7 +150,14 @@ export function buildBom(
     if (c !== 0) return c;
     return p.productId.localeCompare(q.productId);
   });
-  const subtotal = lines.reduce((s, l) => s + l.total, 0);
+  const linesTotal = lines.reduce((s, l) => s + l.total, 0);
+  const discount = (linesTotal * Math.max(0, opts.supplierDiscountPct)) / 100;
+  const delivery = Math.max(0, opts.deliveryFee);
+  const subtotal = linesTotal - discount + delivery;
+  if (opts.pricesIncludeGst) {
+    const exGst = subtotal / (1 + gstPct / 100);
+    return { lines, cutlists, linesTotal, discount, delivery, subtotal, exGst, gst: subtotal - exGst, total: subtotal, pricesIncludeGst: true };
+  }
   const gst = (subtotal * gstPct) / 100;
-  return { lines, cutlists, subtotal, gst, total: subtotal + gst };
+  return { lines, cutlists, linesTotal, discount, delivery, subtotal, exGst: subtotal, gst, total: subtotal + gst, pricesIncludeGst: false };
 }

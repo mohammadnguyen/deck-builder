@@ -1,4 +1,4 @@
-import { PRODUCT_MAP, POST_PRODUCTS, product } from '../model/catalog';
+import { PRODUCT_MAP, POST_PRODUCTS, hangerFor, product, resolveProductId } from '../model/catalog';
 import type { Project, Pt } from '../model/types';
 import { designBalustrade, type BalustradeDesign } from './balustrade';
 import { buildBom, type BomResult, type CountItem, type Piece } from './bom';
@@ -70,20 +70,24 @@ export function computeDesign(project: Project): DesignResult {
   const decking = product(params.deckingProductId);
   const joist = product(params.joistProductId);
   const bearer = product(params.bearerProductId);
+  const flush = params.joistConnection === 'flush';
   const boardT = decking.thickness ?? 19;
   const joistD = joist.depth ?? 140;
   const bearerD = bearer.depth ?? 140;
   const joistTop = params.deckHeight - boardT;
-  const bearerTop = joistTop - joistD;
+  // flush: joists hang between bearers with their tops level; on top: joists sit on bearers
+  const bearerTop = flush ? joistTop : joistTop - joistD;
   const postTop = params.bearerToPost === 'onTop' ? bearerTop - bearerD : bearerTop;
-  const groundClearance = bearerTop - bearerD;
+  const groundClearance = flush ? joistTop - Math.max(joistD, bearerD) : bearerTop - bearerD;
   const levels: Levels = { boardT, joistD, bearerD, joistTop, bearerTop, postTop, groundClearance };
+  const bearerWidth = params.bearerLaminations * (bearer.width ?? 45);
+  const concreteId = resolveProductId(params.concreteProductId || 'concrete-mix-20kg');
 
   const emptyBal: BalustradeDesign = {
     enabled: false, edges: [], segments: [], posts: [], totalLength: 0, railPieces: [], railCount: 2,
     slatCount: 0, slatLength: 0, wireLength: 0, wireKits: 0, postLength: 0,
   };
-  const emptyBom: BomResult = { lines: [], cutlists: [], subtotal: 0, gst: 0, total: 0 };
+  const emptyBom: BomResult = { lines: [], cutlists: [], linesTotal: 0, discount: 0, delivery: 0, subtotal: 0, exGst: 0, gst: 0, total: 0, pricesIncludeGst: params.pricesIncludeGst };
 
   if (!valid.ok) {
     return {
@@ -105,6 +109,8 @@ export function computeDesign(project: Project): DesignResult {
     boardWidth: decking.width ?? 86,
     boardGap: params.boardGap,
     joistThickness: joist.width ?? 45,
+    bearerWidth,
+    flush,
     deckingMaxStock: maxStock(decking.id),
     joistMaxStock: maxStock(joist.id),
     bearerMaxStock: maxStock(bearer.id),
@@ -169,6 +175,8 @@ export function computeDesign(project: Project): DesignResult {
 
   // ---- fascia ----
   const fasciaProductId = decking.fasciaProductId && PRODUCT_MAP[decking.fasciaProductId] ? decking.fasciaProductId : decking.id;
+  const deckScrew = decking.screwProductId && PRODUCT_MAP[decking.screwProductId] ? decking.screwProductId : 'screw-deck-10gx50';
+  const clipId = decking.hiddenClipProductId && PRODUCT_MAP[decking.hiddenClipProductId] ? decking.hiddenClipProductId : null;
   const fascia: FasciaRun[] = params.fascia ? E.filter((e) => !houseEdges.includes(e.index)).map((e) => ({ edgeIndex: e.index, length: e.length })) : [];
 
   // ---- pieces & counts ----
@@ -182,7 +190,7 @@ export function computeDesign(project: Project): DesignResult {
   };
 
   for (const b of layout.bearers) for (const lam of b.pieces) for (const len of lam) push(bearer.id, len, 'bearer');
-  for (const j of layout.joists) for (const len of j.pieces) push(joist.id, len, 'joist');
+  for (const j of layout.joists) for (const len of j.pieces) push(joist.id, flush ? len : len, 'joist');
   for (let i = 0; i < layout.totals.boardJoins; i++) push(joist.id, 300, 'joinBlock');
   for (const row of layout.boards) for (const run of row.runs) for (const len of run.pieces) push(decking.id, len, 'decking');
   const fasciaMax = maxStock(fasciaProductId) - rules.boardEndAllowance;
@@ -224,22 +232,53 @@ export function computeDesign(project: Project): DesignResult {
     for (const len of split.pieces) push(joist.id, len + rules.joistEndAllowance, 'ledger');
     count('bolt-m12-hdg', l.bolts, 'ledger');
   }
-  count('screw-deck-10gx50', layout.totals.screws + treadScrews + fasciaScrews, 'decking');
-  count('triple-grip', layout.totals.joistBearerCrossings, 'joist');
-  count('nail-30x2.8-galv', layout.totals.joistBearerCrossings * 6, 'joist');
-  count('joist-hanger', layout.totals.hangers, 'ledger');
+  // ---- decking fixings: hidden clips on grooved boards, screws elsewhere ----
+  let clipCount = 0;
+  let edgeScrews = 0;
+  if (clipId && layout.boards.length) {
+    const rows = layout.boards;
+    rows.forEach((row, i) => {
+      const crossings = row.runs.reduce((s, r) => s + r.crossings, 0);
+      const joins = row.runs.reduce((s, r) => s + r.joins.length, 0);
+      if (i === 0 || i === rows.length - 1) edgeScrews += (crossings + joins) * rules.screwsPerCrossing;
+      else {
+        clipCount += crossings + joins;
+        edgeScrews += joins * rules.screwsPerCrossing; // board ends at a join are face screwed
+      }
+    });
+    count(clipId, clipCount, 'clip');
+    count(deckScrew, edgeScrews + treadScrews + fasciaScrews, 'edgeScrew');
+  } else {
+    count(deckScrew, layout.totals.screws + treadScrews + fasciaScrews, 'decking');
+  }
+  // ---- joist to bearer ----
+  if (flush) {
+    count(hangerFor(joist.id), layout.totals.hangers, 'joist');
+    count('nail-75x3.05', layout.totals.hangers * rules.hangerNails, 'joist');
+  } else {
+    count('triple-grip', layout.totals.joistBearerCrossings, 'joist');
+    count('nail-30x2.8-galv', layout.totals.joistBearerCrossings * 6, 'joist');
+    count(hangerFor(joist.id), layout.totals.hangers, 'ledger');
+    count('nail-75x3.05', layout.totals.hangers * rules.hangerNails, 'ledger');
+  }
+  // ---- bearer to post ----
   if (params.bearerToPost === 'bolted') count('bolt-m12-hdg', postCount * rules.boltsPerPost, 'bearer');
+  else if (params.bearerToPost === 'screwed') count('screw-batten-14gx100', postCount * rules.battenScrewsPerPost, 'bearer');
   else count('post-cap-hdg', postCount, 'bearer');
   if (params.footingType === 'stirrup') count('stirrup-hdg', postCount, 'footing');
   count('bolt-m12-hdg', braceCount * 2, 'brace');
-  count('tape-joist', Math.ceil(layout.totals.joistLm / rules.joistTapeRoll), 'joist');
+  if (!flush || decking.family !== 'composite') count('tape-joist', Math.ceil(layout.totals.joistLm / rules.joistTapeRoll), 'joist');
   if (params.oil && decking.family !== 'composite') {
     count('oil-decking', (areaM2 * rules.oilCoats) / rules.oilCoverage, 'finish');
   }
   if (decking.family === 'hardwood') count('end-seal', Math.max(1, Math.ceil(areaM2 / 60)), 'finish');
-  count('concrete-20kg', bags, 'footing');
+  count(concreteId, bags, 'footing');
 
-  const bom = buildBom(pieces, counts, project.prices, rules, params.wasteDeckingPct, params.wasteFramingPct, params.gstPct);
+  const bom = buildBom(pieces, counts, project.prices, rules, params.wasteDeckingPct, params.wasteFramingPct, params.gstPct, {
+    pricesIncludeGst: params.pricesIncludeGst,
+    supplierDiscountPct: params.supplierDiscountPct,
+    deliveryFee: params.deliveryFee,
+  });
 
   const compliance = assessCompliance({
     params, rules, areaM2, postClear: postTop, groundClearance, layout, balustrade, stairs, houseEdges,
@@ -248,11 +287,14 @@ export function computeDesign(project: Project): DesignResult {
   if (postTop > (rules.postMaxHeight[postProductId] ?? Infinity)) {
     compliance.warnings.unshift({ severity: 'error', key: 'compliance.postTooTall', params: { height: Math.round(postTop), max: rules.postMaxHeight[postProductId] ?? 0 } });
   }
+  if (params.bearerToPost === 'screwed') compliance.warnings.push({ severity: 'info', key: 'compliance.screwedBearers', params: { n: rules.battenScrewsPerPost } });
+  if (flush) compliance.warnings.push({ severity: 'info', key: 'compliance.flushNotes' });
 
   const method = buildMethod({
     params, rules, layout, areaM2, postCount, postTop, postLength, postName: postProductId, concreteM3, bags,
     bearerName: bearer.id, joistName: joist.id, deckingName: decking.id, boardThickness: boardT, joistDepth: joistD,
     bearerDepth: bearerD, balustrade, stairs, braceCount, pathway: compliance.pathway,
+    clips: clipId ? clipCount : undefined, composite: decking.family === 'composite',
   });
 
   return {

@@ -48,7 +48,9 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
   const decking = PRODUCT_MAP[p.deckingProductId];
   const post = PRODUCT_MAP[design.postProductId];
   const sizeOf = (prod?: { id: string }) => (prod ? sizeLabel(prod.id) : '');
-  const bolted = p.bearerToPost === 'bolted';
+  const bolted = p.bearerToPost !== 'onTop';
+  const screwed = p.bearerToPost === 'screwed';
+  const flush = p.joistConnection === 'flush';
   const stump = p.footingType === 'stump';
 
   const detailCount = 2 + (design.balustrade.enabled ? 1 : 0) + (design.stairs.length > 0 ? 1 : 0) + (design.layout && design.layout.ledgers.length > 0 ? 1 : 0);
@@ -59,24 +61,50 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
         {[60, 86, 112, 138, 164, 190, 216].map((x) => (
           <rect key={x} x={x} y={50} width={24} height={6} fill={TIMBER} stroke={INK} strokeWidth={0.5} />
         ))}
-        {/* joist */}
-        <rect x={56} y={56} width={188} height={14} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
-        {/* bearer */}
-        {bolted ? (
+        {flush ? (
           <>
-            <rect x={126} y={70} width={16} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
-            <rect x={158} y={70} width={16} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
-            <line x1={122} y1={78} x2={178} y2={78} stroke={INK} strokeWidth={1.2} />
-            <line x1={122} y1={92} x2={178} y2={92} stroke={INK} strokeWidth={1.2} />
+            {/* bearer end-on with joists hung either side, tops level */}
+            <rect x={56} y={56} width={80} height={14} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+            <rect x={164} y={56} width={80} height={14} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+            <rect x={136} y={56} width={28} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
+            <polyline points="136,60 130,60 130,72 136,72" fill="none" stroke={INK} strokeWidth={1.2} />
+            <polyline points="164,60 170,60 170,72 164,72" fill="none" stroke={INK} strokeWidth={1.2} />
+            {screwed ? (
+              <>
+                <line x1={130} y1={62} x2={150} y2={66} stroke={INK} strokeWidth={1} />
+                <line x1={130} y1={78} x2={150} y2={82} stroke={INK} strokeWidth={1} />
+              </>
+            ) : (
+              <>
+                <line x1={128} y1={64} x2={172} y2={64} stroke={INK} strokeWidth={1.2} />
+                <line x1={128} y1={80} x2={172} y2={80} stroke={INK} strokeWidth={1.2} />
+              </>
+            )}
+            <rect x={142} y={86} width={16} height={stump ? 109 : 59} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+            <rect x={142} y={56} width={16} height={30} fill="none" stroke={INK} strokeWidth={0.4} strokeDasharray="2 2" />
           </>
         ) : (
           <>
-            <rect x={120} y={70} width={60} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
-            <polyline points="136,100 136,112 164,112 164,100" fill="none" stroke={INK} strokeWidth={1} />
+            {/* joist */}
+            <rect x={56} y={56} width={188} height={14} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+            {/* bearer */}
+            {bolted ? (
+              <>
+                <rect x={126} y={70} width={16} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
+                <rect x={158} y={70} width={16} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
+                <line x1={122} y1={78} x2={178} y2={78} stroke={INK} strokeWidth={1.2} />
+                <line x1={122} y1={92} x2={178} y2={92} stroke={INK} strokeWidth={1.2} />
+              </>
+            ) : (
+              <>
+                <rect x={120} y={70} width={60} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
+                <polyline points="136,100 136,112 164,112 164,100" fill="none" stroke={INK} strokeWidth={1} />
+              </>
+            )}
+            {/* post */}
+            <rect x={142} y={bolted ? 70 : 100} width={16} height={stump ? (bolted ? 125 : 95) : bolted ? 75 : 45} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
           </>
         )}
-        {/* post */}
-        <rect x={142} y={bolted ? 70 : 100} width={16} height={stump ? (bolted ? 125 : 95) : bolted ? 75 : 45} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
         {/* ground */}
         <line x1={20} y1={150} x2={280} y2={150} stroke={INK} strokeWidth={0.8} />
         <Hatch x={20} y={150} w={100} h={12} />
@@ -113,15 +141,21 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
         <Lbl x={294} y={43} anchor="end">{`${t('d.decking')} ${sizeOf(decking)}`}</Lbl>
         <Leader from={[244, 64]} to={[250, 74]} />
         <Lbl x={294} y={77} anchor="end">{`${t('d.joist')} ${sizeOf(joist)} @ ${p.joistSpacing}`}</Lbl>
-        <Leader from={[bolted ? 174 : 180, 90]} to={[205, 100]} />
+        <Leader from={[flush ? 164 : bolted ? 174 : 180, flush ? 84 : 90]} to={[205, 100]} />
         <Lbl x={294} y={103} anchor="end">{`${t('d.bearer')} ${p.bearerLaminations}/${sizeOf(bearer)}`}</Lbl>
-        {bolted && <Lbl x={294} y={113} anchor="end">{t('d.bolts')}</Lbl>}
+        {screwed && <Lbl x={294} y={113} anchor="end">{`${project.rules.battenScrewsPerPost} x 14g x 100`}</Lbl>}
+        {!screwed && bolted && <Lbl x={294} y={113} anchor="end">{t('d.bolts')}</Lbl>}
         {!bolted && <Lbl x={294} y={113} anchor="end">{t('d.postCap')}</Lbl>}
+        {flush && <Lbl x={294} y={123} anchor="end">{t('d.hanger')}</Lbl>}
         <Leader from={[142, 125]} to={[90, 125]} />
         <Lbl x={88} y={128} anchor="end">{`${t('d.post')} ${sizeOf(post)}`}</Lbl>
         <Lbl x={24} y={146}>{t('d.ground')}</Lbl>
-        <Lbl x={24} y={62}>{t('d.tape')}</Lbl>
-        <Leader from={[48, 60]} to={[70, 56]} />
+        {decking.family !== 'composite' && (
+          <>
+            <Lbl x={24} y={62}>{t('d.tape')}</Lbl>
+            <Leader from={[48, 60]} to={[70, 56]} />
+          </>
+        )}
         <line x1={30} y1={50} x2={50} y2={50} stroke={INK} strokeWidth={0.5} strokeDasharray="2 2" />
         <Lbl x={30} y={46} size={7}>{`${t('d.deckLevel')} +${p.deckHeight}`}</Lbl>
       </Frame>

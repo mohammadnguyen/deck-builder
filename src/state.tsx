@@ -2,6 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { computeDesign, type DesignResult } from './engine';
 import { LangContext, translate } from './i18n';
 import { defaultParams, defaultRules, newProject } from './model/defaults';
+import { PRODUCT_MAP, resolveProductId } from './model/catalog';
 import type { DeckParams, Lang, Project, RuleSet } from './model/types';
 
 export type Tool = 'select' | 'deck' | 'house' | 'stair' | 'pan';
@@ -64,6 +65,13 @@ export function migrateProject(p: Partial<Project>): Project {
     ...(p.params ?? {}),
     balustrade: { ...dp.balustrade, ...(p.params?.balustrade ?? {}) },
   } as DeckParams;
+  for (const k of ['deckingProductId', 'joistProductId', 'bearerProductId', 'concreteProductId'] as const) {
+    const id = resolveProductId(params[k]);
+    params[k] = PRODUCT_MAP[id] ? id : dp[k];
+  }
+  if (params.postProductId !== 'auto' && !PRODUCT_MAP[resolveProductId(params.postProductId)]) params.postProductId = dp.postProductId;
+  const prices: Record<string, number> = {};
+  for (const [k, v] of Object.entries(p.prices ?? {})) prices[resolveProductId(k)] = v;
   const base = newProject(p.name ?? 'Deck');
   return {
     ...base,
@@ -72,7 +80,7 @@ export function migrateProject(p: Partial<Project>): Project {
     houseEdges: p.houseEdges ?? [],
     house: p.house ?? [],
     stairs: p.stairs ?? [],
-    prices: p.prices ?? {},
+    prices,
     rules,
     params,
   } as Project;

@@ -28,6 +28,17 @@ Enter to place the next point along the current direction. Enter closes, Esc can
 a point. Mark edges that touch the house in the Selection panel, or draw the house wall first and the
 tool detects them. Place stairs with the "Add stairs" tool on any open edge and drag them along it.
 
+## 材料与价格 / Materials and prices
+
+材料库和默认做法按 Green Forest Timber 2026 年 5 到 10 月的发票校准：90x45 和 140x45 H3 treated pine F7/MGP10、
+100x100 H4 柱、Modelo 和 NewTechWood 复合板、Camo / Cobra 隐藏扣、JS9045 joist support、14g batten 螺丝、rapid set 混凝土。
+价格为含 GST 单价，默认 5% 供应商折扣和 $180 送货，均可在参数和价格面板修改。标注"估价"的产品不在发票里。
+
+The catalog and default build method are calibrated to Green Forest Timber invoices from May to October 2026:
+90x45 and 140x45 H3 treated pine F7/MGP10, 100x100 H4 posts, Modelo and NewTechWood composite boards, Camo / Cobra
+hidden clips, JS9045 joist supports, 14g batten screws and rapid set concrete. Prices are GST inclusive with a default
+5% supplier discount and $180 delivery, all editable. Products marked "estimate" were not on the invoices.
+
 ## 规则与免责 / Rules and disclaimer
 
 构件跨度、柱距、楼梯几何、栏杆触发高度、exempt 阈值等都在「规则」面板里，随项目保存，也可保存为默认。

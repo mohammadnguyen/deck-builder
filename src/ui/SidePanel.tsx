@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { edges as polyEdges, normalizePolygon, validatePolygon } from '../engine/geometry';
 import { productName, useT } from '../i18n';
-import { CATALOG, DECKING_PRODUCTS, FRAMING_PRODUCTS, POST_PRODUCTS, PRODUCT_MAP } from '../model/catalog';
+import { CATALOG, CONCRETE_PRODUCTS, DECKING_PRODUCTS, FRAMING_PRODUCTS, POST_PRODUCTS, PRODUCT_MAP } from '../model/catalog';
 import { defaultRules } from '../model/defaults';
 import type { DeckParams, Pt, RuleSet } from '../model/types';
 import { useApp, type PanelTab } from '../state';
@@ -191,9 +191,19 @@ function ParamsPanel() {
           onChange={(v) => set('bearerLaminations', Number(v) as 1 | 2)}
         />
         <Sel
+          label={t('p.joistConnection')}
+          value={p.joistConnection}
+          options={[
+            { value: 'flush', label: t('p.joistConnection.flush') },
+            { value: 'onTop', label: t('p.joistConnection.onTop') },
+          ]}
+          onChange={(v) => set('joistConnection', v as DeckParams['joistConnection'])}
+        />
+        <Sel
           label={t('p.bearerToPost')}
           value={p.bearerToPost}
           options={[
+            { value: 'screwed', label: t('p.bearerToPost.screwed') },
             { value: 'bolted', label: t('p.bearerToPost.bolted') },
             { value: 'onTop', label: t('p.bearerToPost.onTop') },
           ]}
@@ -222,6 +232,7 @@ function ParamsPanel() {
             <Num label={t('p.padDepth')} value={p.padDepth} onChange={(v) => set('padDepth', v)} step={50} min={200} />
           </div>
         )}
+        <Sel label={t('p.concrete')} value={p.concreteProductId} options={CONCRETE_PRODUCTS.map((c) => ({ value: c.id, label: productName(c, lang) }))} onChange={(v) => set('concreteProductId', v)} />
       </Group>
       <Group title={t('p.group.balustrade')}>
         <Sel
@@ -264,6 +275,11 @@ function ParamsPanel() {
           <Num label={t('p.wasteDecking')} value={p.wasteDeckingPct} onChange={(v) => set('wasteDeckingPct', v)} min={0} max={50} />
           <Num label={t('p.wasteFraming')} value={p.wasteFramingPct} onChange={(v) => set('wasteFramingPct', v)} min={0} max={50} />
           <Num label={t('p.gst')} value={p.gstPct} onChange={(v) => set('gstPct', v)} min={0} max={30} />
+        </div>
+        <Chk label={t('p.pricesIncludeGst')} checked={p.pricesIncludeGst} onChange={(v) => set('pricesIncludeGst', v)} />
+        <div className="row">
+          <Num label={t('p.supplierDiscount')} value={p.supplierDiscountPct} onChange={(v) => set('supplierDiscountPct', v)} min={0} max={50} />
+          <Num label={t('p.deliveryFee')} value={p.deliveryFee} onChange={(v) => set('deliveryFee', v)} min={0} step={10} />
         </div>
         <label className="field">
           <span>{t('p.notes')}</span>
@@ -613,7 +629,11 @@ function PricesPanel() {
         <tbody>
           {CATALOG.map((p) => (
             <tr key={p.id}>
-              <td>{productName(p, lang)}</td>
+              <td>
+                {productName(p, lang)}
+                {p.packSize ? <small className="muted"> · {t('pr.pack', { n: p.packSize })}</small> : null}
+                {p.ref ? <small className="muted"> · {p.ref}</small> : null}
+              </td>
               <td>{t(`unit.${p.unit}`)}</td>
               <td>
                 <input type="number" step={0.1} min={0} value={project.prices[p.id] ?? p.defaultPrice} onChange={(e) => updateProject((pr) => ({ ...pr, prices: { ...pr.prices, [p.id]: Number(e.target.value) } }))} />

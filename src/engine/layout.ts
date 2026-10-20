@@ -105,6 +105,10 @@ export interface LayoutContext {
   boardWidth: number;
   boardGap: number;
   joistThickness: number;
+  /** total bearer width across laminations */
+  bearerWidth: number;
+  /** joists hung flush between bearers (joist supports) instead of sitting on top */
+  flush: boolean;
   deckingMaxStock: number;
   joistMaxStock: number;
   bearerMaxStock: number;
@@ -182,7 +186,11 @@ export function computeLayout(
       lines.push({ pos: e.a.y, kind: 'ledger', edgeIndex: e.index });
       continue;
     }
-    const inset = isHouse ? rules.houseBearerInset : rules.bearerEdgeInset;
+    // Flush framing puts the perimeter bearer at the deck edge (joists cannot cantilever
+    // past a bearer they hang from); on-top framing insets it so the joists overhang.
+    const inset = isHouse
+      ? ctx.flush ? rules.flushHouseInset : rules.houseBearerInset
+      : ctx.flush ? Math.max(ctx.bearerWidth / 2, 45) : rules.bearerEdgeInset;
     lines.push({ pos: e.a.y - e.outward.y * inset, kind: isHouse ? 'house' : 'edge', edgeIndex: e.index });
   }
   lines.sort((p, q) => p.pos - q.pos);
@@ -314,6 +322,7 @@ export function computeLayout(
   }
   const bearerPositions = lines.filter((l) => l.kind !== 'ledger').map((l) => l.pos);
   const ledgerPositions = lines.filter((l) => l.kind === 'ledger').map((l) => l.pos);
+  const allSupports = lines.map((l) => l.pos).sort((p, q) => p - q);
   const joists: JoistRun[] = [];
   let joistCounter = 0;
   let totalHangers = 0;
@@ -324,6 +333,30 @@ export function computeLayout(
     for (const [y0, y1] of intervals) {
       const length = y1 - y0;
       if (length < 100) continue;
+      if (ctx.flush) {
+        // one piece per bay between consecutive supports, hung on a joist support at each end
+        const sup = allSupports.filter((p) => p > y0 - 1 && p < y1 + 1);
+        if (sup.length < 2) continue;
+        const pieces: number[] = [];
+        for (let i = 0; i + 1 < sup.length; i++) {
+          const clear = sup[i + 1] - sup[i] - ctx.bearerWidth;
+          if (clear > 50) pieces.push(clear);
+        }
+        const hangers = pieces.length * 2;
+        totalHangers += hangers;
+        joists.push({
+          id: `J${++joistCounter}`,
+          pos: c.x,
+          seg: { a: { x: c.x, y: sup[0] }, b: { x: c.x, y: sup[sup.length - 1] } },
+          length: sup[sup.length - 1] - sup[0],
+          pieces,
+          splices: sup.slice(1, -1),
+          bearerCrossings: 0,
+          hangers,
+          isEdge: c.edge,
+        });
+        continue;
+      }
       const crossings = bearerPositions.filter((p) => p > y0 + 1 && p < y1 - 1).length;
       const hangers = ledgerPositions.filter((p) => Math.abs(p - y0) < 1 || Math.abs(p - y1) < 1).length;
       const supportsInside = bearerPositions.filter((p) => p > y0 && p < y1);
@@ -344,7 +377,7 @@ export function computeLayout(
       });
     }
   }
-  for (const l of ledgers) l.hangers = joists.filter((j) => j.hangers > 0 && Math.abs(j.seg.a.y - l.seg.a.y) < 1 || Math.abs(j.seg.b.y - l.seg.a.y) < 1).length;
+  for (const l of ledgers) l.hangers = joists.filter((j) => Math.abs(j.seg.a.y - l.seg.a.y) < 1 || Math.abs(j.seg.b.y - l.seg.a.y) < 1).length;
 
   // ---- boards ----
   const bw = ctx.boardWidth;

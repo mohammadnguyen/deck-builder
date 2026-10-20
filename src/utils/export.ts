@@ -40,8 +40,10 @@ function bomRows(design: DesignResult, lang: Lang): (string | number)[][] {
     ]);
   }
   rows.push([]);
-  rows.push([t('bom.subtotal'), '', '', '', '', '', '', Number(design.bom.subtotal.toFixed(2))]);
-  rows.push([t('bom.gst'), '', '', '', '', '', '', Number(design.bom.gst.toFixed(2))]);
+  rows.push([t('bom.subtotal'), '', '', '', '', '', '', Number(design.bom.linesTotal.toFixed(2))]);
+  if (design.bom.discount > 0) rows.push([t('bom.discount'), '', '', '', '', '', '', -Number(design.bom.discount.toFixed(2))]);
+  if (design.bom.delivery > 0) rows.push([t('bom.delivery'), '', '', '', '', '', '', Number(design.bom.delivery.toFixed(2))]);
+  rows.push([design.bom.pricesIncludeGst ? `${t('bom.gst')} (${t('bom.gstIncluded')})` : t('bom.gst'), '', '', '', '', '', '', Number(design.bom.gst.toFixed(2))]);
   rows.push([t('bom.grand'), '', '', '', '', '', '', Number(design.bom.total.toFixed(2))]);
   return rows;
 }

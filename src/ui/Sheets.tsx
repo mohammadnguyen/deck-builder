@@ -131,6 +131,8 @@ export function SheetsView() {
   for (const j of lay.joists) joistGroups.set(Math.round(j.length), (joistGroups.get(Math.round(j.length)) ?? 0) + 1);
   const joistSummary = [...joistGroups.entries()].sort((a, b) => b[0] - a[0]).map(([len, n]) => `${n} x ${len}`).join(', ');
 
+  const clipLine = design.bom.lines.find((l) => l.tags.includes('clip'));
+  const edgeScrewLine = design.bom.lines.find((l) => l.tags.includes('edgeScrew'));
   const byCat = new Map<string, typeof design.bom.lines>();
   for (const l of design.bom.lines) byCat.set(l.category, [...(byCat.get(l.category) ?? []), l]);
 
@@ -270,7 +272,7 @@ export function SheetsView() {
           </div>
           <div className="side-col">
             <h3>{t('sheet.notes')}</h3>
-            <p>{t('sheet.deckingNote1', { decking: p.deckingProductId, gap: p.boardGap })}</p>
+            <p>{t(clipLine ? 'sheet.deckingNote1.clips' : 'sheet.deckingNote1', { decking: p.deckingProductId, gap: p.boardGap })}</p>
             <p>{t('sheet.deckingNote2')}</p>
             {design.balustrade.enabled && <p>{t('sheet.deckingNote3')}</p>}
             <table className="sch">
@@ -287,10 +289,23 @@ export function SheetsView() {
                   <td>{t('legend.join')}</td>
                   <td>{lay.totals.boardJoins}</td>
                 </tr>
-                <tr>
-                  <td>{t('res.screws')}</td>
-                  <td>{lay.totals.screws}</td>
-                </tr>
+                {clipLine ? (
+                  <>
+                    <tr>
+                      <td>{t('tag.clip')}</td>
+                      <td>{clipLine.qty}</td>
+                    </tr>
+                    <tr>
+                      <td>{t('tag.edgeScrew')}</td>
+                      <td>{edgeScrewLine?.qty ?? 0}</td>
+                    </tr>
+                  </>
+                ) : (
+                  <tr>
+                    <td>{t('res.screws')}</td>
+                    <td>{lay.totals.screws}</td>
+                  </tr>
+                )}
                 {design.balustrade.enabled && (
                   <tr>
                     <td>{t('legend.balPost')}</td>
@@ -335,18 +350,55 @@ export function SheetsView() {
             <tfoot>
               <tr>
                 <td colSpan={9}>{t('bom.subtotal')}</td>
-                <td colSpan={2}>{money(design.bom.subtotal)}</td>
+                <td colSpan={2}>{money(design.bom.linesTotal)}</td>
               </tr>
-              <tr>
-                <td colSpan={9}>
-                  {t('bom.gst')} {p.gstPct}%
-                </td>
-                <td colSpan={2}>{money(design.bom.gst)}</td>
-              </tr>
-              <tr className="grand">
-                <td colSpan={9}>{t('bom.grand')}</td>
-                <td colSpan={2}>{money(design.bom.total)}</td>
-              </tr>
+              {design.bom.discount > 0 && (
+                <tr>
+                  <td colSpan={9}>
+                    {t('bom.discount')} {p.supplierDiscountPct}%
+                  </td>
+                  <td colSpan={2}>-{money(design.bom.discount)}</td>
+                </tr>
+              )}
+              {design.bom.delivery > 0 && (
+                <tr>
+                  <td colSpan={9}>{t('bom.delivery')}</td>
+                  <td colSpan={2}>{money(design.bom.delivery)}</td>
+                </tr>
+              )}
+              {design.bom.pricesIncludeGst ? (
+                <>
+                  <tr className="grand">
+                    <td colSpan={9}>
+                      {t('bom.grand')} ({t('bom.gstIncluded')})
+                    </td>
+                    <td colSpan={2}>{money(design.bom.total)}</td>
+                  </tr>
+                  <tr>
+                    <td colSpan={9}>
+                      {t('bom.gst')} {p.gstPct}% ({t('bom.gstIncluded')})
+                    </td>
+                    <td colSpan={2}>{money(design.bom.gst)}</td>
+                  </tr>
+                  <tr>
+                    <td colSpan={9}>{t('bom.exGst')}</td>
+                    <td colSpan={2}>{money(design.bom.exGst)}</td>
+                  </tr>
+                </>
+              ) : (
+                <>
+                  <tr>
+                    <td colSpan={9}>
+                      {t('bom.gst')} {p.gstPct}%
+                    </td>
+                    <td colSpan={2}>{money(design.bom.gst)}</td>
+                  </tr>
+                  <tr className="grand">
+                    <td colSpan={9}>{t('bom.grand')}</td>
+                    <td colSpan={2}>{money(design.bom.total)}</td>
+                  </tr>
+                </>
+              )}
             </tfoot>
           </table>
           <p className="muted small">{t('pr.intro')}</p>
@@ -434,6 +486,7 @@ function CatRows({ cat, lines, offset }: { cat: string; lines: DesignResult['bom
           <td>
             {l.qty}
             {l.extraCount ? <small> ({t('bom.extra', { n: l.extraCount })})</small> : null}
+            {PRODUCT_MAP[l.productId]?.packSize ? <small> ({t('bom.packs', { boxes: Math.ceil(l.qty / (PRODUCT_MAP[l.productId].packSize ?? 1)), size: PRODUCT_MAP[l.productId].packSize ?? 1 })})</small> : null}
           </td>
           <td>{PRODUCT_MAP[l.productId]?.unit === 'm' ? 'pcs' : t(`unit.${l.unit}`)}</td>
           <td>{l.requiredLm !== undefined ? l.requiredLm.toFixed(1) : ''}</td>

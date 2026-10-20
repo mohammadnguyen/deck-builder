@@ -48,7 +48,9 @@ export interface DeckParams {
   joistProductId: string;
   bearerProductId: string;
   bearerLaminations: 1 | 2;
-  bearerToPost: 'bolted' | 'onTop';
+  /** joists hung flush between bearers on joist supports, or sitting on top of bearers */
+  joistConnection: 'flush' | 'onTop';
+  bearerToPost: 'bolted' | 'screwed' | 'onTop';
   postProductId: 'auto' | string;
   attachment: 'freestanding' | 'ledger';
   footingType: 'stump' | 'stirrup';
@@ -56,6 +58,7 @@ export interface DeckParams {
   footingDiameter: number;
   padSize: number;
   padDepth: number;
+  concreteProductId: string;
   fascia: boolean;
   oil: boolean;
   balustrade: BalustradeParams;
@@ -63,6 +66,10 @@ export interface DeckParams {
   wasteDeckingPct: number;
   wasteFramingPct: number;
   gstPct: number;
+  /** supplier prices are quoted GST inclusive (Square invoices) */
+  pricesIncludeGst: boolean;
+  supplierDiscountPct: number;
+  deliveryFee: number;
   notes: string;
 }
 
@@ -92,6 +99,10 @@ export interface RuleSet {
   deckingMaxJoistSpacing: Record<string, number>;
   bearerEdgeInset: number;
   houseBearerInset: number;
+  /** house-side bearer centre inset from the wall when joists are hung flush */
+  flushHouseInset: number;
+  battenScrewsPerPost: number;
+  hangerNails: number;
   postEndSetback: number;
   minBearerGap: number;
   bearerEndInset: number;
@@ -130,6 +141,8 @@ export type ProductCategory =
   | 'consumable'
   | 'concrete';
 
+export type ConcreteProduct = 'rapid-set-20kg' | 'concrete-mix-20kg';
+
 export type MaterialFamily = 'hardwood' | 'treatedPine' | 'composite';
 
 export interface Product {
@@ -150,6 +163,14 @@ export interface Product {
   maxJoistSpacing?: number;
   fasciaProductId?: string;
   rollLength?: number;
+  /** pieces per pack when the supplier sells by the box */
+  packSize?: number;
+  /** hidden fastener clip used with this grooved board */
+  hiddenClipProductId?: string;
+  /** screw used for edge boards, fascia and treads of this decking */
+  screwProductId?: string;
+  /** supplier reference such as an invoice description */
+  ref?: string;
   /** true when the product may be chosen as decking */
   isDecking?: boolean;
   /** true when the product may be chosen as joist / bearer */

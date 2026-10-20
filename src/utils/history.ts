@@ -26,7 +26,8 @@ export function pushHistory<T>(h: History<T>, state: T, label: string, at = Date
   if (current && current.state === state) return h;
   const kept = h.entries.slice(0, h.index + 1);
   const last = kept[kept.length - 1];
-  if (last && last.label === label && at - last.at < coalesceMs && kept.length > 1) {
+  const atTip = h.index === h.entries.length - 1;
+  if (last && atTip && last.label === label && at - last.at < coalesceMs && kept.length > 1) {
     kept[kept.length - 1] = { label, at, state };
   } else {
     kept.push({ label, at, state });

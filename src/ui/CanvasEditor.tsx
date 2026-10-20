@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { detectHouseEdges, dist, edges as polyEdges, normalizePolygon, pointInPolygon, projectOnEdge, setEdgeLength, validatePolygon } from '../engine/geometry';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { detectHouseEdges, dist, edges as polyEdges, normalizePolygon, pointInPolygon, projectOnEdge, validatePolygon } from '../engine/geometry';
 import { useT } from '../i18n';
 import type { Pt } from '../model/types';
 import { useApp, type Tool } from '../state';
-import { housePolylineFor, insertNotch, isJogEdge, mirrorProject, moveEdgeTo, moveVertexTo, nextStairId, removeJog } from '../utils/shapes';
+import { housePolylineFor, insertNotch, isJogEdge, mirrorProject, moveEdgeTo, moveVertexTo, nextStairId, remapEdgeData, removeJog, samePoly, setEdgeLengthAnchored, shiftHouseLine } from '../utils/shapes';
+import { NumInline } from './fields';
 import { COLORS, DesignLayers } from './PlanLayers';
 
 interface View {
@@ -13,16 +14,18 @@ interface View {
 }
 
 type Drag =
-  | { type: 'pan'; sx: number; sy: number; ox: number; oy: number; moved: boolean }
-  | { type: 'edge'; index: number; grab: number; orig: Pt[]; last: Pt[] }
-  | { type: 'vertex'; index: number; orig: Pt[]; last: Pt[] }
+  | { type: 'pan'; sx: number; sy: number; ox: number; oy: number; moved: boolean; tap: boolean }
+  | { type: 'edge'; index: number; grab: number; orig: Pt[]; last: Pt[]; sx: number; sy: number; moved: boolean }
+  | { type: 'vertex'; index: number; orig: Pt[]; last: Pt[]; sx: number; sy: number; moved: boolean }
   | { type: 'stair'; id: string; grab: number; offset: number; orig: number }
   | { type: 'pinch'; d0: number; scale0: number; mid0: { x: number; y: number }; ox0: number; oy0: number };
 
 type Hover = { type: 'edge'; index: number } | { type: 'vertex'; index: number } | { type: 'stair'; id: string } | null;
+type Dir = 'auto' | 'E' | 'W' | 'N' | 'S';
 
 const MIN_SCALE = 0.004;
 const MAX_SCALE = 2.5;
+const MemoLayers = memo(DesignLayers);
 
 function snapTo(v: number, s: number): number {
   return Math.round(v / s) * s;
@@ -40,7 +43,13 @@ function fmtTime(at: number): string {
 /** Editable edge length sitting just outside the edge on the plan. */
 function DimChip({ x, y, value, house, selected, onChange }: { x: number; y: number; value: number; house: boolean; selected: boolean; onChange: (v: number) => void }) {
   const [text, setText] = useState<string | null>(null);
+  const cancel = useRef(false);
   const commit = () => {
+    if (cancel.current) {
+      cancel.current = false;
+      setText(null);
+      return;
+    }
     if (text === null) return;
     const v = Math.round(parseFloat(text));
     if (Number.isFinite(v) && v !== value) onChange(v);
@@ -58,7 +67,7 @@ function DimChip({ x, y, value, house, selected, onChange }: { x: number; y: num
       onKeyDown={(e) => {
         if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
         if (e.key === 'Escape') {
-          setText(null);
+          cancel.current = true;
           (e.target as HTMLInputElement).blur();
         }
         e.stopPropagation();
@@ -69,16 +78,18 @@ function DimChip({ x, y, value, house, selected, onChange }: { x: number; y: num
 }
 
 export function CanvasEditor() {
-  const { project, design, ui, setUi, updateProject, undo, redo, canUndo, canRedo, history, historyIndex, jumpTo, lastHistoryAction } = useApp();
+  const { project, design, ui, setUi, updateProject, undo, redo, canUndo, canRedo, history, historyIndex, jumpTo } = useApp();
   const { t } = useT();
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const lenRef = useRef<HTMLInputElement>(null);
+  const coordRef = useRef<HTMLSpanElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
   const [view, setView] = useState<View>({ ox: -1500, oy: -2500, scale: 0.09 });
   const [draft, setDraft] = useState<Pt[]>([]);
   const [cursor, setCursor] = useState<Pt | null>(null);
   const [lenText, setLenText] = useState('');
+  const [dir, setDir] = useState<Dir>('auto');
   const [toast, setToast] = useState<string | null>(null);
   const [livePoly, setLivePoly] = useState<Pt[] | null>(null);
   const [liveStair, setLiveStair] = useState<{ id: string; offset: number } | null>(null);
@@ -89,8 +100,11 @@ export function CanvasEditor() {
   const dragRef = useRef<Drag | null>(null);
   const spaceRef = useRef(false);
   const shiftRef = useRef(false);
+  const touchRef = useRef(false);
+  const pinchedRef = useRef(false);
   const pointersRef = useRef(new Map<number, { x: number; y: number }>());
   const toastTimer = useRef<number | null>(null);
+  const prevCount = useRef(project.deck.length);
   const viewRef = useRef(view);
   viewRef.current = view;
 
@@ -99,14 +113,6 @@ export function CanvasEditor() {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
     toastTimer.current = window.setTimeout(() => setToast(null), 2600);
   }, []);
-
-  // confirm undo / redo / jumps
-  useEffect(() => {
-    if (!lastHistoryAction) return;
-    showToast(t(`toast.${lastHistoryAction.kind}`, { label: t(lastHistoryAction.label) }));
-    setUi({ selection: null });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lastHistoryAction]);
 
   // drawing surface size (the svg itself, so screen <-> world mapping is exact)
   useEffect(() => {
@@ -135,13 +141,19 @@ export function CanvasEditor() {
     const scale = Math.min(w / (maxX - minX + 2 * margin), h / (maxY - minY + 2 * margin));
     setView({ scale, ox: (minX + maxX) / 2 - w / 2 / scale, oy: (minY + maxY) / 2 - h / 2 / scale });
   }, [project.deck, project.house, design.stairs]);
+  const fitRef = useRef(fit);
+  fitRef.current = fit;
 
+  // frame the drawing when a project opens and when an outline first appears, not on every edit
   const projectId = project.id;
   const vertexCount = project.deck.length;
   useEffect(() => {
-    fit();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId, vertexCount]);
+    fitRef.current();
+  }, [projectId]);
+  useEffect(() => {
+    if (prevCount.current < 4 && vertexCount >= 4) fitRef.current();
+    prevCount.current = vertexCount;
+  }, [vertexCount]);
 
   const zoomAt = useCallback((factor: number, px?: number, py?: number) => {
     const v = viewRef.current;
@@ -196,14 +208,12 @@ export function CanvasEditor() {
       const v = validatePolygon(norm);
       if (!v.ok) return false;
       updateProject((p) => {
-        const houseEdges = resetDependents ? detectHouseEdges(norm, p.house) : p.houseEdges.filter((i) => i < norm.length);
-        return {
-          ...p,
-          deck: norm,
-          houseEdges,
-          stairs: resetDependents ? [] : p.stairs.filter((s) => s.edgeIndex < norm.length),
-          params: resetDependents ? { ...p.params, balustrade: { ...p.params.balustrade, edgeOverride: {} } } : p.params,
-        };
+        if (resetDependents) {
+          return { ...p, deck: norm, houseEdges: detectHouseEdges(norm, p.house), stairs: [], params: { ...p.params, balustrade: { ...p.params.balustrade, edgeOverride: {} } } };
+        }
+        // house flags, stairs and balustrade overrides follow their edges by geometry, so inserted
+        // or removed corners never shift them onto the wrong edge
+        return { ...p, deck: norm, ...remapEdgeData(p, norm) };
       }, label);
       return true;
     },
@@ -233,10 +243,10 @@ export function CanvasEditor() {
       applyPolygon(poly, 'h.draw', true);
       setDraft([]);
       setLenText('');
+      setDir('auto');
       setUi({ tool: 'select', selection: null });
-      window.setTimeout(fit, 0);
     },
-    [applyPolygon, fit, setUi, showToast, t],
+    [applyPolygon, setUi, showToast, t],
   );
 
   const finishHouse = useCallback(
@@ -259,7 +269,7 @@ export function CanvasEditor() {
     (w: Pt) => {
       const p0 = snapPt(w);
       const p = draft.length ? ortho(draft[draft.length - 1], p0) : p0;
-      const tol = 10 / view.scale;
+      const tol = (touchRef.current ? 18 : 10) / view.scale;
       if (ui.tool === 'deck' && draft.length >= 3 && dist(p0, draft[0]) < tol) {
         finishDeck(draft);
         return;
@@ -276,23 +286,30 @@ export function CanvasEditor() {
     let base = draft;
     if (!base.length) base = [cursor ? snapPt(cursor) : { x: 0, y: 0 }];
     const last = base[base.length - 1];
-    let dir: Pt = { x: 1, y: 0 };
-    if (cursor) {
+    let d: Pt = { x: 1, y: 0 };
+    if (dir !== 'auto') d = dir === 'E' ? { x: 1, y: 0 } : dir === 'W' ? { x: -1, y: 0 } : dir === 'N' ? { x: 0, y: -1 } : { x: 0, y: 1 };
+    else if (cursor) {
       const dx = cursor.x - last.x;
       const dy = cursor.y - last.y;
-      if (Math.abs(dx) >= Math.abs(dy)) dir = { x: Math.sign(dx) || 1, y: 0 };
-      else dir = { x: 0, y: Math.sign(dy) || 1 };
+      if (Math.abs(dx) >= Math.abs(dy)) d = { x: Math.sign(dx) || 1, y: 0 };
+      else d = { x: 0, y: Math.sign(dy) || 1 };
+    } else if (base.length >= 2) {
+      // no pointer (touch): turn right from the last leg so a rectangle closes clockwise
+      const p = base[base.length - 2];
+      const lx = Math.sign(last.x - p.x);
+      const ly = Math.sign(last.y - p.y);
+      d = lx !== 0 ? { x: 0, y: lx } : { x: -ly, y: 0 };
     }
-    const next = { x: last.x + dir.x * L, y: last.y + dir.y * L };
+    const next = { x: last.x + d.x * L, y: last.y + d.y * L };
     setDraft([...base, next]);
     setLenText('');
-  }, [cursor, draft, lenText, snapPt]);
+  }, [cursor, dir, draft, lenText, snapPt]);
 
   // ---- hit testing ----
   const deckEdges = project.deck.length >= 4 ? polyEdges(project.deck) : [];
   const hitTest = useCallback(
     (w: Pt): Hover => {
-      const tol = 9 / viewRef.current.scale;
+      const tol = (touchRef.current ? 20 : 9) / viewRef.current.scale;
       const poly = project.deck;
       for (let i = 0; i < poly.length; i++) if (dist(poly[i], w) < tol * 1.3) return { type: 'vertex', index: i };
       for (const s of design.stairs) if (pointInPolygon(w, s.outline)) return { type: 'stair', id: s.id };
@@ -310,6 +327,11 @@ export function CanvasEditor() {
     [design.stairs, project.deck],
   );
 
+  const select = useCallback(
+    (selection: NonNullable<Hover>) => setUi(ui.advanced ? { selection, panelTab: 'selection' } : { selection }),
+    [setUi, ui.advanced],
+  );
+
   const addStairOnEdge = useCallback(
     (index: number) => {
       const e = deckEdges[index];
@@ -325,14 +347,21 @@ export function CanvasEditor() {
 
   // ---- pointer handling ----
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
+    touchRef.current = e.pointerType === 'touch';
     const active = document.activeElement as HTMLElement | null;
-    if (active && active !== lenRef.current && typeof active.blur === 'function') active.blur();
+    if (active && active !== lenRef.current && typeof active.blur === 'function') {
+      active.blur();
+      // a dimension chip commits on blur: let that land before anything else starts
+      if (active.classList.contains('dimchip')) return;
+    }
     setHistOpen(false);
     setHelpOpen(false);
     svgRef.current?.setPointerCapture(e.pointerId);
+    if (!dragRef.current) pointersRef.current.clear(); // nothing in progress: any remembered pointer is stale
     pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (pointersRef.current.size === 2) {
-      // second finger: pinch to zoom, two fingers to pan
+      // second finger: pinch to zoom, two fingers to pan; whatever the first finger started is dropped
+      pinchedRef.current = true;
       const [a, b] = [...pointersRef.current.values()];
       const rect = svgRef.current!.getBoundingClientRect();
       dragRef.current = {
@@ -345,53 +374,55 @@ export function CanvasEditor() {
       };
       setLivePoly(null);
       setLiveStair(null);
+      setGuides({});
       return;
     }
-    if (e.button === 1 || ui.tool === 'pan' || spaceRef.current) {
-      dragRef.current = { type: 'pan', sx: e.clientX, sy: e.clientY, ox: view.ox, oy: view.oy, moved: false };
+    pinchedRef.current = false;
+    const drawing = ui.tool === 'deck' || ui.tool === 'house';
+    if (e.button === 1 || ui.tool === 'pan' || spaceRef.current || drawing) {
+      // drawing tools place a corner on a tap (pointer up without movement); a drag pans
+      dragRef.current = { type: 'pan', sx: e.clientX, sy: e.clientY, ox: view.ox, oy: view.oy, moved: false, tap: drawing && e.button === 0 };
       return;
     }
     if (e.button !== 0) return;
     const w = toWorld(e.clientX, e.clientY);
-    if (ui.tool === 'deck' || ui.tool === 'house') {
-      addDraftPoint(w);
-      return;
-    }
     const hit = hitTest(w);
     if (!hit) {
       setUi({ selection: null });
       // empty space drags the view, like a map
-      dragRef.current = { type: 'pan', sx: e.clientX, sy: e.clientY, ox: view.ox, oy: view.oy, moved: false };
+      dragRef.current = { type: 'pan', sx: e.clientX, sy: e.clientY, ox: view.ox, oy: view.oy, moved: false, tap: false };
       return;
     }
     if (hit.type === 'vertex') {
-      setUi({ selection: { type: 'vertex', index: hit.index }, panelTab: 'selection' });
-      dragRef.current = { type: 'vertex', index: hit.index, orig: project.deck, last: project.deck };
+      select({ type: 'vertex', index: hit.index });
+      dragRef.current = { type: 'vertex', index: hit.index, orig: project.deck, last: project.deck, sx: e.clientX, sy: e.clientY, moved: false };
       return;
     }
     if (hit.type === 'stair') {
       const s = design.stairs.find((x) => x.id === hit.id)!;
       const ed = design.edges[s.edgeIndex];
       const pr = projectOnEdge(ed, w);
-      setUi({ selection: { type: 'stair', id: s.id }, panelTab: 'selection' });
+      select({ type: 'stair', id: s.id });
       dragRef.current = { type: 'stair', id: s.id, grab: pr.t - s.offset, offset: s.offset, orig: s.offset };
       return;
     }
     const ed = deckEdges[hit.index];
     const grab = ed.axis === 'x' ? ed.a.y - w.y : ed.a.x - w.x;
-    setUi({ selection: { type: 'edge', index: hit.index }, panelTab: 'selection' });
-    dragRef.current = { type: 'edge', index: hit.index, grab, orig: project.deck, last: project.deck };
+    select({ type: 'edge', index: hit.index });
+    dragRef.current = { type: 'edge', index: hit.index, grab, orig: project.deck, last: project.deck, sx: e.clientX, sy: e.clientY, moved: false };
   };
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const w = toWorld(e.clientX, e.clientY);
-    setCursor(snapPt(w));
+    const drawing = ui.tool === 'deck' || ui.tool === 'house';
+    if (drawing) setCursor(snapPt(w));
+    else if (coordRef.current) coordRef.current.textContent = `${Math.round(w.x)}, ${Math.round(w.y)}`;
     if (pointersRef.current.has(e.pointerId)) pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const d = dragRef.current;
     if (!d) {
-      if (ui.tool === 'select') {
+      if (ui.tool === 'select' && !touchRef.current) {
         const h = hitTest(w);
-        const same = h?.type === hover?.type && (h as { index?: number; id?: string } | null)?.index === (hover as { index?: number } | null)?.index && (h as { id?: string } | null)?.id === (hover as { id?: string } | null)?.id;
+        const same = h?.type === hover?.type && (h as { index?: number } | null)?.index === (hover as { index?: number } | null)?.index && (h as { id?: string } | null)?.id === (hover as { id?: string } | null)?.id;
         if (!same) setHover(h);
       }
       return;
@@ -403,23 +434,29 @@ export function CanvasEditor() {
       const dd = Math.hypot(a.x - b.x, a.y - b.y) || 1;
       const mid = { x: (a.x + b.x) / 2 - rect.left, y: (a.y + b.y) / 2 - rect.top };
       const ns = Math.min(MAX_SCALE, Math.max(MIN_SCALE, (d.scale0 * dd) / d.d0));
-      // keep the world point under the initial midpoint under the current midpoint
       const wx = d.ox0 + d.mid0.x / d.scale0;
       const wy = d.oy0 + d.mid0.y / d.scale0;
       setView({ scale: ns, ox: wx - mid.x / ns, oy: wy - mid.y / ns });
       return;
     }
+    const slop = touchRef.current ? 8 : 4;
     if (d.type === 'pan') {
-      if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 2) d.moved = true;
+      if (!d.moved && Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) <= slop) return;
+      d.moved = true;
       setView({ ...viewRef.current, ox: d.ox - (e.clientX - d.sx) / viewRef.current.scale, oy: d.oy - (e.clientY - d.sy) / viewRef.current.scale });
       return;
+    }
+    if (d.type === 'edge' || d.type === 'vertex') {
+      // a tap must not move anything: wait for real movement before the live outline starts
+      if (!d.moved && Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) <= slop) return;
+      d.moved = true;
     }
     if (d.type === 'edge') {
       const ed = polyEdges(d.orig)[d.index];
       const raw = ed.axis === 'x' ? w.y + d.grab : w.x + d.grab;
       const value = shiftRef.current ? Math.round(raw) : snapTo(raw, ui.snap);
       const next = moveEdgeTo(d.orig, d.index, value);
-      if (next) {
+      if (next && !samePoly(next, d.last)) {
         d.last = next;
         setLivePoly(next);
       }
@@ -441,7 +478,7 @@ export function CanvasEditor() {
       }
       setGuides(g);
       const next = moveVertexTo(d.orig, d.index, target);
-      if (next) {
+      if (next && !samePoly(next, d.last)) {
         d.last = next;
         setLivePoly(next);
       }
@@ -455,8 +492,10 @@ export function CanvasEditor() {
       const pr = projectOnEdge(ed, w);
       const raw = pr.t - d.grab;
       const offset = Math.max(0, Math.min(ed.length - s.width, shiftRef.current ? Math.round(raw) : snapTo(raw, ui.snap)));
-      d.offset = offset;
-      setLiveStair({ id: d.id, offset });
+      if (offset !== d.offset) {
+        d.offset = offset;
+        setLiveStair({ id: d.id, offset });
+      }
     }
   };
 
@@ -464,15 +503,37 @@ export function CanvasEditor() {
     pointersRef.current.delete(e.pointerId);
     const d = dragRef.current;
     if (d?.type === 'pinch') {
-      if (pointersRef.current.size < 2) dragRef.current = null;
+      if (pointersRef.current.size < 2) {
+        // the pinch is over as soon as one finger lifts; forget the other so a missed
+        // pointerup can never turn the next tap into a phantom pinch
+        pointersRef.current.clear();
+        dragRef.current = null;
+      }
       return;
     }
     dragRef.current = null;
     setGuides({});
+    if (d?.type === 'pan' && d.tap && !d.moved && !pinchedRef.current) {
+      addDraftPoint(toWorld(e.clientX, e.clientY));
+    }
     if (d?.type === 'edge' || d?.type === 'vertex') {
-      if (d.last !== d.orig) {
+      if (d.moved && !samePoly(d.last, d.orig)) {
         const last = d.last;
-        updateProject((p) => ({ ...p, deck: last }), d.type === 'edge' ? 'h.moveEdge' : 'h.moveVertex');
+        const index = d.type === 'edge' ? d.index : -1;
+        updateProject((p) => {
+          let house = p.house;
+          if (d.type === 'edge' && p.houseEdges.includes(index)) {
+            // the drawn wall follows a house edge that is moved
+            const before = polyEdges(p.deck)[index];
+            const after = polyEdges(last)[index];
+            if (before && after && before.axis === after.axis) {
+              const oldC = before.axis === 'x' ? before.a.y : before.a.x;
+              const newC = after.axis === 'x' ? after.a.y : after.a.x;
+              house = shiftHouseLine(p.house, before.axis, oldC, newC - oldC);
+            }
+          }
+          return { ...p, deck: last, house };
+        }, d.type === 'edge' ? 'h.moveEdge' : 'h.moveVertex');
       }
       setLivePoly(null);
     }
@@ -490,9 +551,9 @@ export function CanvasEditor() {
     }
   };
 
-  // ---- keyboard ----
+  // ---- keyboard (undo / redo live in App so they work on every tab) ----
   useEffect(() => {
-    const isEditable = (el: Element | null) => !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
+    const isEditable = (el: Element | null) => !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'range', 'button'].includes((el as HTMLInputElement).type)) || el.tagName === 'SELECT');
     const nudge = (dx: number, dy: number) => {
       const sel = ui.selection;
       if (!sel || project.deck.length < 4) return false;
@@ -517,23 +578,22 @@ export function CanvasEditor() {
       const editable = isEditable(document.activeElement);
       const inLen = document.activeElement === lenRef.current;
       const meta = e.ctrlKey || e.metaKey;
-      if (meta && !editable && (e.key === 'z' || e.key === 'Z')) {
-        e.preventDefault();
-        if (e.shiftKey) redo();
-        else undo();
-        return;
-      }
-      if (meta && !editable && (e.key === 'y' || e.key === 'Y')) {
-        e.preventDefault();
-        redo();
-        return;
-      }
+      if (meta) return;
       if (e.key === ' ' && !editable) {
         spaceRef.current = true;
         e.preventDefault();
         return;
       }
-      if (editable && !inLen) return;
+      if (inLen) {
+        // the length box: arrows pick the direction of the next leg, Enter and Escape are its own
+        const dirs: Record<string, Dir> = { ArrowLeft: 'W', ArrowRight: 'E', ArrowUp: 'N', ArrowDown: 'S' };
+        if (dirs[e.key]) {
+          e.preventDefault();
+          setDir(dirs[e.key]);
+        }
+        return;
+      }
+      if (editable) return;
       if (e.key === 'Escape') {
         if (draft.length) {
           setDraft([]);
@@ -541,16 +601,14 @@ export function CanvasEditor() {
         } else setUi({ selection: null, tool: ui.drawMode ? ui.tool : 'select' });
         setHistOpen(false);
         setHelpOpen(false);
-        lenRef.current?.blur();
         return;
       }
       if (e.key === 'Enter') {
-        if (inLen) return; // the length input handles its own Enter
         if (ui.tool === 'deck' && draft.length) finishDeck(draft);
         else if (ui.tool === 'house' && draft.length) finishHouse(draft);
         return;
       }
-      if ((e.key === 'Backspace' || e.key === 'Delete') && !inLen) {
+      if (e.key === 'Backspace' || e.key === 'Delete') {
         if (draft.length) {
           e.preventDefault();
           setDraft(draft.slice(0, -1));
@@ -561,25 +619,25 @@ export function CanvasEditor() {
         }
         return;
       }
-      if (!inLen && e.key.startsWith('Arrow')) {
+      if (e.key.startsWith('Arrow')) {
         const step = (e.shiftKey ? 5 : 1) * ui.snap;
         const moved = nudge(e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0, e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0);
         if (moved) e.preventDefault();
         return;
       }
-      if (!inLen && !meta && (e.key === 'f' || e.key === 'F')) {
+      if (e.key === 'f' || e.key === 'F') {
         fit();
         return;
       }
-      if (!inLen && (e.key === '+' || e.key === '=')) {
+      if (e.key === '+' || e.key === '=') {
         zoomAt(1.25);
         return;
       }
-      if (!inLen && e.key === '-') {
+      if (e.key === '-') {
         zoomAt(0.8);
         return;
       }
-      if ((ui.tool === 'deck' || ui.tool === 'house') && !inLen && /^[0-9.]$/.test(e.key)) {
+      if ((ui.tool === 'deck' || ui.tool === 'house') && /^[0-9.]$/.test(e.key)) {
         e.preventDefault();
         setLenText((s) => s + e.key);
         lenRef.current?.focus();
@@ -595,13 +653,14 @@ export function CanvasEditor() {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [draft, finishDeck, finishHouse, fit, project.deck, redo, setUi, ui.drawMode, ui.selection, ui.snap, ui.tool, undo, updateProject, zoomAt]);
+  }, [draft, finishDeck, finishHouse, fit, project.deck, setUi, ui.drawMode, ui.selection, ui.snap, ui.tool, updateProject, zoomAt]);
 
   // reset the draft when leaving the drawing tools
   useEffect(() => {
     if (ui.tool !== 'deck' && ui.tool !== 'house') {
       setDraft([]);
       setLenText('');
+      setDir('auto');
     }
   }, [ui.tool]);
 
@@ -634,6 +693,22 @@ export function CanvasEditor() {
   const liveEdges = livePoly ? polyEdges(livePoly) : [];
   const selectedStair = sel?.type === 'stair' ? project.stairs.find((st) => st.id === sel.id) : undefined;
   const selectedEdge = sel?.type === 'edge' ? deckEdges[sel.index] : undefined;
+  const selectedIsHouse = sel?.type === 'edge' ? project.houseEdges.includes(sel.index) : false;
+  const layerFlags = useMemo(
+    () => ({
+      house: ui.layers.house,
+      frame: ui.layers.frame && design.ok,
+      boards: ui.layers.boards && design.ok,
+      posts: ui.layers.posts && design.ok,
+      balustrade: ui.layers.balustrade && design.ok,
+      dims: ui.layers.dims && design.ok,
+      postLabels: view.scale > 0.05,
+      bearerLabels: view.scale > 0.04,
+      joins: view.scale > 0.05,
+      labels: ui.drawMode || !design.ok,
+    }),
+    [ui.layers, design.ok, view.scale, ui.drawMode],
+  );
 
   const tools: { id: Tool; label: string; icon: string }[] = [
     { id: 'select', label: t('tool.select'), icon: '⬚' },
@@ -643,7 +718,11 @@ export function CanvasEditor() {
   ];
 
   const hint =
-    ui.tool === 'deck' ? (draft.length ? t('status.hintDeck') : t('canvas.firstPoint')) : ui.tool === 'house' ? t('status.hintHouse') : ui.tool === 'pan' ? t('tool.pan') : t('status.hintSelect');
+    ui.tool === 'deck' ? (draft.length ? t('status.hintDeck') : t('canvas.firstPoint'))
+    : ui.tool === 'house' ? t('status.hintHouse')
+    : ui.tool === 'pan' ? t('tool.pan')
+    : ui.drawMode && project.deck.length >= 4 ? t('canvas.editExisting')
+    : t('status.hintSelect');
   const cursorStyle =
     ui.tool === 'pan' || spaceRef.current ? 'grab' : ui.tool !== 'select' ? 'crosshair' : hover?.type === 'edge' ? (deckEdges[hover.index]?.axis === 'x' ? 'ns-resize' : 'ew-resize') : hover?.type === 'vertex' ? 'move' : hover?.type === 'stair' ? 'grab' : 'default';
   const lenAnchor = draft.length ? toScreen(draft[draft.length - 1]) : null;
@@ -655,6 +734,45 @@ export function CanvasEditor() {
     updateProject((p) => ({ ...p, deck: [], houseEdges: [], stairs: [] }), 'h.clear');
     setUi({ tool: 'deck', selection: null, drawMode: true });
   };
+  const finishDrawing = () => {
+    if (draft.length >= 3 && ui.tool === 'deck') {
+      finishDeck(draft);
+      setUi({ drawMode: false, tool: 'select' });
+      return;
+    }
+    if (draft.length >= 2 && ui.tool === 'house') finishHouse(draft);
+    setDraft([]);
+    setLenText('');
+    setUi({ drawMode: false, tool: 'select' });
+  };
+  const notchWidth = selectedEdge ? Math.max(600, Math.min(1200, Math.round(selectedEdge.length / 3 / 100) * 100)) : 0;
+  const addNotch = (outward: boolean) => {
+    if (!selectedEdge || sel?.type !== 'edge') return;
+    const next = insertNotch(project.deck, sel.index, notchWidth, 600, outward);
+    if (next) applyPolygon(next, 'h.notch', false);
+    else showToast(t('polygon.selfIntersect'));
+  };
+  const historyMenu = (
+    <div className="dd hist">
+      <button className={`tool ${histOpen ? 'active' : ''}`} onClick={() => setHistOpen((o) => !o)} aria-expanded={histOpen}>
+        {t('hist.title')} ▾
+      </button>
+      {histOpen && (
+        <div className="dd-menu hist-menu" role="listbox">
+          {history.length <= 1 && <div className="muted small">{t('hist.empty')}</div>}
+          {history
+            .map((h, i) => ({ ...h, i }))
+            .reverse()
+            .map((h) => (
+              <button key={h.i} className={`hist-item ${h.i === historyIndex ? 'current' : ''} ${h.i > historyIndex ? 'future' : ''}`} onClick={() => { jumpTo(h.i); setHistOpen(false); }} role="option" aria-selected={h.i === historyIndex}>
+                <span className="hist-label">{t(h.label)}</span>
+                <span className="hist-time">{h.i === historyIndex ? t('hist.current') : fmtTime(h.at)}</span>
+              </button>
+            ))}
+        </div>
+      )}
+    </div>
+  );
 
   return (
     <div className="canvas-wrap" ref={wrapRef}>
@@ -662,13 +780,22 @@ export function CanvasEditor() {
         {ui.drawMode ? (
           <>
             {tools.map((tl) => (
-              <button key={tl.id} className={`tool ${ui.tool === tl.id ? 'active' : ''}`} title={tl.label} onClick={() => setUi({ tool: tl.id, selection: null })}>
+              <button key={tl.id} className={`tool ${ui.tool === tl.id ? 'active' : ''} ${tl.id === 'pan' ? 'phone-hide' : ''}`} title={tl.label} onClick={() => setUi({ tool: tl.id, selection: null })}>
                 <span className="icon">{tl.icon}</span>
                 <span>{tl.label}</span>
               </button>
             ))}
             <span className="sep" />
-            <label className="inline">
+            <button className="tool" onClick={() => setDraft(draft.slice(0, -1))} disabled={!draft.length} title="Backspace">
+              ⌫ {t('canvas.backPoint')}
+            </button>
+            <button className="tool" onClick={undo} disabled={!canUndo} title={`${t('hist.undo')} (Ctrl+Z)`}>
+              ↶
+            </button>
+            <button className="tool" onClick={redo} disabled={!canRedo} title={`${t('hist.redo')} (Ctrl+Shift+Z)`}>
+              ↷
+            </button>
+            <label className="inline phone-hide">
               {t('tool.snap')}
               <select value={ui.snap} onChange={(e) => setUi({ snap: Number(e.target.value) })}>
                 {[10, 25, 50, 100].map((s) => (
@@ -681,11 +808,11 @@ export function CanvasEditor() {
             <button className="tool danger" onClick={redraw}>
               {t('canvas.redraw')}
             </button>
-            <button className="tool" onClick={() => updateProject((p) => ({ ...p, house: [] }), 'h.house')}>
+            <button className="tool phone-hide" onClick={() => updateProject((p) => ({ ...p, house: [] }), 'h.house')} disabled={!project.house.length}>
               {t('tool.clearHouse')}
             </button>
             <span className="grow" />
-            <button className="tool primary" onClick={() => { setDraft([]); setLenText(''); setUi({ drawMode: false, tool: 'select' }); }}>
+            <button className="tool primary" onClick={finishDrawing}>
               ✓ {t('canvas.finish')}
             </button>
           </>
@@ -705,25 +832,7 @@ export function CanvasEditor() {
             <button className="tool" onClick={redo} disabled={!canRedo} title={`${t('hist.redo')} (Ctrl+Shift+Z)`}>
               ↷ {t('hist.redo')}
             </button>
-            <div className="dd hist">
-              <button className={`tool ${histOpen ? 'active' : ''}`} onClick={() => setHistOpen((o) => !o)} aria-expanded={histOpen}>
-                {t('hist.title')} ▾
-              </button>
-              {histOpen && (
-                <div className="dd-menu hist-menu" role="listbox">
-                  {history.length <= 1 && <div className="muted small">{t('hist.empty')}</div>}
-                  {history
-                    .map((h, i) => ({ ...h, i }))
-                    .reverse()
-                    .map((h) => (
-                      <button key={h.i} className={`hist-item ${h.i === historyIndex ? 'current' : ''} ${h.i > historyIndex ? 'future' : ''}`} onClick={() => { jumpTo(h.i); setHistOpen(false); }} role="option" aria-selected={h.i === historyIndex}>
-                        <span className="hist-label">{t(h.label)}</span>
-                        <span className="hist-time">{h.i === historyIndex ? t('hist.current') : fmtTime(h.at)}</span>
-                      </button>
-                    ))}
-                </div>
-              )}
-            </div>
+            {historyMenu}
             <span className="grow" />
             <button className="tool" onClick={enterDraw}>
               ✎ {t('g.shape.custom')}
@@ -751,26 +860,7 @@ export function CanvasEditor() {
         <line x1={x0} y1={0} x2={x1} y2={0} stroke="#94a3b8" strokeWidth={sw * 1.5} />
         <line x1={0} y1={y0} x2={0} y2={y1} stroke="#94a3b8" strokeWidth={sw * 1.5} />
 
-        {project.deck.length >= 4 && !dragging && (
-          <DesignLayers
-            project={project}
-            design={design}
-            layers={{
-              house: ui.layers.house,
-              frame: ui.layers.frame && design.ok,
-              boards: ui.layers.boards && design.ok,
-              posts: ui.layers.posts && design.ok,
-              balustrade: ui.layers.balustrade && design.ok,
-              dims: ui.layers.dims && design.ok,
-              postLabels: view.scale > 0.05,
-              bearerLabels: view.scale > 0.04,
-              joins: view.scale > 0.05,
-              labels: ui.drawMode || !design.ok,
-            }}
-            fs={fs}
-            sw={sw}
-          />
-        )}
+        {project.deck.length >= 4 && !dragging && <MemoLayers project={project} design={design} layers={layerFlags} fs={fs} sw={sw} />}
         {dragging && (
           <g>
             {ui.layers.house &&
@@ -858,7 +948,7 @@ export function CanvasEditor() {
 
       {/* floating length entry while drawing */}
       {(ui.tool === 'deck' || ui.tool === 'house') && (
-        <div className="len-float" style={lenAnchor ? { left: Math.min(size.w - 190, Math.max(8, lenAnchor.x + 16)), top: Math.min(size.h - 20, Math.max(8, lenAnchor.y - 46)) + svgTop } : { left: 12, top: svgTop + 12 }}>
+        <div className="len-float" style={lenAnchor ? { left: Math.min(size.w - 250, Math.max(8, lenAnchor.x + 16)), top: Math.min(size.h - 20, Math.max(8, lenAnchor.y - 46)) + svgTop } : { left: 12, top: svgTop + 12 }}>
           <input
             ref={lenRef}
             value={lenText}
@@ -878,13 +968,20 @@ export function CanvasEditor() {
             }}
             placeholder={t('canvas.lengthNext')}
           />
-          <span>mm ↵</span>
+          <span className="dirs" role="group" aria-label={t('canvas.direction')}>
+            {([['W', '←'], ['N', '↑'], ['S', '↓'], ['E', '→']] as [Dir, string][]).map(([d, g]) => (
+              <button key={d} type="button" className={dir === d ? 'on' : ''} onClick={() => { setDir(d); lenRef.current?.focus(); }} aria-label={d}>
+                {g}
+              </button>
+            ))}
+          </span>
+          <span>↵</span>
         </div>
       )}
 
       {!ui.drawMode && !dragging && design.ok &&
         deckEdges.map((e) => {
-          if (e.length < 250) return null;
+          if (e.length < 250 || e.length * view.scale < 70) return null;
           const off = 42 / view.scale;
           const wx = (e.a.x + e.b.x) / 2 + e.outward.x * off;
           const wy = (e.a.y + e.b.y) / 2 + e.outward.y * off;
@@ -900,7 +997,8 @@ export function CanvasEditor() {
               house={project.houseEdges.includes(e.index)}
               selected={sel?.type === 'edge' && sel.index === e.index}
               onChange={(L) => {
-                if (!applyPolygon(setEdgeLength(project.deck, e.index, L), 'h.edgeLength', false)) showToast(t('polygon.selfIntersect'));
+                const next = setEdgeLengthAnchored(project.deck, e.index, L, project.houseEdges);
+                if (!next || !applyPolygon(next, 'h.edgeLength', false)) showToast(t('polygon.selfIntersect'));
               }}
             />
           );
@@ -912,7 +1010,7 @@ export function CanvasEditor() {
           <label className="chk">
             <input
               type="checkbox"
-              checked={project.houseEdges.includes(sel.index)}
+              checked={selectedIsHouse}
               onChange={(ev) => {
                 const i = sel.index;
                 const on = ev.target.checked;
@@ -929,33 +1027,17 @@ export function CanvasEditor() {
             />
             {t('canvas.house')}
           </label>
-          {!project.houseEdges.includes(sel.index) && (
+          {!selectedIsHouse && (
             <button className="tool" onClick={() => addStairOnEdge(sel.index)}>
               {t('canvas.addStair')}
             </button>
           )}
-          {selectedEdge.length >= 1400 && (
+          {!selectedIsHouse && selectedEdge.length >= 1400 && (
             <>
-              <button
-                className="tool"
-                onClick={() => {
-                  const w = Math.max(600, Math.min(1200, Math.round(selectedEdge.length / 3 / 100) * 100));
-                  const next = insertNotch(project.deck, sel.index, w, 600, false);
-                  if (next) applyPolygon(next, 'h.notch', false);
-                  else showToast(t('polygon.selfIntersect'));
-                }}
-              >
+              <button className="tool" onClick={() => addNotch(false)}>
                 {t('canvas.notchIn')}
               </button>
-              <button
-                className="tool"
-                onClick={() => {
-                  const w = Math.max(600, Math.min(1200, Math.round(selectedEdge.length / 3 / 100) * 100));
-                  const next = insertNotch(project.deck, sel.index, w, 600, true);
-                  if (next) applyPolygon(next, 'h.notch', false);
-                  else showToast(t('polygon.selfIntersect'));
-                }}
-              >
+              <button className="tool" onClick={() => addNotch(true)}>
                 {t('canvas.notchOut')}
               </button>
             </>
@@ -993,28 +1075,15 @@ export function CanvasEditor() {
           <span>{t('canvas.stair', { id: sel.id })}</span>
           <label className="inline">
             {t('canvas.width')}
-            <input
-              type="number"
-              step={50}
-              min={300}
-              value={selectedStair.width}
-              onChange={(ev) => {
-                const w = Math.max(300, Number(ev.target.value) || 300);
-                updateProject((p) => ({ ...p, stairs: p.stairs.map((st) => (st.id === sel.id ? { ...st, width: w } : st)) }), 'h.stairs');
-              }}
-            />
+            <NumInline value={selectedStair.width} step={50} min={300} onCommit={(w) => updateProject((p) => ({ ...p, stairs: p.stairs.map((st) => (st.id === sel.id ? { ...st, width: Math.max(300, w) } : st)) }), 'h.stairs')} />
           </label>
           <label className="inline">
             {t('canvas.rise')}
-            <input
-              type="number"
+            <NumInline
+              value={Math.round(selectedStair.rise ?? project.params.deckHeight - selectedStair.groundOffset)}
               step={10}
               min={100}
-              value={Math.round(selectedStair.rise ?? project.params.deckHeight - selectedStair.groundOffset)}
-              onChange={(ev) => {
-                const rise = Math.max(100, Number(ev.target.value) || 100);
-                updateProject((p) => ({ ...p, stairs: p.stairs.map((st) => (st.id === sel.id ? { ...st, rise, groundOffset: 0 } : st)) }), 'h.stairs');
-              }}
+              onCommit={(rise) => updateProject((p) => ({ ...p, stairs: p.stairs.map((st) => (st.id === sel.id ? { ...st, rise: Math.max(100, rise), groundOffset: 0 } : st)) }), 'h.stairs')}
             />
           </label>
           <button
@@ -1046,11 +1115,15 @@ export function CanvasEditor() {
       </div>
 
       <div className="statusbar">
-        <span>{cursor ? `${Math.round(cursor.x)}, ${Math.round(cursor.y)}` : '-'}</span>
-        <span>
+        <span ref={coordRef} className="coords">
+          {cursor ? `${Math.round(cursor.x)}, ${Math.round(cursor.y)}` : '-'}
+        </span>
+        <span className="area">
           {t('status.area')}: {design.ok ? `${design.areaM2.toFixed(2)} m²` : '-'}
         </span>
-        <span className="hint">{project.deck.length < 4 && !draft.length && !ui.drawMode ? t('status.noDeck') : hint}</span>
+        <span className="hint" title={project.deck.length < 4 && !draft.length && !ui.drawMode ? t('canvas.empty') : hint}>
+          {project.deck.length < 4 && !draft.length && !ui.drawMode ? t('canvas.empty') : hint}
+        </span>
         <div className="dd help">
           <button className="linkish" onClick={() => setHelpOpen((o) => !o)} aria-expanded={helpOpen}>
             {t('canvas.shortcuts')}

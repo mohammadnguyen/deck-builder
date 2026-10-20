@@ -117,7 +117,12 @@ describe('design', () => {
     // already carried by the notch pair, its right joint gets one joist touching the notch edge joist
     expect(lay.totals.frameJoists).toBe(7);
     expect(lay.joists.filter((j) => j.kind === 'frame').map((j) => Math.round(j.pos * 10) / 10)).toEqual([122.5, 167.5, 3432.5, 3477.5, 3622.5, 5832.5, 5877.5]);
-    expect(lay.rip).toBeNull(); // 4055 of field is exactly 28 rows
+    // 4055 of field is exactly 28 rows, but row 16 (2175-2315) crosses the notch line at 2255:
+    // right of the notch that row is an 80 mm strip against the notch edge board
+    expect(lay.rips).toEqual([{ row: 16, width: 80, boards: 1 }]);
+    const row16 = lay.boards[15];
+    expect(row16.runs.filter((r) => r.ripped).map((r) => [Math.round(r.seg.a.x), Math.round(r.seg.b.x), Math.round(r.width)])).toEqual([[3605, 5855, 80]]);
+    expect(row16.runs.filter((r) => !r.ripped).map((r) => Math.round(r.width))).toEqual([140]);
     expect(d.footings.diameter).toBe(200);
     expect(d.footings.bags).toBeLessThan(30);
     expect(d.edgeBoardProductId).toBe('modelo-endboard-140x23');
@@ -231,7 +236,7 @@ describe('design', () => {
     const frames = lay.joists.filter((j) => j.kind === 'frame').map((j) => Math.round(j.pos * 10) / 10);
     expect(frames).toEqual([122.5, 167.5, 2927.5, 3072.5, 5832.5, 5877.5]);
     // 3455 of field = 23 full rows + 120: the last row is ripped and reported
-    expect(lay.rip).toEqual({ row: 24, width: 120, boards: 2 });
+    expect(lay.rips).toEqual([{ row: 24, width: 120, boards: 2 }]);
     expect(d.warnings.some((w) => w.key === 'layout.rip')).toBe(true);
     // 2780 bays cannot nest two to a 5.4 m board; the tool says that three breakers would
     const saving = d.warnings.find((w) => w.key === 'layout.breakerSaving');
@@ -318,5 +323,24 @@ describe('design', () => {
     const d2 = computeDesign(wall);
     expect(d2.layout!.swapped).toBe(true);
     expect(d2.layout!.attachment).toBe('freestanding');
+  });
+  it('puts a wall bearer only along the house wall and posts under the rest of that line', () => {
+    // the house sits in the inside corner of the L: wall on the notch bottom (edge 2, x 3600-6000)
+    const p = newProject('wall', true);
+    p.deck = L;
+    p.houseEdges = [2];
+    p.house = [[{ x: 3600, y: 2400 }, { x: 7500, y: 2400 }]];
+    p.stairs = [];
+    const d = computeDesign(p);
+    expect(d.ok).toBe(true);
+    const lay = d.layout!;
+    const wallLine = lay.bearers.filter((b) => b.onWall);
+    expect(wallLine.length).toBe(1);
+    expect(Math.round(wallLine[0].seg.a.x)).toBeGreaterThanOrEqual(3600);
+    expect(Math.round(wallLine[0].seg.b.x)).toBeLessThanOrEqual(6000);
+    const sameLine = lay.bearers.filter((b) => Math.abs(b.seg.a.y - wallLine[0].seg.a.y) < 0.5 && !b.onWall);
+    expect(sameLine.length).toBe(1);
+    expect(sameLine[0].posts.length).toBeGreaterThan(0);
+    expect(Math.round(sameLine[0].seg.b.x)).toBeLessThanOrEqual(3600);
   });
 });

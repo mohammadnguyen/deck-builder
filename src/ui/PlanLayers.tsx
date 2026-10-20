@@ -169,7 +169,7 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
       {L.boards && lay &&
         lay.boards.map((row) =>
           row.runs.map((run, ri) => {
-            const r = segRect(run.seg, row.width);
+            const r = segRect(run.seg, run.width);
             return <rect key={`b${row.index}-${ri}`} x={r.x} y={r.y} width={r.w} height={r.h} fill={COLORS.board} stroke={COLORS.boardStroke} strokeWidth={sw * 0.6} />;
           }),
         )}
@@ -178,7 +178,7 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
           row.runs.map((run, ri) =>
             run.joins.map((j, ji) => {
               const horizontal = Math.abs(run.seg.a.y - run.seg.b.y) < 0.5;
-              const half = row.width / 2;
+              const half = run.width / 2;
               return horizontal ? (
                 <line key={`j${row.index}-${ri}-${ji}`} x1={j} y1={run.seg.a.y - half} x2={j} y2={run.seg.a.y + half} stroke={COLORS.join} strokeWidth={sw * 2} />
               ) : (
@@ -206,38 +206,40 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
             </g>
           );
         })}
-      {L.boards && lay && lay.rip && (
+      {L.boards && lay && lay.rips.length > 0 && (
         <g>
           <defs>
             <pattern id={`rip-${hatchId}`} patternUnits="userSpaceOnUse" width={fs * 0.8} height={fs * 0.8} patternTransform="rotate(45)">
               <line x1={0} y1={0} x2={0} y2={fs * 0.8} stroke={COLORS.join} strokeWidth={sw * 1.2} />
             </pattern>
           </defs>
-          {lay.boards[lay.boards.length - 1].runs.map((run, ri) => {
-            const row = lay.boards[lay.boards.length - 1];
-            const r = segRect(run.seg, row.width);
-            const horizontal = Math.abs(run.seg.a.y - run.seg.b.y) < 0.5;
-            const lx = horizontal ? Math.max(run.seg.a.x, run.seg.b.x) - fs * 0.4 : run.seg.a.x;
-            const ly = horizontal ? run.seg.a.y : Math.max(run.seg.a.y, run.seg.b.y) - fs * 0.4;
-            return (
-              <g key={`rip${ri}`}>
-                <rect x={r.x} y={r.y} width={r.w} height={r.h} fill={`url(#rip-${hatchId})`} stroke={COLORS.join} strokeWidth={sw * 0.8} />
-                {L.rowNumbers && (
-                  <text
-                    x={lx}
-                    y={ly + (horizontal ? fs * 0.3 : 0)}
-                    fontSize={fs * 0.8}
-                    fill={COLORS.join}
-                    fontWeight={700}
-                    textAnchor="end"
-                    transform={horizontal ? undefined : `rotate(-90 ${lx} ${ly})`}
-                  >
-                    {t('plan.rip', { width: lay.rip!.width })}
-                  </text>
-                )}
-              </g>
-            );
-          })}
+          {lay.boards.flatMap((row) =>
+            row.runs.map((run, ri) => {
+              if (!run.ripped) return null;
+              const r = segRect(run.seg, run.width);
+              const horizontal = Math.abs(run.seg.a.y - run.seg.b.y) < 0.5;
+              const lx = horizontal ? Math.max(run.seg.a.x, run.seg.b.x) - fs * 0.4 : run.seg.a.x;
+              const ly = horizontal ? run.seg.a.y : Math.max(run.seg.a.y, run.seg.b.y) - fs * 0.4;
+              return (
+                <g key={`rip${row.index}-${ri}`}>
+                  <rect x={r.x} y={r.y} width={r.w} height={r.h} fill={`url(#rip-${hatchId})`} stroke={COLORS.join} strokeWidth={sw * 0.8} />
+                  {L.rowNumbers && run.length > fs * 6 && (
+                    <text
+                      x={lx}
+                      y={ly + (horizontal ? fs * 0.3 : 0)}
+                      fontSize={fs * 0.8}
+                      fill={COLORS.join}
+                      fontWeight={700}
+                      textAnchor="end"
+                      transform={horizontal ? undefined : `rotate(-90 ${lx} ${ly})`}
+                    >
+                      {t('plan.rip', { width: Math.round(run.width) })}
+                    </text>
+                  )}
+                </g>
+              );
+            }),
+          )}
         </g>
       )}
       {L.boards && lay &&

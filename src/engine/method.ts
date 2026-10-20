@@ -36,6 +36,8 @@ export interface MethodInput {
   /** joist spacing as laid out, e.g. "439" or "400-461" */
   joistSpacingText: string;
   edgeBoardName: string;
+  /** true when the boards start from a house wall */
+  houseSide: boolean;
 }
 
 export function buildMethod(m: MethodInput): MethodStep[] {
@@ -83,7 +85,7 @@ export function buildMethod(m: MethodInput): MethodStep[] {
   steps.push({
     key: p.bearerToPost === 'screwed' || p.bearerToPost === 'checked' ? 'm.bearers.screwed' : 'm.bearers',
     params: { bearer: m.bearerName, lam: p.bearerLaminations, count: m.layout.bearers.length, maxSpan: Math.round(m.layout.maxBearerSpanUsed), bolts: m.rules.boltsPerPost, screws: m.rules.battenScrewsPerPost },
-    notes: [{ key: 'm.bearers.n1' }, { key: 'm.bearers.n2' }, ...(flush ? [{ key: 'm.bearers.flush' }] : [])],
+    notes: [{ key: p.bearerLaminations === 2 ? 'm.bearers.n1' : 'm.bearers.n1.single' }, { key: 'm.bearers.n2' }, ...(flush ? [{ key: 'm.bearers.flush' }] : [])],
   });
   if (m.layout.ledgers.length) {
     const anchors = m.layout.ledgers.reduce((s, l) => s + l.bolts, 0);
@@ -110,7 +112,7 @@ export function buildMethod(m: MethodInput): MethodStep[] {
       ...(p.joistSpacingMode === 'auto' ? [{ key: 'm.joists.auto', params: { max: Math.round(p.joistSpacingMax), spacing: m.joistSpacingText } }] : []),
       ...(m.layout.totals.frameJoists > 0 ? [{ key: 'm.joists.frame', params: { n: m.layout.totals.frameJoists, pairs: Math.ceil(m.layout.totals.frameJoists / 2), inset: Math.round(m.layout.edgeBoards[0]?.width ?? 0) + p.boardGap } }] : []),
       ...(p.joistTape ? [{ key: 'm.joists.n2' }] : []),
-      { key: 'm.joists.n3', params: { joins: m.layout.totals.boardJoins } },
+      ...(m.layout.totals.boardJoins > 0 ? [{ key: 'm.joists.n3', params: { joins: m.layout.totals.boardJoins } }] : []),
     ],
   });
   if (m.braceCount > 0) {
@@ -126,9 +128,9 @@ export function buildMethod(m: MethodInput): MethodStep[] {
       ...(m.layout.breakers.length
         ? [{ key: 'm.decking.breaker', params: { n: m.layout.breakers.length, lm: (m.layout.totals.breakerLm / 1000).toFixed(1) } }]
         : []),
-      { key: m.clips ? 'm.decking.clips.n1' : 'm.decking.n1' },
+      { key: m.layout.breakers.length ? (m.clips ? 'm.decking.clips.n1.nojoins' : 'm.decking.n1.nojoins') : m.clips ? 'm.decking.clips.n1' : 'm.decking.n1', params: { side: m.houseSide ? 'house' : 'edge' } },
       { key: m.layout.breakers.length ? 'm.decking.n2.breaker' : 'm.decking.n2' },
-      ...(m.layout.rip ? [{ key: 'm.decking.rip', params: { row: m.layout.rip.row, width: m.layout.rip.width, n: m.layout.rip.boards } }] : []),
+      ...m.layout.rips.map((r) => ({ key: 'm.decking.rip', params: { row: r.row, width: r.width, n: r.boards } })),
       { key: 'm.decking.n3' },
       ...(m.composite ? [{ key: 'm.decking.composite' }] : []),
       ...(p.fascia ? [{ key: 'm.decking.fascia' }] : []),

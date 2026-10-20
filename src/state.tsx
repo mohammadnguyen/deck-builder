@@ -136,6 +136,8 @@ interface AppCtx {
   ui: UIState;
   canUndo: boolean;
   canRedo: boolean;
+  /** false when the browser refused to store the projects (private mode, quota) */
+  saveOk: boolean;
   /** labels and times of every step for the history list */
   history: { label: string; at: number }[];
   historyIndex: number;
@@ -164,6 +166,12 @@ const Ctx = createContext<AppCtx | null>(null);
 
 const historyFor = (store: Store, p: Project): History<Project> => store.histories[p.id] ?? initHistory(p, 'h.open');
 
+/** one-off actions: every click is its own undo step, never merged with the previous one */
+const DISCRETE = new Set([
+  'h.shape', 'h.wall', 'h.decking', 'h.edgeBoard', 'h.draw', 'h.house', 'h.moveEdge', 'h.moveVertex', 'h.moveStair',
+  'h.addStair', 'h.deleteStair', 'h.edgeLength', 'h.notch', 'h.removeNotch', 'h.mirror', 'h.clear',
+]);
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(() => loadJSON<Lang>(LS.lang, 'zh'));
   const [store, setStore] = useState<Store>(() => {
@@ -188,6 +196,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     drawMode: false,
   });
   const [lastHistoryAction, setLastHistoryAction] = useState<HistoryAction | null>(null);
+  const [saveOk, setSaveOk] = useState(true);
 
   const projects = store.projects;
   const project = useMemo(() => projects.find((p) => p.id === currentId) ?? projects[0], [projects, currentId]);
@@ -197,13 +206,25 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (project && project.id !== currentId) setCurrentId(project.id);
   }, [project, currentId]);
 
-  // persist (debounced)
+  // persist (debounced, and immediately when the page is being hidden or closed)
   useEffect(() => {
-    const h = setTimeout(() => {
-      saveJSON(LS.projects, projects);
-      saveJSON(LS.current, currentId);
-    }, 300);
-    return () => clearTimeout(h);
+    const save = () => {
+      try {
+        localStorage.setItem(LS.projects, JSON.stringify(projects));
+        localStorage.setItem(LS.current, JSON.stringify(currentId));
+        setSaveOk(true);
+      } catch {
+        setSaveOk(false);
+      }
+    };
+    const h = setTimeout(save, 300);
+    window.addEventListener('pagehide', save);
+    window.addEventListener('visibilitychange', save);
+    return () => {
+      clearTimeout(h);
+      window.removeEventListener('pagehide', save);
+      window.removeEventListener('visibilitychange', save);
+    };
   }, [projects, currentId]);
   useEffect(() => saveJSON(LS.lang, lang), [lang]);
 
@@ -212,16 +233,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setUi = useCallback((patch: Partial<UIState>) => setUiState((u) => ({ ...u, ...patch })), []);
 
   const updateProject = useCallback(
-    (fn: (p: Project) => Project, label: string | boolean = 'h.edit', coalesceMs = 1200) => {
+    (fn: (p: Project) => Project, label: string | boolean = 'h.edit', coalesceMs?: number) => {
       const lbl = typeof label === 'string' ? label : 'h.edit';
+      const window_ = coalesceMs ?? (DISCRETE.has(lbl) ? 0 : 1200);
       setStore((s) => {
         const id = cur ?? s.projects[0]?.id;
         const p = s.projects.find((x) => x.id === id);
         if (!p) return s;
         const changed = fn(p);
-        if (changed === p) return s;
+        // handlers often rebuild the object with the same values: that is not an edit
+        if (changed === p || JSON.stringify(changed) === JSON.stringify(p)) return s;
         const next = { ...changed, updatedAt: new Date().toISOString() };
-        const h = pushHistory(historyFor(s, p), next, lbl, Date.now(), coalesceMs);
+        const h = pushHistory(historyFor(s, p), next, lbl, Date.now(), window_);
         return { projects: s.projects.map((x) => (x.id === id ? next : x)), histories: { ...s.histories, [id]: h } };
       });
     },
@@ -230,19 +253,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const applyHistory = useCallback(
     (kind: HistoryAction['kind'], move: (h: History<Project>) => History<Project>) => {
-      setStore((s) => {
-        const p = s.projects.find((x) => x.id === cur);
-        if (!p) return s;
-        const h = historyFor(s, p);
-        const nh = move(h);
-        if (nh === h) return s;
-        const from = h.entries[h.index];
-        const label = kind === 'undo' ? from.label : nh.entries[nh.index].label;
-        setLastHistoryAction({ kind, label, at: Date.now() });
-        return { projects: s.projects.map((x) => (x.id === p.id ? currentState(nh) : x)), histories: { ...s.histories, [p.id]: nh } };
-      });
+      const p = store.projects.find((x) => x.id === cur);
+      if (!p) return;
+      const h = historyFor(store, p);
+      const nh = move(h);
+      if (nh === h) return;
+      const from = h.entries[h.index];
+      const label = kind === 'undo' ? from.label : nh.entries[nh.index].label;
+      setStore({ projects: store.projects.map((x) => (x.id === p.id ? currentState(nh) : x)), histories: { ...store.histories, [p.id]: nh } });
+      setLastHistoryAction({ kind, label, at: Date.now() });
+      setUiState((u) => ({ ...u, selection: null }));
     },
-    [cur],
+    [cur, store],
   );
   const undo = useCallback(() => applyHistory('undo', undoHistory), [applyHistory]);
   const redo = useCallback(() => applyHistory('redo', redoHistory), [applyHistory]);
@@ -285,19 +307,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [project, addProject]);
 
   const deleteProject = useCallback(() => {
-    setStore((s) => {
-      const rest = s.projects.filter((p) => p.id !== project.id);
-      const histories = { ...s.histories };
-      delete histories[project.id];
-      if (!rest.length) {
-        const fresh = newProject(lang === 'zh' ? 'Deck 项目 1' : 'Deck project 1', false, defaultRulesForNew());
-        rest.push(fresh);
-        histories[fresh.id] = initHistory(fresh, 'h.open');
-      }
-      setCurrentId(rest[0].id);
-      return { projects: rest, histories };
-    });
-  }, [project, lang, defaultRulesForNew]);
+    const rest = store.projects.filter((p) => p.id !== project.id);
+    const histories = { ...store.histories };
+    delete histories[project.id];
+    if (!rest.length) {
+      const fresh = newProject(lang === 'zh' ? 'Deck 项目 1' : 'Deck project 1', false, defaultRulesForNew());
+      rest.push(fresh);
+      histories[fresh.id] = initHistory(fresh, 'h.open');
+    }
+    setStore({ projects: rest, histories });
+    setCurrentId(rest[0].id);
+  }, [store, project, lang, defaultRulesForNew]);
 
   const importProject = useCallback(
     (data: unknown): boolean => {
@@ -317,7 +337,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const t = useCallback((key: string, params?: Record<string, string | number>) => translate(lang, key, params), [lang]);
 
   const value: AppCtx = {
-    project, projects, design, lang, ui, canUndo, canRedo, history, historyIndex, lastHistoryAction,
+    project, projects, design, lang, ui, canUndo, canRedo, saveOk, history, historyIndex, lastHistoryAction,
     setLang, setUi, updateProject, undo, redo, jumpTo, createProject, openProject,
     duplicateProject, deleteProject, importProject, saveDefaultRules, saveDefaultPrices, defaultRulesForNew,
   };

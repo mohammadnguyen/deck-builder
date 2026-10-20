@@ -63,6 +63,16 @@ export interface BoardRun {
   joins: number[];
   crossings: number;
   screws: number;
+  /** visible width when this run is narrower than the row (ripped along a notch or the far edge) */
+  width: number;
+  ripped: boolean;
+}
+
+/** boards ripped to a width, grouped for the notes and the cut list */
+export interface RipInfo {
+  row: number;
+  width: number;
+  boards: number;
 }
 
 export interface BoardRow {
@@ -139,8 +149,8 @@ export interface LayoutResult {
   joistSpacingUsed: number;
   joistSpacingMin: number;
   boards: BoardRow[];
-  /** last row ripped to width: which row, how wide, how many boards */
-  rip: { row: number; width: number; boards: number } | null;
+  /** boards that have to be ripped to width (last row, or rows meeting a notch), grouped by row and width */
+  rips: RipInfo[];
   edgeBoards: EdgeBoardRun[];
   breakers: BreakerRun[];
   /** polygon the field boards fill (deck outline inset behind the edge boards) */
@@ -182,6 +192,8 @@ export interface LayoutContext {
   flush: boolean;
   /** picture-frame edge boards around the exposed edges */
   edgeBoard: boolean;
+  /** width of the edge board product (may differ from the field board) */
+  edgeBoardWidth: number;
   /** divide runs longer than one board with breaker boards instead of staggered joins */
   breakerBoards: boolean;
   kerf: number;
@@ -301,6 +313,7 @@ export function computeLayout(
   const factor = elevated ? rules.elevatedFactor : 1;
   const exposed = (e: Edge): boolean => !houseEdges.includes(e.index);
   const bw = ctx.boardWidth;
+  const ebw = ctx.edgeBoardWidth || bw;
   const gap = ctx.boardGap;
   const jt = ctx.joistThickness;
 
@@ -308,9 +321,9 @@ export function computeLayout(
   let edgeBoardOn = ctx.edgeBoard && E.some(exposed);
   let fieldPoly: Pt[] = poly;
   if (edgeBoardOn) {
-    const inset = insetPolygon(poly, E, (e) => (exposed(e) ? bw + gap : 0));
+    const inset = insetPolygon(poly, E, (e) => (exposed(e) ? ebw + gap : 0));
     const fE = edges(inset);
-    const ok = validatePolygon(inset).ok && fE.every((e) => e.length > 2 * (bw + gap) + 50) && fE.length === E.length;
+    const ok = validatePolygon(inset).ok && fE.every((e) => e.length > 2 * (ebw + gap) + 50) && fE.length === E.length;
     if (ok) fieldPoly = inset;
     else {
       edgeBoardOn = false;
@@ -412,8 +425,8 @@ export function computeLayout(
     if (e.axis !== 'y') continue;
     fixedXs.push({ x: e.a.x - e.outward.x * (jt / 2), kind: 'edge' });
     if (edgeBoardOn && rules.frameJoist && exposed(e)) {
-      // a pair of joists touching each other, the joint (board width + gap from the edge) falls between them
-      const joint = e.a.x - e.outward.x * (bw + gap);
+      // a pair of joists touching each other, the joint (edge board width + gap from the edge) falls between them
+      const joint = e.a.x - e.outward.x * (ebw + gap);
       fixedXs.push({ x: joint - jt / 2, kind: 'frame' });
       fixedXs.push({ x: joint + jt / 2, kind: 'frame' });
     }
@@ -442,10 +455,12 @@ export function computeLayout(
       }
       if (breakerOk && boardOk) continue;
       let x = b.xc + s * (bw / 2 + gap / 2);
+      // when a joist is in the way, go to the side whose bearing is still missing
+      const towards = boardOk && !breakerOk ? -s : s;
       for (let guard = 0; guard < 4; guard++) {
         const clash = fixedXs.find((f) => Math.abs(f.x - x) < jt - 0.5);
         if (!clash) break;
-        x = clash.x + s * jt;
+        x = clash.x + towards * jt;
       }
       fixedXs.push({ x, kind: 'frame' });
     }
@@ -538,7 +553,6 @@ export function computeLayout(
   let maxBearerSpanUsed = 0;
   let bearerCounter = 0;
   lines.forEach((line, li) => {
-    const onWall = line.kind === 'wall';
     const prevGap = li > 0 ? line.pos - lines[li - 1].pos : line.pos - bb.minY;
     const nextGap = li + 1 < lines.length ? lines[li + 1].pos - line.pos : bb.maxY - line.pos;
     const flw = (prevGap + nextGap) / 2;
@@ -547,8 +561,29 @@ export function computeLayout(
       warnings.push({ severity: 'warn', key: 'layout.bearerSpanExtrapolated' });
     }
     const maxSpan = Math.max(300, Math.floor((bs.span * factor) / 10) * 10);
-    const intervals = clipHorizontal(poly, line.pos);
-    for (const [x0, x1] of intervals) {
+    // a wall bearer only exists where there is a wall: beyond the house edge the same line gets a normal bearer on posts
+    const segs: { iv: [number, number]; wall: boolean }[] = [];
+    for (const iv of clipHorizontal(poly, line.pos)) {
+      const he = line.kind === 'wall' && line.edgeIndex !== undefined ? E[line.edgeIndex] : null;
+      if (!he) {
+        segs.push({ iv, wall: false });
+        continue;
+      }
+      const hx0 = Math.min(he.a.x, he.b.x);
+      const hx1 = Math.max(he.a.x, he.b.x);
+      const a = Math.max(iv[0], hx0);
+      const b = Math.min(iv[1], hx1);
+      if (b - a <= 200) {
+        segs.push({ iv, wall: false });
+        continue;
+      }
+      if (a - iv[0] > 200) segs.push({ iv: [iv[0], a], wall: false });
+      segs.push({ iv: [a, b], wall: true });
+      if (iv[1] - b > 200) segs.push({ iv: [b, iv[1]], wall: false });
+    }
+    for (const { iv, wall } of segs) {
+      const [x0, x1] = iv;
+      const onWall = wall;
       const xs = x0 + rules.bearerEndInset;
       const xe = x1 - rules.bearerEndInset;
       const length = xe - xs;
@@ -702,53 +737,113 @@ export function computeLayout(
     }
     return parts;
   };
+  const subtract = (ivs: [number, number][], cuts: [number, number][]): [number, number][] => {
+    let out = ivs;
+    for (const [c0, c1] of cuts) {
+      const next: [number, number][] = [];
+      for (const [a, b] of out) {
+        if (c1 <= a || c0 >= b) next.push([a, b]);
+        else {
+          if (c0 - a > 1) next.push([a, c0]);
+          if (b - c1 > 1) next.push([c1, b]);
+        }
+      }
+      out = next;
+    }
+    return out;
+  };
+  // horizontal lines of the field between which a board row may have to be ripped (notch lines)
+  const levelYs = [...new Set(fieldPoly.map((p) => Math.round(p.y * 10) / 10))].sort((p, q) => p - q);
+  const makeRun = (x0: number, x1: number, yc: number, width: number, ripped: boolean, k: number): BoardRun | null => {
+    const length = x1 - x0;
+    if (length < 50) return null;
+    const J = joistPositions.filter((x) => x > x0 - 1 && x < x1 + 1);
+    const inner = joistPositions.filter((x) => x > x0 + rules.minBoardPiece && x < x1 - rules.minBoardPiece);
+    const firstTarget = Math.max(rules.minBoardPiece + 1, maxBoard - (k % 3) * rules.staggerOffset);
+    const split = splitRun(x0, x1, inner, maxBoard, rules.minBoardPiece, firstTarget);
+    const joins = split.joins.length;
+    const runScrews = (J.length + joins) * rules.screwsPerCrossing;
+    boardLm += length;
+    boardJoins += joins;
+    screws += runScrews;
+    return {
+      seg: { a: { x: x0, y: yc }, b: { x: x1, y: yc } },
+      length,
+      pieces: split.pieces.map((p) => p + rules.boardEndAllowance),
+      joins: split.joins,
+      crossings: J.length,
+      screws: runScrews,
+      width,
+      ripped,
+    };
+  };
   for (let k = 0; k < 2000; k++) {
-    let yc: number;
+    let top: number;
     let visible: number;
     if (!houseAtBottom) {
-      const top = fbb.minY + k * pitch;
+      top = fbb.minY + k * pitch;
       if (top >= fbb.maxY - 1) break;
       visible = Math.min(bw, fbb.maxY - top);
-      yc = top + visible / 2;
     } else {
       const bottom = fbb.maxY - k * pitch;
       if (bottom <= fbb.minY + 1) break;
       visible = Math.min(bw, bottom - fbb.minY);
-      yc = bottom - visible / 2;
+      top = bottom - visible;
     }
-    const intervals = clipHorizontal(fieldPoly, yc).flatMap((iv) => splitAtBreakers(iv, yc));
-    if (!intervals.length) continue;
+    // a sliver thinner than 40 mm is absorbed by the gaps rather than cut
+    if (visible < 40) break;
+    const bot = top + visible;
+    const yc = top + visible / 2;
+    const rowRipped = visible < bw - 1;
+    const inside = levelYs.filter((y) => y > top + 0.5 && y < bot - 0.5);
     const runs: BoardRun[] = [];
-    for (const [x0, x1] of intervals) {
-      const length = x1 - x0;
-      if (length < 50) continue;
-      const J = joistPositions.filter((x) => x > x0 - 1 && x < x1 + 1);
-      const inner = joistPositions.filter((x) => x > x0 + rules.minBoardPiece && x < x1 - rules.minBoardPiece);
-      const firstTarget = Math.max(rules.minBoardPiece + 1, maxBoard - (k % 3) * rules.staggerOffset);
-      const split = splitRun(x0, x1, inner, maxBoard, rules.minBoardPiece, firstTarget);
-      const joins = split.joins.length;
-      const runScrews = (J.length + joins) * rules.screwsPerCrossing;
-      boardLm += length;
-      boardJoins += joins;
-      screws += runScrews;
-      runs.push({
-        seg: { a: { x: x0, y: yc }, b: { x: x1, y: yc } },
-        length,
-        pieces: split.pieces.map((p) => p + rules.boardEndAllowance),
-        joins: split.joins,
-        crossings: J.length,
-        screws: runScrews,
-      });
+    if (!inside.length) {
+      for (const [x0, x1] of clipHorizontal(fieldPoly, yc).flatMap((iv) => splitAtBreakers(iv, yc))) {
+        const r = makeRun(x0, x1, yc, visible, rowRipped, k);
+        if (r) runs.push(r);
+      }
+    } else {
+      // the row crosses a notch line: full boards where the whole width is inside, ripped strips elsewhere
+      const full = (() => {
+        const t0 = clipHorizontal(fieldPoly, top + 0.5);
+        const b0 = clipHorizontal(fieldPoly, bot - 0.5);
+        const out: [number, number][] = [];
+        for (const [a, b] of t0) for (const [c, d] of b0) if (Math.min(b, d) - Math.max(a, c) > 1) out.push([Math.max(a, c), Math.min(b, d)]);
+        return out;
+      })();
+      for (const [x0, x1] of full.flatMap((iv) => splitAtBreakers(iv, yc))) {
+        const r = makeRun(x0, x1, yc, visible, rowRipped, k);
+        if (r) runs.push(r);
+      }
+      const bounds = [top, ...inside, bot];
+      for (let i = 0; i + 1 < bounds.length; i++) {
+        const pa = bounds[i];
+        const pb = bounds[i + 1];
+        const pc = (pa + pb) / 2;
+        const partial = subtract(clipHorizontal(fieldPoly, pc), full);
+        for (const [x0, x1] of partial.flatMap((iv) => splitAtBreakers(iv, pc))) {
+          const r = makeRun(x0, x1, pc, pb - pa, true, k);
+          if (r) runs.push(r);
+        }
+      }
     }
-    boards.push({ index: k, pos: yc, width: visible, ripped: visible < bw - 1, runs });
+    if (!runs.length) continue;
+    boards.push({ index: k, pos: yc, width: visible, ripped: rowRipped, runs });
   }
   if (offSupportJoins) warnings.push({ severity: 'info', key: 'layout.joinOffSupport' });
+  const ripMap = new Map<string, RipInfo>();
+  for (const row of boards) for (const run of row.runs) {
+    if (!run.ripped) continue;
+    const w = Math.round(run.width);
+    const key = `${row.index}|${w}`;
+    const cur = ripMap.get(key) ?? { row: row.index + 1, width: w, boards: 0 };
+    cur.boards += run.pieces.length;
+    ripMap.set(key, cur);
+  }
+  const rips = [...ripMap.values()].sort((p, q) => p.row - q.row);
+  for (const r of rips) warnings.push({ severity: 'info', key: 'layout.rip', params: { row: r.row, width: r.width, n: r.boards } });
   const lastRow = boards[boards.length - 1];
-  const rip = lastRow && lastRow.ripped
-    ? { row: lastRow.index + 1, width: Math.round(lastRow.width), boards: lastRow.runs.reduce((n, r) => n + r.pieces.length, 0) }
-    : null;
-  if (rip) warnings.push({ severity: 'info', key: 'layout.rip', params: { row: rip.row, width: rip.width, n: rip.boards } });
-  if (rip && rip.width < bw / 2) warnings.push({ severity: 'warn', key: 'layout.narrowRip', params: { width: rip.width } });
+  if (lastRow && lastRow.ripped && lastRow.width < bw / 2) warnings.push({ severity: 'warn', key: 'layout.narrowRip', params: { width: Math.round(lastRow.width) } });
 
   // ---- edge boards: one run per exposed edge, mitred where two exposed edges meet ----
   const edgeBoards: EdgeBoardRun[] = [];
@@ -769,7 +864,7 @@ export function computeLayout(
       if (!exposed(e)) continue;
       const startCorner = cornerAt(e.index);
       const endCorner = cornerAt((e.index + 1) % n);
-      const extra = (startCorner === 'concave' ? bw : 0) + (endCorner === 'concave' ? bw : 0);
+      const extra = (startCorner === 'concave' ? ebw : 0) + (endCorner === 'concave' ? ebw : 0);
       const length = e.length + extra;
       const alongJoists = e.axis === 'y';
       let pieces: number[];
@@ -786,7 +881,7 @@ export function computeLayout(
         const lo = Math.min(e.a.x, e.b.x);
         const hi = Math.max(e.a.x, e.b.x);
         const sup = joistPositions.filter((x) => x > lo + rules.minBoardPiece && x < hi - rules.minBoardPiece);
-        const split = splitRun(lo, hi, sup, maxEdge, rules.minBoardPiece);
+        const split = splitRun(lo, hi, sup, maxEdge - extra, rules.minBoardPiece);
         pieces = [...split.pieces];
         // the mitre allowance at a concave corner belongs to the piece at that end
         const startIdx = e.dir.x > 0 ? 0 : pieces.length - 1;
@@ -806,7 +901,7 @@ export function computeLayout(
       edgeBoards.push({
         edgeIndex: e.index,
         seg: { a: e.a, b: e.b },
-        width: bw,
+        width: ebw,
         length,
         pieces: pieces.map((p) => p + rules.boardEndAllowance),
         joinPts: joinTs.map((tt) => ({ x: e.a.x + e.dir.x * tt, y: e.a.y + e.dir.y * tt })),
@@ -856,7 +951,7 @@ export function computeLayout(
     joistSpacingUsed,
     joistSpacingMin,
     boards: boards.map((r) => ({ ...r, runs: r.runs.map(fix) })),
-    rip,
+    rips,
     edgeBoards: edgeBoards.map((eb) => ({ ...fix(eb), joinPts: swapped ? eb.joinPts.map(swapPt) : eb.joinPts })),
     breakers: breakers.map(fix),
     fieldPoly: swapped ? swapPoly(fieldPoly) : fieldPoly,

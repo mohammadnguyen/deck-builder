@@ -138,6 +138,7 @@ export function SheetsView() {
   const baySummary = lay.joistBays.map((b) => `${b.count} x @${Math.round(b.spacing)}`).join(', ');
   const edgeBoardLine = design.bom.lines.find((l) => l.tags.includes('edgeBoard'));
   const lastRow = lay.boards[lay.boards.length - 1];
+  const houseSide = project.houseEdges.length > 0;
   const bw = PRODUCT_MAP[p.deckingProductId]?.width ?? 0;
 
   const clipLine = design.bom.lines.find((l) => l.tags.includes('clip'));
@@ -283,7 +284,7 @@ export function SheetsView() {
             <h3>{t('sheet.notes')}</h3>
             <p>{t('sheet.framingNote1', { lam: p.bearerLaminations, bearer: sizeLabel(p.bearerProductId), joist: sizeLabel(p.joistProductId), spacing: design.joistSpacingText, mode: spacingMode })}</p>
             <p>{t('sheet.framingNote2', { post: sizeLabel(design.postProductId), footing: footingText })}</p>
-            <p>{t('sheet.framingNote3')}</p>
+            <p>{t(houseSide ? 'sheet.framingNote3' : 'sheet.framingNote3.free')}</p>
             {lay.totals.frameJoists > 0 && <p>{t('sheet.framingNote4')}</p>}
             {design.braces.count > 0 && <p>{t('m.bracing', { count: design.braces.count })}</p>}
             <Legend items={[{ color: COLORS.bearer, label: t('legend.bearer') }, { color: COLORS.joist, label: t('legend.joist') }, { color: COLORS.frameJoist, label: t('legend.frameJoist') }, { color: COLORS.post, label: t('legend.post') }, { color: COLORS.ledger, label: t('legend.wall') }]} />
@@ -301,13 +302,13 @@ export function SheetsView() {
               <p>{t('sheet.deckingNote4', { product: productName(design.edgeBoardProductId, lang), n: lay.edgeBoards.length, lm: (lay.totals.edgeBoardLm / 1000).toFixed(1), mitres: lay.totals.mitres, gap: p.boardGap })}</p>
             )}
             {lay.breakers.length > 0 && <p>{t('sheet.deckingNote6', { n: lay.breakers.length, lm: (lay.totals.breakerLm / 1000).toFixed(1) })}</p>}
-            <p>{t('sheet.deckingNote2')}</p>
-            {lay.rip ? (
+            <p>{t(lay.breakers.length ? 'sheet.deckingNote2.breaker' : 'sheet.deckingNote2')}</p>
+            {lay.rips.length ? (
               <p>
-                <b>{t('sheet.deckingNote5.rip', { row: lay.rip.row, width: lay.rip.width, n: lay.rip.boards })}</b>
+                <b>{t(houseSide ? 'sheet.rows.house' : 'sheet.rows.edge')} {lay.rips.map((r) => t('sheet.ripRow', { row: r.row, width: r.width, n: r.boards })).join('；')}</b>
               </p>
             ) : (
-              lastRow && <p>{t('sheet.deckingNote5', { last: Math.round(lastRow.width) })}</p>
+              lastRow && <p>{t(houseSide ? 'sheet.rows.house' : 'sheet.rows.edge')} {t('sheet.deckingNote5', { last: Math.round(lastRow.width) })}</p>
             )}
             {design.balustrade.enabled && <p>{t('sheet.deckingNote3')}</p>}
             <table className="sch">
@@ -366,7 +367,7 @@ export function SheetsView() {
             {design.stairs.map((s) => (
               <p key={s.id}>{t('m.stairs', { id: s.id, width: s.width, risers: s.risers, riser: Math.round(s.riser), going: s.going, treads: s.treads, run: Math.round(s.totalRun), stringers: s.stringerCount, stringerLength: s.stringerLength, boards: s.boardsPerTread })}</p>
             ))}
-            <Legend items={[{ color: COLORS.board, label: t('legend.board') }, { color: COLORS.edgeBoard, label: t('legend.edgeBoard') }, ...(lay.breakers.length ? [{ color: COLORS.breaker, label: t('legend.breaker') }] : []), ...(lay.rip ? [{ color: COLORS.join, label: t('legend.rip') }] : []), { color: COLORS.join, label: t('legend.join'), shape: 'line' }, { color: COLORS.balPost, label: t('legend.balPost') }, { color: COLORS.stair, label: t('legend.stair') }]} />
+            <Legend items={[{ color: COLORS.board, label: t('legend.board') }, { color: COLORS.edgeBoard, label: t('legend.edgeBoard') }, ...(lay.breakers.length ? [{ color: COLORS.breaker, label: t('legend.breaker') }] : []), ...(lay.rips.length ? [{ color: COLORS.join, label: t('legend.rip') }] : []), { color: COLORS.join, label: t('legend.join'), shape: 'line' }, { color: COLORS.balPost, label: t('legend.balPost') }, { color: COLORS.stair, label: t('legend.stair') }]} />
           </div>
         </Sheet>
 
@@ -388,7 +389,7 @@ export function SheetsView() {
                   <tr>
                     <th colSpan={4}>
                       {productName(c.productId, lang)} · {t('cut.waste')} {c.wastePct.toFixed(0)}%
-                      {lay.rip && c.productId === p.deckingProductId ? ` · ${t('cut.rip', { n: lay.rip.boards, width: lay.rip.width })}` : ''}
+                      {lay.rips.length && c.productId === p.deckingProductId ? ` · ${lay.rips.map((r) => t('cut.rip', { n: r.boards, width: r.width })).join('；')}` : ''}
                     </th>
                   </tr>
                   <tr>

@@ -124,6 +124,7 @@ export function computeDesign(project: Project): DesignResult {
     bearerWidth,
     flush,
     edgeBoard: params.edgeBoard,
+    edgeBoardWidth: PRODUCT_MAP[edgeBoardProductId]?.width ?? decking.width ?? 86,
     breakerBoards: params.breakerBoards === 'on' || (params.breakerBoards === 'auto' && decking.family === 'composite'),
     kerf: rules.kerf,
     deckingMaxJoistSpacing: maxTreadSpan,
@@ -326,7 +327,7 @@ export function computeDesign(project: Project): DesignResult {
     bearerName: bearer.id, joistName: joist.id, deckingName: decking.id, boardThickness: boardT, joistDepth: joistD,
     bearerDepth: bearerD, balustrade, stairs, braceCount, pathway: compliance.pathway,
     clips: clipId ? clipCount : undefined, composite: decking.family === 'composite',
-    joistSpacingText, edgeBoardName: edgeBoardProductId,
+    joistSpacingText, edgeBoardName: edgeBoardProductId, houseSide: houseEdges.length > 0,
   });
 
   return {

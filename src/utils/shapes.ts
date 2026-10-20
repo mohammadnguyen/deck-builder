@@ -1,5 +1,5 @@
 import type { Project, Pt, Stair } from '../model/types';
-import { bbox, edges, moveVertex, normalizePolygon, polygonAreaMm2, validatePolygon } from '../engine/geometry';
+import { bbox, edges, moveVertex, normalizePolygon, polygonAreaMm2, validatePolygon, type Edge } from '../engine/geometry';
 
 export type ShapeKind = 'rect' | 'L' | 'U' | 'custom';
 
@@ -135,6 +135,20 @@ export function clampEdgeValue(poly: Pt[], i: number, value: number): number {
   return v;
 }
 
+/** A deck must stay at least this wide in both directions and keep some area. */
+const MIN_EXTENT = 300;
+function sane(poly: Pt[]): boolean {
+  const bb = bbox(poly);
+  return bb.width >= MIN_EXTENT && bb.height >= MIN_EXTENT && polygonAreaMm2(poly) >= MIN_EXTENT * MIN_EXTENT;
+}
+
+/** True when both outlines have the same corners within half a millimetre. */
+export function samePoly(a: Pt[], b: Pt[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (Math.abs(a[i].x - b[i].x) > 0.5 || Math.abs(a[i].y - b[i].y) > 0.5) return false;
+  return true;
+}
+
 /** Move edge i to `value` along its normal axis, keeping the polygon orthogonal and valid. */
 export function moveEdgeTo(poly: Pt[], i: number, value: number): Pt[] | null {
   const n = poly.length;
@@ -149,7 +163,7 @@ export function moveEdgeTo(poly: Pt[], i: number, value: number): Pt[] | null {
     out[j].x = v;
   }
   const norm = normalizePolygon(out);
-  return norm.length === n && validatePolygon(norm).ok ? out : null;
+  return norm.length === n && validatePolygon(norm).ok && sane(norm) ? out : null;
 }
 
 /**
@@ -185,7 +199,76 @@ export function moveVertexTo(poly: Pt[], i: number, v: Pt): Pt[] | null {
   const n = poly.length;
   const out = moveVertex(poly, i, clampVertex(poly, i, v));
   const norm = normalizePolygon(out);
-  return norm.length === n && validatePolygon(norm).ok ? out : null;
+  return norm.length === n && validatePolygon(norm).ok && sane(norm) ? out : null;
+}
+
+/**
+ * Set the length of edge i. The end vertex moves, unless the end sits on the house and the
+ * start does not: then the start moves, so the deck never slides off its wall.
+ */
+export function setEdgeLengthAnchored(poly: Pt[], i: number, length: number, houseEdges: number[]): Pt[] | null {
+  const n = poly.length;
+  const E = edges(poly);
+  const e = E[i];
+  if (!e || length < MIN_EDGE) return null;
+  const endOnHouse = houseEdges.includes((i + 1) % n);
+  const startOnHouse = houseEdges.includes((i - 1 + n) % n);
+  let out: Pt[];
+  if (endOnHouse && !startOnHouse) {
+    out = moveVertex(poly, i, { x: e.b.x - e.dir.x * length, y: e.b.y - e.dir.y * length });
+  } else {
+    out = moveVertex(poly, (i + 1) % n, { x: e.a.x + e.dir.x * length, y: e.a.y + e.dir.y * length });
+  }
+  const norm = normalizePolygon(out);
+  return norm.length === n && validatePolygon(norm).ok && sane(norm) ? out : null;
+}
+
+/** Shift the points of house polylines that lie on a moved deck edge, so the wall follows the edge. */
+export function shiftHouseLine(house: Pt[][], axis: 'x' | 'y', oldCoord: number, delta: number): Pt[][] {
+  if (Math.abs(delta) < 0.5) return house;
+  return house.map((pl) =>
+    pl.map((q) => {
+      const c = axis === 'x' ? q.y : q.x;
+      if (Math.abs(c - oldCoord) > 25) return q;
+      return axis === 'x' ? { x: q.x, y: q.y + delta } : { x: q.x + delta, y: q.y };
+    }),
+  );
+}
+
+/**
+ * Carry edge-indexed data (house flags, stairs, balustrade overrides) across an outline change by
+ * geometry: an old edge maps to every new edge lying on the same line that overlaps it.
+ */
+export function remapEdgeData(p: Project, deck: Pt[]): Pick<Project, 'houseEdges' | 'stairs' | 'params'> {
+  const oldE = edges(p.deck);
+  const newE = edges(deck);
+  const span = (e: Edge): [number, number] => (e.axis === 'x' ? [Math.min(e.a.x, e.b.x), Math.max(e.a.x, e.b.x)] : [Math.min(e.a.y, e.b.y), Math.max(e.a.y, e.b.y)]);
+  const line = (e: Edge): number => (e.axis === 'x' ? e.a.y : e.a.x);
+  const overlapping = (o: Edge): Edge[] => {
+    if (!o) return [];
+    const [lo, hi] = span(o);
+    return newE.filter((e) => e.axis === o.axis && Math.abs(line(e) - line(o)) < 0.5 && Math.min(hi, span(e)[1]) - Math.max(lo, span(e)[0]) > 1);
+  };
+  const houseEdges = [...new Set(p.houseEdges.flatMap((i) => overlapping(oldE[i]).map((e) => e.index)))].sort((a, b) => a - b);
+  const stairs: Stair[] = [];
+  for (const s of p.stairs) {
+    const o = oldE[s.edgeIndex];
+    if (!o) continue;
+    const c0 = o.axis === 'x' ? o.a.x + o.dir.x * s.offset : o.a.y + o.dir.y * s.offset;
+    const c1 = o.axis === 'x' ? o.a.x + o.dir.x * (s.offset + s.width) : o.a.y + o.dir.y * (s.offset + s.width);
+    const lo = Math.min(c0, c1);
+    const hi = Math.max(c0, c1);
+    const host = overlapping(o).find((e) => span(e)[0] <= lo + 0.5 && span(e)[1] >= hi - 0.5);
+    if (!host || houseEdges.includes(host.index)) continue;
+    const start = host.axis === 'x' ? host.a.x : host.a.y;
+    const dir = host.axis === 'x' ? host.dir.x : host.dir.y;
+    stairs.push({ ...s, edgeIndex: host.index, offset: Math.max(0, dir > 0 ? lo - start : start - hi) });
+  }
+  const edgeOverride: Record<string, boolean> = {};
+  for (const [k, v] of Object.entries(p.params.balustrade.edgeOverride)) {
+    for (const e of overlapping(oldE[Number(k)])) edgeOverride[String(e.index)] = v;
+  }
+  return { houseEdges, stairs, params: { ...p.params, balustrade: { ...p.params.balustrade, edgeOverride } } };
 }
 
 /**
@@ -222,6 +305,9 @@ export function removeJog(poly: Pt[], i: number): Pt[] | null {
   if (Math.abs(prev.length - next.length) > 0.5) return null;
   const collinear = e.axis === 'x' ? Math.abs(before.a.y - after.a.y) < 0.5 : Math.abs(before.a.x - after.a.x) < 0.5;
   if (!collinear) return null;
+  // the two shoulders must lie between the outer ends, which rules out reading the deck body as a jog of its bump-out
+  const merged = Math.hypot(after.b.x - before.a.x, after.b.y - before.a.y);
+  if (Math.abs(merged - (before.length + e.length + after.length)) > 1) return null;
   const drop = new Set([(i - 1 + n) % n, i, (i + 1) % n, (i + 2) % n]);
   const out = normalizePolygon(poly.filter((_, k) => !drop.has(k)));
   if (out.length < 4 || !validatePolygon(out).ok) return null;
@@ -243,9 +329,10 @@ export function mirrorProject(p: Project): Project {
   const mx = (x: number) => bb.minX + bb.maxX - x;
   const deck = p.deck.map((q) => ({ x: mx(q.x), y: q.y }));
   const E = edges(p.deck);
+  // a left-right mirror reverses the direction of horizontal edges only
   const stairs = p.stairs.map((s) => {
     const e = E[s.edgeIndex];
-    return e ? { ...s, offset: Math.max(0, e.length - s.offset - s.width) } : s;
+    return e && e.axis === 'x' ? { ...s, offset: Math.max(0, e.length - s.offset - s.width) } : s;
   });
   const house = p.house.map((pl) => pl.map((q) => ({ x: mx(q.x), y: q.y })));
   return { ...p, deck, stairs, house };

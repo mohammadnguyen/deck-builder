@@ -33,19 +33,12 @@ export function SidePanel() {
 }
 
 function ParamsPanel() {
-  const { project, updateProject, lang, setUi } = useApp();
+  const { project, updateProject, lang } = useApp();
   const { t } = useT();
   const p = project.params;
   const set = <K extends keyof DeckParams>(k: K, v: DeckParams[K]) => updateProject((pr) => ({ ...pr, params: { ...pr.params, [k]: v } }), 'h.params');
   const setBal = <K extends keyof DeckParams['balustrade']>(k: K, v: DeckParams['balustrade'][K]) =>
     updateProject((pr) => ({ ...pr, params: { ...pr.params, balustrade: { ...pr.params.balustrade, [k]: v } } }), 'h.params');
-  const [rw, setRw] = useState(4800);
-  const [rd, setRd] = useState(3600);
-  const makeRect = () => {
-    const deck: Pt[] = [{ x: 0, y: 0 }, { x: rw, y: 0 }, { x: rw, y: rd }, { x: 0, y: rd }];
-    updateProject((pr) => ({ ...pr, deck, houseEdges: [0], stairs: [], house: pr.house.length ? pr.house : [[{ x: -1500, y: 0 }, { x: rw + 1500, y: 0 }]] }), 'h.shape');
-    setUi({ tool: 'select', selection: null });
-  };
   const deckingOpts = DECKING_PRODUCTS.map((d) => ({ value: d.id, label: productName(d, lang) }));
   const framingOpts = FRAMING_PRODUCTS.map((d) => ({ value: d.id, label: productName(d, lang) }));
   const postOpts = [{ value: 'auto', label: t('p.post.auto') }, ...POST_PRODUCTS.map((d) => ({ value: d.id, label: productName(d, lang) }))];
@@ -65,16 +58,6 @@ function ParamsPanel() {
           <span>{t('app.address')}</span>
           <input value={project.address} onChange={(e) => updateProject((pr) => ({ ...pr, address: e.target.value }), 'h.name')} />
         </label>
-      </Group>
-      <Group title={t('p.quickRect')}>
-        <div className="row">
-          <Num label={t('p.width')} value={rw} onChange={setRw} step={100} min={600} />
-          <Num label={t('p.depth')} value={rd} onChange={setRd} step={100} min={600} />
-        </div>
-        <button className="btn" onClick={makeRect}>
-          {t('p.create')}
-        </button>
-        <small>{t('p.quickRectHint')}</small>
       </Group>
       <Group title={t('p.group.geometry')}>
         <Num label={t('p.deckHeight')} value={p.deckHeight} onChange={(v) => set('deckHeight', v)} step={10} min={100} />
@@ -127,7 +110,7 @@ function ParamsPanel() {
           label={t('p.joistSpacingMode')}
           value={p.joistSpacingMode}
           options={[
-            { value: 'auto', label: t('p.joistSpacingMode.auto') },
+            { value: 'auto', label: t('p.joistSpacingMode.auto', { target: project.rules.joistSpacingTarget }) },
             { value: 'fixed', label: t('p.joistSpacingMode.fixed') },
           ]}
           onChange={(v) => set('joistSpacingMode', v as DeckParams['joistSpacingMode'])}
@@ -429,13 +412,13 @@ function SelectionPanel() {
         {d && (
           <div className="kv">
             <div>
-              <span>Risers</span>
+              <span>{t('d.riser')}</span>
               <b>
                 {d.risers} x {Math.round(d.riser)}
               </b>
             </div>
             <div>
-              <span>Going</span>
+              <span>{t('d.going')}</span>
               <b>{d.going}</b>
             </div>
             <div>
@@ -443,11 +426,11 @@ function SelectionPanel() {
               <b>{Math.round(d.twoRG)}</b>
             </div>
             <div>
-              <span>Run</span>
+              <span>{t('sel.run')}</span>
               <b>{Math.round(d.totalRun)}</b>
             </div>
             <div>
-              <span>Stringers</span>
+              <span>{t('d.stringer')}</span>
               <b>
                 {d.stringerCount} x {d.stringerLength}
               </b>

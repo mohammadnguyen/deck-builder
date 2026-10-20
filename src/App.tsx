@@ -1,4 +1,4 @@
-import { useRef, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useT } from './i18n';
 import { useApp, type Mode } from './state';
 import { CanvasEditor } from './ui/CanvasEditor';
@@ -39,9 +39,37 @@ const MODES: { id: Mode; key: string }[] = [
 ];
 
 export default function App() {
-  const { project, projects, lang, setLang, ui, setUi, updateProject, createProject, openProject, duplicateProject, deleteProject, importProject } = useApp();
+  const { project, projects, lang, setLang, ui, setUi, updateProject, createProject, openProject, duplicateProject, deleteProject, importProject, undo, redo, saveOk, lastHistoryAction } = useApp();
   const { t } = useT();
   const fileRef = useRef<HTMLInputElement>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  // confirm undo / redo / jumps wherever they happen
+  useEffect(() => {
+    if (!lastHistoryAction) return;
+    setToast(t(`toast.${lastHistoryAction.kind}`, { label: t(lastHistoryAction.label) }));
+    const id = window.setTimeout(() => setToast(null), 2600);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastHistoryAction]);
+
+  // undo / redo work on every tab; text boxes keep their own undo
+  useEffect(() => {
+    const typing = (el: Element | null) => !!el && (el.tagName === 'TEXTAREA' || (el.tagName === 'INPUT' && !['checkbox', 'radio', 'range', 'button'].includes((el as HTMLInputElement).type)));
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || typing(document.activeElement)) return;
+      if (e.key === 'z' || e.key === 'Z') {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+      } else if (e.key === 'y' || e.key === 'Y') {
+        e.preventDefault();
+        redo();
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [undo, redo]);
 
   const onImport = async (file: File) => {
     try {
@@ -130,7 +158,7 @@ export default function App() {
           }}
         />
         {tabs('tabs-main')}
-        <span className="saved">{t('nav.saved')}</span>
+        <span className={`saved ${saveOk ? '' : 'bad'}`}>{saveOk ? t('nav.saved') : t('nav.saveFailed')}</span>
         <button className="btn lang" onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')} title="Language">
           {lang === 'zh' ? 'EN' : '中文'}
         </button>
@@ -165,6 +193,7 @@ export default function App() {
         </main>
       )}
       {tabs('tabbar no-print')}
+      {toast && <div className="app-toast" role="status">{toast}</div>}
     </div>
   );
 }

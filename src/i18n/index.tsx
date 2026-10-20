@@ -18,6 +18,7 @@ export function translate(lang: Lang, key: string, params?: Record<string, strin
       if (prod) val = prod.name[lang];
       else if (DICTS[lang][`pathway.${val}`]) val = DICTS[lang][`pathway.${val}`];
       else if (DICTS[lang][`p.infill.${val}`] && k === 'infill') val = DICTS[lang][`p.infill.${val}`];
+      else if (k === 'side' && DICTS[lang][`side.${val}`]) val = DICTS[lang][`side.${val}`];
       s = s.split(`{${k}}`).join(val);
     }
   }

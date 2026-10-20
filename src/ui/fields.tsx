@@ -73,3 +73,33 @@ export function Seg<T extends string>({ value, options, onChange, label }: { val
     </div>
   );
 }
+
+/** A small number box that commits on Enter or blur, so a value can be typed in full. */
+export function NumInline({ value, onCommit, step = 1, min, className }: { value: number; onCommit: (v: number) => void; step?: number; min?: number; className?: string }) {
+  const [text, setText] = useState<string | null>(null);
+  const commit = () => {
+    if (text === null) return;
+    const v = parseFloat(text);
+    if (Number.isFinite(v) && v !== value) onCommit(v);
+    setText(null);
+  };
+  return (
+    <input
+      type="number"
+      className={className}
+      step={step}
+      min={min}
+      value={text ?? String(value)}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+        if (e.key === 'Escape') {
+          setText(null);
+          (e.target as HTMLInputElement).blur();
+        }
+        e.stopPropagation();
+      }}
+    />
+  );
+}

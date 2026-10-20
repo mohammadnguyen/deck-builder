@@ -105,7 +105,7 @@ function CatRows({ cat, lines, offset }: { cat: string; lines: DesignResult['bom
             {l.extraCount ? <small> ({t('bom.extra', { n: l.extraCount })})</small> : null}
             {PRODUCT_MAP[l.productId]?.packSize ? <small> ({t('bom.packs', { boxes: Math.ceil(l.qty / (PRODUCT_MAP[l.productId].packSize ?? 1)), size: PRODUCT_MAP[l.productId].packSize ?? 1 })})</small> : null}
           </td>
-          <td>{PRODUCT_MAP[l.productId]?.unit === 'm' ? 'pcs' : t(`unit.${l.unit}`)}</td>
+          <td>{PRODUCT_MAP[l.productId]?.unit === 'm' ? t('unit.pcs') : t(`unit.${l.unit}`)}</td>
           <td>{l.requiredLm !== undefined ? l.requiredLm.toFixed(1) : ''}</td>
           <td>{l.purchasedLm !== undefined ? l.purchasedLm.toFixed(1) : ''}</td>
           <td>{l.cutWastePct !== undefined ? `${l.cutWastePct.toFixed(0)}%` : ''}</td>

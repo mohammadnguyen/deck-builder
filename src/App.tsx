@@ -81,7 +81,7 @@ export default function App() {
           </span>
           <b>{t('app.title')}</b>
         </div>
-        <input className="project-name" value={project.name} aria-label={t('app.projectName')} onChange={(e) => updateProject((p) => ({ ...p, name: e.target.value }))} />
+        <input className="project-name" value={project.name} aria-label={t('app.projectName')} onChange={(e) => updateProject((p) => ({ ...p, name: e.target.value }), 'h.name')} />
         <details className="dd">
           <summary>{t('nav.projects')} ▾</summary>
           <div className="dd-menu">

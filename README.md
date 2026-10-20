@@ -23,6 +23,8 @@ npm run build      # type-check + production build to dist/
 画图页左边 5 步照着填：形状（矩形 / L 形 / U 形，或「自己画」）、靠什么墙和什么地面、完成面离地高度、面板、楼梯。
 尺寸直接点图上的蓝色数字改；点一条边可以设为贴墙或加楼梯。右边实时出数量、价钱、提醒，以及打印图纸、订货单、施工步骤三个按钮。
 构件规格、joist 间距、折扣、送货和全部规则、价格在「更多设置」里。「步骤」页是可勾选的施工清单，进度随项目保存。
+每一步改动都进历史：Ctrl+Z 撤销、Ctrl+Shift+Z 重做，「历史」菜单可以回到任意一步。拖边、拖角点只在松手时重新算量，拖动中实时显示尺寸，
+角点会吸附到其他角点的对齐线（按住 Shift 不吸附）。选中一条边可以加缺口、加凸出、删缺口、左右镜像。滚轮平移，Ctrl+滚轮或双指缩放。
 
 One screen for the counter, the builder and the crew: four tabs at the top (bottom on phones): Draw, Sheets,
 Materials, Steps. The Draw page walks through five steps: shape (rectangle / L / U, or draw it), wall and
@@ -31,6 +33,10 @@ edge to mark it against the house or add stairs. The right column shows quantiti
 buttons for the sheets, the supplier order and the construction steps. Member sizes, joist spacing, discount,
 delivery and the full rules and price lists sit under "More settings". The Steps page is a checklist the crew
 ticks off; progress is saved with the project.
+Every change is in the history: Ctrl+Z undoes, Ctrl+Shift+Z redoes, and the History menu jumps to any step. Dragging
+an edge or corner recomputes only on release and shows live dimensions; corners snap to alignment guides (hold Shift
+to skip snapping). A selected edge can take a notch, a bump-out, lose its notch, or mirror the deck. Scroll pans,
+Ctrl+scroll or pinch zooms.
 
 ## 材料与价格 / Materials and prices
 

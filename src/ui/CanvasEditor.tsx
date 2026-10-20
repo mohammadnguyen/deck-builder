@@ -3,7 +3,7 @@ import { detectHouseEdges, dist, edges as polyEdges, normalizePolygon, pointInPo
 import { useT } from '../i18n';
 import type { Pt } from '../model/types';
 import { useApp, type Tool } from '../state';
-import { housePolylineFor, nextStairId } from '../utils/shapes';
+import { housePolylineFor, insertNotch, isJogEdge, mirrorProject, moveEdgeTo, moveVertexTo, nextStairId, removeJog } from '../utils/shapes';
 import { COLORS, DesignLayers } from './PlanLayers';
 
 interface View {
@@ -13,10 +13,16 @@ interface View {
 }
 
 type Drag =
-  | { type: 'pan'; sx: number; sy: number; ox: number; oy: number }
-  | { type: 'edge'; index: number; grab: number; orig: Pt[] }
-  | { type: 'vertex'; index: number; orig: Pt[] }
-  | { type: 'stair'; id: string; grab: number };
+  | { type: 'pan'; sx: number; sy: number; ox: number; oy: number; moved: boolean }
+  | { type: 'edge'; index: number; grab: number; orig: Pt[]; last: Pt[] }
+  | { type: 'vertex'; index: number; orig: Pt[]; last: Pt[] }
+  | { type: 'stair'; id: string; grab: number; offset: number; orig: number }
+  | { type: 'pinch'; d0: number; scale0: number; mid0: { x: number; y: number }; ox0: number; oy0: number };
+
+type Hover = { type: 'edge'; index: number } | { type: 'vertex'; index: number } | { type: 'stair'; id: string } | null;
+
+const MIN_SCALE = 0.004;
+const MAX_SCALE = 2.5;
 
 function snapTo(v: number, s: number): number {
   return Math.round(v / s) * s;
@@ -24,6 +30,11 @@ function snapTo(v: number, s: number): number {
 
 function ortho(prev: Pt, p: Pt): Pt {
   return Math.abs(p.x - prev.x) >= Math.abs(p.y - prev.y) ? { x: p.x, y: prev.y } : { x: prev.x, y: p.y };
+}
+
+function fmtTime(at: number): string {
+  const d = new Date(at);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
 }
 
 /** Editable edge length sitting just outside the edge on the plan. */
@@ -50,6 +61,7 @@ function DimChip({ x, y, value, house, selected, onChange }: { x: number; y: num
           setText(null);
           (e.target as HTMLInputElement).blur();
         }
+        e.stopPropagation();
       }}
       onPointerDown={(e) => e.stopPropagation()}
     />
@@ -57,7 +69,7 @@ function DimChip({ x, y, value, house, selected, onChange }: { x: number; y: num
 }
 
 export function CanvasEditor() {
-  const { project, design, ui, setUi, updateProject, undo } = useApp();
+  const { project, design, ui, setUi, updateProject, undo, redo, canUndo, canRedo, history, historyIndex, jumpTo, lastHistoryAction } = useApp();
   const { t } = useT();
   const wrapRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
@@ -68,15 +80,33 @@ export function CanvasEditor() {
   const [cursor, setCursor] = useState<Pt | null>(null);
   const [lenText, setLenText] = useState('');
   const [toast, setToast] = useState<string | null>(null);
+  const [livePoly, setLivePoly] = useState<Pt[] | null>(null);
+  const [liveStair, setLiveStair] = useState<{ id: string; offset: number } | null>(null);
+  const [guides, setGuides] = useState<{ x?: number; y?: number }>({});
+  const [hover, setHover] = useState<Hover>(null);
+  const [histOpen, setHistOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const dragRef = useRef<Drag | null>(null);
   const spaceRef = useRef(false);
+  const shiftRef = useRef(false);
+  const pointersRef = useRef(new Map<number, { x: number; y: number }>());
+  const toastTimer = useRef<number | null>(null);
   const viewRef = useRef(view);
   viewRef.current = view;
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
-    window.setTimeout(() => setToast(null), 3500);
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 2600);
   }, []);
+
+  // confirm undo / redo / jumps
+  useEffect(() => {
+    if (!lastHistoryAction) return;
+    showToast(t(`toast.${lastHistoryAction.kind}`, { label: t(lastHistoryAction.label) }));
+    setUi({ selection: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lastHistoryAction]);
 
   // drawing surface size (the svg itself, so screen <-> world mapping is exact)
   useEffect(() => {
@@ -113,38 +143,55 @@ export function CanvasEditor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [projectId, vertexCount]);
 
+  const zoomAt = useCallback((factor: number, px?: number, py?: number) => {
+    const v = viewRef.current;
+    const el = svgRef.current;
+    const cx = px ?? (el?.clientWidth ?? 800) / 2;
+    const cy = py ?? (el?.clientHeight ?? 600) / 2;
+    const ns = Math.min(MAX_SCALE, Math.max(MIN_SCALE, v.scale * factor));
+    const wx = v.ox + cx / v.scale;
+    const wy = v.oy + cy / v.scale;
+    setView({ scale: ns, ox: wx - cx / ns, oy: wy - cy / ns });
+  }, []);
+
   const toWorld = useCallback((clientX: number, clientY: number): Pt => {
     const rect = svgRef.current?.getBoundingClientRect();
     const v = viewRef.current;
     if (!rect) return { x: 0, y: 0 };
     return { x: v.ox + (clientX - rect.left) / v.scale, y: v.oy + (clientY - rect.top) / v.scale };
   }, []);
+  const toScreen = useCallback((p: Pt): { x: number; y: number } => ({ x: (p.x - view.ox) * view.scale, y: (p.y - view.oy) * view.scale }), [view]);
 
-  const snap = useCallback((p: Pt): Pt => ({ x: snapTo(p.x, ui.snap), y: snapTo(p.y, ui.snap) }), [ui.snap]);
+  const snapPt = useCallback(
+    (p: Pt): Pt => (shiftRef.current ? { x: Math.round(p.x), y: Math.round(p.y) } : { x: snapTo(p.x, ui.snap), y: snapTo(p.y, ui.snap) }),
+    [ui.snap],
+  );
 
-  // wheel zoom (non-passive listener so we can prevent page scroll)
+  // wheel: trackpad scroll pans, pinch (ctrl) and mouse wheels zoom
   useEffect(() => {
     const el = svgRef.current;
     if (!el) return;
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
       const rect = el.getBoundingClientRect();
-      const v = viewRef.current;
-      const factor = e.deltaY < 0 ? 1.15 : 1 / 1.15;
-      const ns = Math.min(2, Math.max(0.005, v.scale * factor));
       const px = e.clientX - rect.left;
       const py = e.clientY - rect.top;
-      const wx = v.ox + px / v.scale;
-      const wy = v.oy + py / v.scale;
-      setView({ scale: ns, ox: wx - px / ns, oy: wy - py / ns });
+      const mouseWheel = e.deltaMode !== 0 || (Math.abs(e.deltaY) >= 60 && e.deltaX === 0);
+      if (e.ctrlKey || e.metaKey || mouseWheel) {
+        const factor = Math.exp(-(e.deltaMode === 0 ? e.deltaY : e.deltaY * 30) * (e.ctrlKey || e.metaKey ? 0.01 : 0.0025));
+        zoomAt(factor, px, py);
+      } else {
+        const v = viewRef.current;
+        setView({ ...v, ox: v.ox + e.deltaX / v.scale, oy: v.oy + e.deltaY / v.scale });
+      }
     };
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => el.removeEventListener('wheel', onWheel);
-  }, []);
+  }, [zoomAt]);
 
   // ---- outline editing helpers ----
   const applyPolygon = useCallback(
-    (poly: Pt[], undoable: boolean, resetDependents: boolean) => {
+    (poly: Pt[], label: string, resetDependents: boolean) => {
       const norm = normalizePolygon(poly);
       const v = validatePolygon(norm);
       if (!v.ok) return false;
@@ -157,7 +204,7 @@ export function CanvasEditor() {
           stairs: resetDependents ? [] : p.stairs.filter((s) => s.edgeIndex < norm.length),
           params: resetDependents ? { ...p.params, balustrade: { ...p.params.balustrade, edgeOverride: {} } } : p.params,
         };
-      }, undoable);
+      }, label);
       return true;
     },
     [updateProject],
@@ -183,7 +230,7 @@ export function CanvasEditor() {
         showToast(t(`polygon.${v.problem}`));
         return;
       }
-      applyPolygon(poly, true, true);
+      applyPolygon(poly, 'h.draw', true);
       setDraft([]);
       setLenText('');
       setUi({ tool: 'select', selection: null });
@@ -199,7 +246,7 @@ export function CanvasEditor() {
           const house = [...p.house, pts];
           const detected = detectHouseEdges(p.deck, house);
           return { ...p, house, houseEdges: [...new Set([...p.houseEdges, ...detected])] };
-        }, true);
+        }, 'h.house');
       }
       setDraft([]);
       setLenText('');
@@ -210,7 +257,7 @@ export function CanvasEditor() {
 
   const addDraftPoint = useCallback(
     (w: Pt) => {
-      const p0 = snap(w);
+      const p0 = snapPt(w);
       const p = draft.length ? ortho(draft[draft.length - 1], p0) : p0;
       const tol = 10 / view.scale;
       if (ui.tool === 'deck' && draft.length >= 3 && dist(p0, draft[0]) < tol) {
@@ -220,14 +267,14 @@ export function CanvasEditor() {
       if (draft.length && dist(p, draft[draft.length - 1]) < 1) return;
       setDraft([...draft, p]);
     },
-    [draft, finishDeck, snap, ui.tool, view.scale],
+    [draft, finishDeck, snapPt, ui.tool, view.scale],
   );
 
   const placeByLength = useCallback(() => {
     const L = parseFloat(lenText);
     if (!Number.isFinite(L) || L <= 0) return;
     let base = draft;
-    if (!base.length) base = [cursor ? snap(cursor) : { x: 0, y: 0 }];
+    if (!base.length) base = [cursor ? snapPt(cursor) : { x: 0, y: 0 }];
     const last = base[base.length - 1];
     let dir: Pt = { x: 1, y: 0 };
     if (cursor) {
@@ -239,37 +286,69 @@ export function CanvasEditor() {
     const next = { x: last.x + dir.x * L, y: last.y + dir.y * L };
     setDraft([...base, next]);
     setLenText('');
-  }, [cursor, draft, lenText, snap]);
+  }, [cursor, draft, lenText, snapPt]);
 
-  const placeStair = useCallback(
-    (w: Pt) => {
-      if (!design.ok) return;
-      const E = design.edges;
-      let best: { index: number; t: number; d: number } | null = null;
-      for (const e of E) {
-        if (project.houseEdges.includes(e.index)) continue;
-        const pr = projectOnEdge(e, w);
-        if (!best || pr.d < best.d) best = { index: e.index, t: pr.t, d: pr.d };
+  // ---- hit testing ----
+  const deckEdges = project.deck.length >= 4 ? polyEdges(project.deck) : [];
+  const hitTest = useCallback(
+    (w: Pt): Hover => {
+      const tol = 9 / viewRef.current.scale;
+      const poly = project.deck;
+      for (let i = 0; i < poly.length; i++) if (dist(poly[i], w) < tol * 1.3) return { type: 'vertex', index: i };
+      for (const s of design.stairs) if (pointInPolygon(w, s.outline)) return { type: 'stair', id: s.id };
+      if (poly.length >= 4) {
+        const E = polyEdges(poly);
+        let best: { index: number; d: number } | null = null;
+        for (const ed of E) {
+          const pr = projectOnEdge(ed, w);
+          if (!best || pr.d < best.d) best = { index: ed.index, d: pr.d };
+        }
+        if (best && best.d < tol) return { type: 'edge', index: best.index };
       }
-      const tol = 25 / view.scale;
-      if (!best || best.d > tol) return;
-      const e = E[best.index];
-      const width = Math.min(project.params.stairWidth, e.length);
-      const offset = Math.max(0, Math.min(e.length - width, snapTo(best.t - width / 2, ui.snap)));
-      const id = nextStairId(project.stairs);
-      updateProject((p) => ({ ...p, stairs: [...p.stairs, { id, edgeIndex: best!.index, offset, width, groundOffset: 0 }] }), true);
-      setUi({ tool: 'select', selection: { type: 'stair', id }, panelTab: 'selection' });
+      return null;
     },
-    [design, project.houseEdges, project.params.stairWidth, project.stairs, setUi, ui.snap, updateProject, view.scale],
+    [design.stairs, project.deck],
+  );
+
+  const addStairOnEdge = useCallback(
+    (index: number) => {
+      const e = deckEdges[index];
+      if (!e) return;
+      const width = Math.min(project.params.stairWidth, e.length);
+      const id = nextStairId(project.stairs);
+      const offset = Math.max(0, Math.round((e.length - width) / 2 / 10) * 10);
+      updateProject((p) => ({ ...p, stairs: [...p.stairs, { id, edgeIndex: index, offset, width, groundOffset: 0 }] }), 'h.addStair');
+      setUi({ selection: { type: 'stair', id } });
+    },
+    [deckEdges, project.params.stairWidth, project.stairs, setUi, updateProject],
   );
 
   // ---- pointer handling ----
   const onPointerDown = (e: React.PointerEvent<SVGSVGElement>) => {
     const active = document.activeElement as HTMLElement | null;
     if (active && active !== lenRef.current && typeof active.blur === 'function') active.blur();
+    setHistOpen(false);
+    setHelpOpen(false);
     svgRef.current?.setPointerCapture(e.pointerId);
+    pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointersRef.current.size === 2) {
+      // second finger: pinch to zoom, two fingers to pan
+      const [a, b] = [...pointersRef.current.values()];
+      const rect = svgRef.current!.getBoundingClientRect();
+      dragRef.current = {
+        type: 'pinch',
+        d0: Math.hypot(a.x - b.x, a.y - b.y) || 1,
+        scale0: viewRef.current.scale,
+        mid0: { x: (a.x + b.x) / 2 - rect.left, y: (a.y + b.y) / 2 - rect.top },
+        ox0: viewRef.current.ox,
+        oy0: viewRef.current.oy,
+      };
+      setLivePoly(null);
+      setLiveStair(null);
+      return;
+    }
     if (e.button === 1 || ui.tool === 'pan' || spaceRef.current) {
-      dragRef.current = { type: 'pan', sx: e.clientX, sy: e.clientY, ox: view.ox, oy: view.oy };
+      dragRef.current = { type: 'pan', sx: e.clientX, sy: e.clientY, ox: view.ox, oy: view.oy, moved: false };
       return;
     }
     if (e.button !== 0) return;
@@ -278,105 +357,132 @@ export function CanvasEditor() {
       addDraftPoint(w);
       return;
     }
-    if (ui.tool === 'stair') {
-      placeStair(w);
+    const hit = hitTest(w);
+    if (!hit) {
+      setUi({ selection: null });
+      // empty space drags the view, like a map
+      dragRef.current = { type: 'pan', sx: e.clientX, sy: e.clientY, ox: view.ox, oy: view.oy, moved: false };
       return;
     }
-    // select tool
-    const tol = 8 / view.scale;
-    const poly = project.deck;
-    for (let i = 0; i < poly.length; i++) {
-      if (dist(poly[i], w) < tol * 1.3) {
-        setUi({ selection: { type: 'vertex', index: i }, panelTab: 'selection' });
-        updateProject((p) => p, true);
-        dragRef.current = { type: 'vertex', index: i, orig: poly.map((p) => ({ ...p })) };
-        return;
-      }
+    if (hit.type === 'vertex') {
+      setUi({ selection: { type: 'vertex', index: hit.index }, panelTab: 'selection' });
+      dragRef.current = { type: 'vertex', index: hit.index, orig: project.deck, last: project.deck };
+      return;
     }
-    for (const s of design.stairs) {
-      if (pointInPolygon(w, s.outline)) {
-        const e = design.edges[s.edgeIndex];
-        const pr = projectOnEdge(e, w);
-        setUi({ selection: { type: 'stair', id: s.id }, panelTab: 'selection' });
-        updateProject((p) => p, true);
-        dragRef.current = { type: 'stair', id: s.id, grab: pr.t - s.offset };
-        return;
-      }
+    if (hit.type === 'stair') {
+      const s = design.stairs.find((x) => x.id === hit.id)!;
+      const ed = design.edges[s.edgeIndex];
+      const pr = projectOnEdge(ed, w);
+      setUi({ selection: { type: 'stair', id: s.id }, panelTab: 'selection' });
+      dragRef.current = { type: 'stair', id: s.id, grab: pr.t - s.offset, offset: s.offset, orig: s.offset };
+      return;
     }
-    if (poly.length >= 4) {
-      const E = polyEdges(poly);
-      let best: { index: number; d: number } | null = null;
-      for (const ed of E) {
-        const pr = projectOnEdge(ed, w);
-        if (!best || pr.d < best.d) best = { index: ed.index, d: pr.d };
-      }
-      if (best && best.d < tol) {
-        const ed = E[best.index];
-        const grab = ed.axis === 'x' ? ed.a.y - w.y : ed.a.x - w.x;
-        setUi({ selection: { type: 'edge', index: best.index }, panelTab: 'selection' });
-        updateProject((p) => p, true);
-        dragRef.current = { type: 'edge', index: best.index, grab, orig: poly.map((p) => ({ ...p })) };
-        return;
-      }
-    }
-    setUi({ selection: null });
+    const ed = deckEdges[hit.index];
+    const grab = ed.axis === 'x' ? ed.a.y - w.y : ed.a.x - w.x;
+    setUi({ selection: { type: 'edge', index: hit.index }, panelTab: 'selection' });
+    dragRef.current = { type: 'edge', index: hit.index, grab, orig: project.deck, last: project.deck };
   };
 
   const onPointerMove = (e: React.PointerEvent<SVGSVGElement>) => {
     const w = toWorld(e.clientX, e.clientY);
-    setCursor(snap(w));
+    setCursor(snapPt(w));
+    if (pointersRef.current.has(e.pointerId)) pointersRef.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     const d = dragRef.current;
-    if (!d) return;
+    if (!d) {
+      if (ui.tool === 'select') {
+        const h = hitTest(w);
+        const same = h?.type === hover?.type && (h as { index?: number; id?: string } | null)?.index === (hover as { index?: number } | null)?.index && (h as { id?: string } | null)?.id === (hover as { id?: string } | null)?.id;
+        if (!same) setHover(h);
+      }
+      return;
+    }
+    if (d.type === 'pinch') {
+      if (pointersRef.current.size < 2) return;
+      const [a, b] = [...pointersRef.current.values()];
+      const rect = svgRef.current!.getBoundingClientRect();
+      const dd = Math.hypot(a.x - b.x, a.y - b.y) || 1;
+      const mid = { x: (a.x + b.x) / 2 - rect.left, y: (a.y + b.y) / 2 - rect.top };
+      const ns = Math.min(MAX_SCALE, Math.max(MIN_SCALE, (d.scale0 * dd) / d.d0));
+      // keep the world point under the initial midpoint under the current midpoint
+      const wx = d.ox0 + d.mid0.x / d.scale0;
+      const wy = d.oy0 + d.mid0.y / d.scale0;
+      setView({ scale: ns, ox: wx - mid.x / ns, oy: wy - mid.y / ns });
+      return;
+    }
     if (d.type === 'pan') {
+      if (Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) > 2) d.moved = true;
       setView({ ...viewRef.current, ox: d.ox - (e.clientX - d.sx) / viewRef.current.scale, oy: d.oy - (e.clientY - d.sy) / viewRef.current.scale });
       return;
     }
     if (d.type === 'edge') {
-      const poly = d.orig.map((p) => ({ ...p }));
-      const i = d.index;
-      const j = (i + 1) % poly.length;
-      const horizontal = Math.abs(poly[i].y - poly[j].y) < 0.5;
-      if (horizontal) {
-        const ny = snapTo(w.y + d.grab, ui.snap);
-        poly[i].y = ny;
-        poly[j].y = ny;
-      } else {
-        const nx = snapTo(w.x + d.grab, ui.snap);
-        poly[i].x = nx;
-        poly[j].x = nx;
+      const ed = polyEdges(d.orig)[d.index];
+      const raw = ed.axis === 'x' ? w.y + d.grab : w.x + d.grab;
+      const value = shiftRef.current ? Math.round(raw) : snapTo(raw, ui.snap);
+      const next = moveEdgeTo(d.orig, d.index, value);
+      if (next) {
+        d.last = next;
+        setLivePoly(next);
       }
-      applyPolygon(poly, false, false);
       return;
     }
     if (d.type === 'vertex') {
-      const poly = d.orig.map((p) => ({ ...p }));
-      const i = d.index;
-      const n = poly.length;
-      const old = d.orig[i];
-      const v = snap(w);
-      const pi = (i - 1 + n) % n;
-      const ni = (i + 1) % n;
-      poly[i] = v;
-      if (Math.abs(d.orig[pi].y - old.y) < 0.5) poly[pi] = { ...poly[pi], y: v.y };
-      else poly[pi] = { ...poly[pi], x: v.x };
-      if (Math.abs(d.orig[ni].y - old.y) < 0.5) poly[ni] = { ...poly[ni], y: v.y };
-      else poly[ni] = { ...poly[ni], x: v.x };
-      applyPolygon(poly, false, false);
+      let target = snapPt(w);
+      // alignment guides: snap to the x / y of other corners
+      const tol = 10 / viewRef.current.scale;
+      const n = d.orig.length;
+      const g: { x?: number; y?: number } = {};
+      if (!shiftRef.current) {
+        for (let k = 0; k < n; k++) {
+          if (k === d.index || k === (d.index + 1) % n || k === (d.index - 1 + n) % n) continue;
+          if (g.x === undefined && Math.abs(d.orig[k].x - target.x) < tol) g.x = d.orig[k].x;
+          if (g.y === undefined && Math.abs(d.orig[k].y - target.y) < tol) g.y = d.orig[k].y;
+        }
+        target = { x: g.x ?? target.x, y: g.y ?? target.y };
+      }
+      setGuides(g);
+      const next = moveVertexTo(d.orig, d.index, target);
+      if (next) {
+        d.last = next;
+        setLivePoly(next);
+      }
       return;
     }
     if (d.type === 'stair') {
       const s = project.stairs.find((x) => x.id === d.id);
       if (!s || !design.ok) return;
-      const e = design.edges[s.edgeIndex];
-      if (!e) return;
-      const pr = projectOnEdge(e, w);
-      const offset = Math.max(0, Math.min(e.length - s.width, snapTo(pr.t - d.grab, ui.snap)));
-      if (offset !== s.offset) updateProject((p) => ({ ...p, stairs: p.stairs.map((x) => (x.id === d.id ? { ...x, offset } : x)) }));
+      const ed = design.edges[s.edgeIndex];
+      if (!ed) return;
+      const pr = projectOnEdge(ed, w);
+      const raw = pr.t - d.grab;
+      const offset = Math.max(0, Math.min(ed.length - s.width, shiftRef.current ? Math.round(raw) : snapTo(raw, ui.snap)));
+      d.offset = offset;
+      setLiveStair({ id: d.id, offset });
     }
   };
 
   const onPointerUp = (e: React.PointerEvent<SVGSVGElement>) => {
+    pointersRef.current.delete(e.pointerId);
+    const d = dragRef.current;
+    if (d?.type === 'pinch') {
+      if (pointersRef.current.size < 2) dragRef.current = null;
+      return;
+    }
     dragRef.current = null;
+    setGuides({});
+    if (d?.type === 'edge' || d?.type === 'vertex') {
+      if (d.last !== d.orig) {
+        const last = d.last;
+        updateProject((p) => ({ ...p, deck: last }), d.type === 'edge' ? 'h.moveEdge' : 'h.moveVertex');
+      }
+      setLivePoly(null);
+    }
+    if (d?.type === 'stair') {
+      if (d.offset !== d.orig) {
+        const { id, offset } = d;
+        updateProject((p) => ({ ...p, stairs: p.stairs.map((x) => (x.id === id ? { ...x, offset } : x)) }), 'h.moveStair');
+      }
+      setLiveStair(null);
+    }
     try {
       svgRef.current?.releasePointerCapture(e.pointerId);
     } catch {
@@ -387,24 +493,54 @@ export function CanvasEditor() {
   // ---- keyboard ----
   useEffect(() => {
     const isEditable = (el: Element | null) => !!el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.tagName === 'SELECT');
+    const nudge = (dx: number, dy: number) => {
+      const sel = ui.selection;
+      if (!sel || project.deck.length < 4) return false;
+      if (sel.type === 'edge') {
+        const ed = polyEdges(project.deck)[sel.index];
+        if (!ed) return false;
+        const cur = ed.axis === 'x' ? ed.a.y : ed.a.x;
+        const next = moveEdgeTo(project.deck, sel.index, cur + (ed.axis === 'x' ? dy : dx));
+        if (next) updateProject((p) => ({ ...p, deck: next }), 'h.nudge');
+        return true;
+      }
+      if (sel.type === 'vertex') {
+        const v = project.deck[sel.index];
+        const next = moveVertexTo(project.deck, sel.index, { x: v.x + dx, y: v.y + dy });
+        if (next) updateProject((p) => ({ ...p, deck: next }), 'h.nudge');
+        return true;
+      }
+      return false;
+    };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === ' ' && !isEditable(document.activeElement)) {
+      if (e.key === 'Shift') shiftRef.current = true;
+      const editable = isEditable(document.activeElement);
+      const inLen = document.activeElement === lenRef.current;
+      const meta = e.ctrlKey || e.metaKey;
+      if (meta && !editable && (e.key === 'z' || e.key === 'Z')) {
+        e.preventDefault();
+        if (e.shiftKey) redo();
+        else undo();
+        return;
+      }
+      if (meta && !editable && (e.key === 'y' || e.key === 'Y')) {
+        e.preventDefault();
+        redo();
+        return;
+      }
+      if (e.key === ' ' && !editable) {
         spaceRef.current = true;
         e.preventDefault();
         return;
       }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'z' && !isEditable(document.activeElement)) {
-        e.preventDefault();
-        undo();
-        return;
-      }
-      const inLen = document.activeElement === lenRef.current;
-      if (isEditable(document.activeElement) && !inLen) return;
+      if (editable && !inLen) return;
       if (e.key === 'Escape') {
         if (draft.length) {
           setDraft([]);
           setLenText('');
-        } else setUi({ selection: null, tool: 'select' });
+        } else setUi({ selection: null, tool: ui.drawMode ? ui.tool : 'select' });
+        setHistOpen(false);
+        setHelpOpen(false);
         lenRef.current?.blur();
         return;
       }
@@ -414,21 +550,33 @@ export function CanvasEditor() {
         else if (ui.tool === 'house' && draft.length) finishHouse(draft);
         return;
       }
-      if (e.key === 'Backspace' && !inLen) {
+      if ((e.key === 'Backspace' || e.key === 'Delete') && !inLen) {
         if (draft.length) {
           e.preventDefault();
           setDraft(draft.slice(0, -1));
         } else if (ui.selection?.type === 'stair') {
           const id = ui.selection.id;
-          updateProject((p) => ({ ...p, stairs: p.stairs.filter((s) => s.id !== id) }), true);
+          updateProject((p) => ({ ...p, stairs: p.stairs.filter((s) => s.id !== id) }), 'h.deleteStair');
           setUi({ selection: null });
         }
         return;
       }
-      if (e.key === 'Delete' && ui.selection?.type === 'stair') {
-        const id = ui.selection.id;
-        updateProject((p) => ({ ...p, stairs: p.stairs.filter((s) => s.id !== id) }), true);
-        setUi({ selection: null });
+      if (!inLen && e.key.startsWith('Arrow')) {
+        const step = (e.shiftKey ? 5 : 1) * ui.snap;
+        const moved = nudge(e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0, e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0);
+        if (moved) e.preventDefault();
+        return;
+      }
+      if (!inLen && !meta && (e.key === 'f' || e.key === 'F')) {
+        fit();
+        return;
+      }
+      if (!inLen && (e.key === '+' || e.key === '=')) {
+        zoomAt(1.25);
+        return;
+      }
+      if (!inLen && e.key === '-') {
+        zoomAt(0.8);
         return;
       }
       if ((ui.tool === 'deck' || ui.tool === 'house') && !inLen && /^[0-9.]$/.test(e.key)) {
@@ -439,6 +587,7 @@ export function CanvasEditor() {
     };
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.key === ' ') spaceRef.current = false;
+      if (e.key === 'Shift') shiftRef.current = false;
     };
     window.addEventListener('keydown', onKey);
     window.addEventListener('keyup', onKeyUp);
@@ -446,9 +595,9 @@ export function CanvasEditor() {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [draft, finishDeck, finishHouse, lenText, placeByLength, setUi, ui.selection, ui.tool, undo, updateProject]);
+  }, [draft, finishDeck, finishHouse, fit, project.deck, redo, setUi, ui.drawMode, ui.selection, ui.snap, ui.tool, undo, updateProject, zoomAt]);
 
-  // reset draft when tool changes away from drawing
+  // reset the draft when leaving the drawing tools
   useEffect(() => {
     if (ui.tool !== 'deck' && ui.tool !== 'house') {
       setDraft([]);
@@ -477,21 +626,35 @@ export function CanvasEditor() {
   }
 
   const sel = ui.selection;
-  const deckEdges = project.deck.length >= 4 ? polyEdges(project.deck) : [];
   const svgTop = svgRef.current && wrapRef.current ? svgRef.current.getBoundingClientRect().top - wrapRef.current.getBoundingClientRect().top : 0;
   const previewPt = cursor && draft.length ? ortho(draft[draft.length - 1], cursor) : cursor;
   const previewLen = previewPt && draft.length ? dist(draft[draft.length - 1], previewPt) : 0;
+  const dragging = !!livePoly;
+  const shownPoly = livePoly ?? project.deck;
+  const liveEdges = livePoly ? polyEdges(livePoly) : [];
+  const selectedStair = sel?.type === 'stair' ? project.stairs.find((st) => st.id === sel.id) : undefined;
+  const selectedEdge = sel?.type === 'edge' ? deckEdges[sel.index] : undefined;
 
   const tools: { id: Tool; label: string; icon: string }[] = [
     { id: 'select', label: t('tool.select'), icon: '⬚' },
     { id: 'deck', label: t('tool.deck'), icon: '✎' },
     { id: 'house', label: t('tool.house'), icon: '⌂' },
-    { id: 'stair', label: t('tool.stair'), icon: '≡' },
     { id: 'pan', label: t('tool.pan'), icon: '✋' },
   ];
 
   const hint =
-    ui.tool === 'deck' ? t('status.hintDeck') : ui.tool === 'house' ? t('status.hintHouse') : ui.tool === 'stair' ? t('status.hintStair') : t('status.hintSelect');
+    ui.tool === 'deck' ? (draft.length ? t('status.hintDeck') : t('canvas.firstPoint')) : ui.tool === 'house' ? t('status.hintHouse') : ui.tool === 'pan' ? t('tool.pan') : t('status.hintSelect');
+  const cursorStyle =
+    ui.tool === 'pan' || spaceRef.current ? 'grab' : ui.tool !== 'select' ? 'crosshair' : hover?.type === 'edge' ? (deckEdges[hover.index]?.axis === 'x' ? 'ns-resize' : 'ew-resize') : hover?.type === 'vertex' ? 'move' : hover?.type === 'stair' ? 'grab' : 'default';
+  const lenAnchor = draft.length ? toScreen(draft[draft.length - 1]) : null;
+  const zoomPct = Math.round(view.scale * 1000) / 10;
+
+  const enterDraw = () => setUi({ drawMode: true, tool: project.deck.length >= 4 ? 'select' : 'deck', selection: null });
+  const redraw = () => {
+    if (project.deck.length && !window.confirm(t('tool.clearDeck') + '?')) return;
+    updateProject((p) => ({ ...p, deck: [], houseEdges: [], stairs: [] }), 'h.clear');
+    setUi({ tool: 'deck', selection: null, drawMode: true });
+  };
 
   return (
     <div className="canvas-wrap" ref={wrapRef}>
@@ -515,13 +678,10 @@ export function CanvasEditor() {
                 ))}
               </select>
             </label>
-            <button className="tool" onClick={undo} title={t('app.undo')}>
-              ↶ {t('app.undo')}
+            <button className="tool danger" onClick={redraw}>
+              {t('canvas.redraw')}
             </button>
-            <button className="tool danger" onClick={() => { if (project.deck.length && window.confirm(t('tool.clearDeck') + '?')) { updateProject((p) => ({ ...p, deck: [], houseEdges: [], stairs: [] }), true); setUi({ tool: 'deck', selection: null }); } }}>
-              {t('tool.clearDeck')}
-            </button>
-            <button className="tool" onClick={() => updateProject((p) => ({ ...p, house: [] }), true)}>
+            <button className="tool" onClick={() => updateProject((p) => ({ ...p, house: [] }), 'h.house')}>
               {t('tool.clearHouse')}
             </button>
             <span className="grow" />
@@ -533,53 +693,65 @@ export function CanvasEditor() {
           <>
             <span className="layers">
               {(['frame', 'boards', 'posts', 'balustrade', 'dims', 'house'] as const).map((k) => (
-                <label key={k} className="chk">
-                  <input type="checkbox" checked={ui.layers[k]} onChange={(e) => setUi({ layers: { ...ui.layers, [k]: e.target.checked } })} />
+                <button key={k} type="button" className={`pill ${ui.layers[k] ? 'on' : ''}`} onClick={() => setUi({ layers: { ...ui.layers, [k]: !ui.layers[k] } })} aria-pressed={ui.layers[k]}>
                   {t(`layer.${k}`)}
-                </label>
+                </button>
               ))}
             </span>
             <span className="sep" />
-            <button className="tool" onClick={undo} title={t('app.undo')}>
-              ↶ {t('app.undo')}
+            <button className="tool" onClick={undo} disabled={!canUndo} title={`${t('hist.undo')} (Ctrl+Z)`}>
+              ↶ {t('hist.undo')}
             </button>
-            <button className="tool" onClick={fit} title={t('tool.fit')}>
-              ⤢ {t('tool.fit')}
+            <button className="tool" onClick={redo} disabled={!canRedo} title={`${t('hist.redo')} (Ctrl+Shift+Z)`}>
+              ↷ {t('hist.redo')}
             </button>
+            <div className="dd hist">
+              <button className={`tool ${histOpen ? 'active' : ''}`} onClick={() => setHistOpen((o) => !o)} aria-expanded={histOpen}>
+                {t('hist.title')} ▾
+              </button>
+              {histOpen && (
+                <div className="dd-menu hist-menu" role="listbox">
+                  {history.length <= 1 && <div className="muted small">{t('hist.empty')}</div>}
+                  {history
+                    .map((h, i) => ({ ...h, i }))
+                    .reverse()
+                    .map((h) => (
+                      <button key={h.i} className={`hist-item ${h.i === historyIndex ? 'current' : ''} ${h.i > historyIndex ? 'future' : ''}`} onClick={() => { jumpTo(h.i); setHistOpen(false); }} role="option" aria-selected={h.i === historyIndex}>
+                        <span className="hist-label">{t(h.label)}</span>
+                        <span className="hist-time">{h.i === historyIndex ? t('hist.current') : fmtTime(h.at)}</span>
+                      </button>
+                    ))}
+                </div>
+              )}
+            </div>
             <span className="grow" />
-            <button className="tool" onClick={() => setUi({ drawMode: true, tool: project.deck.length >= 4 ? 'select' : 'deck', selection: null })}>
+            <button className="tool" onClick={enterDraw}>
               ✎ {t('g.shape.custom')}
             </button>
           </>
         )}
       </div>
 
-      {(ui.tool === 'deck' || ui.tool === 'house') && (
-        <div className="length-box">
-          <label>
-            {t('tool.length')}
-            <input ref={lenRef} value={lenText} onChange={(e) => setLenText(e.target.value.replace(/[^0-9.]/g, ''))} onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); if (lenText.trim()) placeByLength(); else if (ui.tool === 'deck') finishDeck(draft); else finishHouse(draft); } }} placeholder="e.g. 3600" />
-          </label>
-          <div className="hint">{t('tool.lengthHint')}</div>
-          <div className="hint">{t('status.drawing', { n: draft.length })}</div>
-        </div>
-      )}
-
       <svg
         ref={svgRef}
         className={`canvas tool-${ui.tool}`}
+        style={{ cursor: cursorStyle }}
         viewBox={vb}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
-        onPointerLeave={() => setCursor(null)}
+        onPointerCancel={onPointerUp}
+        onPointerLeave={() => {
+          setCursor(null);
+          setHover(null);
+        }}
         onContextMenu={(e) => e.preventDefault()}
       >
         <g>{gridLines}</g>
         <line x1={x0} y1={0} x2={x1} y2={0} stroke="#94a3b8" strokeWidth={sw * 1.5} />
         <line x1={0} y1={y0} x2={0} y2={y1} stroke="#94a3b8" strokeWidth={sw * 1.5} />
 
-        {project.deck.length >= 4 && (
+        {project.deck.length >= 4 && !dragging && (
           <DesignLayers
             project={project}
             design={design}
@@ -599,20 +771,58 @@ export function CanvasEditor() {
             sw={sw}
           />
         )}
+        {dragging && (
+          <g>
+            {ui.layers.house &&
+              project.house.map((pl, i) => <polyline key={i} points={pl.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke={COLORS.house} strokeWidth={sw * 6} strokeDasharray={`${sw * 24} ${sw * 10}`} opacity={0.6} />)}
+            <path d={`M${shownPoly.map((p) => `${p.x},${p.y}`).join('L')}Z`} fill={COLORS.deckFill} stroke={COLORS.deckStroke} strokeWidth={sw * 2} />
+            {liveEdges.map((e) => {
+              const off = fs * 1.3;
+              const mx = (e.a.x + e.b.x) / 2 + e.outward.x * off;
+              const my = (e.a.y + e.b.y) / 2 + e.outward.y * off;
+              return (
+                <text key={e.index} x={mx} y={my + fs * 0.35} fontSize={fs} fill={COLORS.dim} fontWeight={700} textAnchor="middle" style={{ paintOrder: 'stroke' }} stroke="#fff" strokeWidth={sw * 3} transform={e.axis === 'y' ? `rotate(-90 ${mx} ${my})` : undefined}>
+                  {Math.round(e.length)}
+                </text>
+              );
+            })}
+          </g>
+        )}
         {project.deck.length < 4 && ui.layers.house &&
           project.house.map((pl, i) => <polyline key={i} points={pl.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke={COLORS.house} strokeWidth={sw * 6} strokeDasharray={`${sw * 24} ${sw * 10}`} />)}
 
-        {/* selection overlay */}
-        {sel?.type === 'edge' && deckEdges[sel.index] && (
+        {/* alignment guides while dragging a corner */}
+        {guides.x !== undefined && <line x1={guides.x} y1={y0} x2={guides.x} y2={y1} stroke="#e11d48" strokeWidth={sw} strokeDasharray={`${sw * 6} ${sw * 4}`} />}
+        {guides.y !== undefined && <line x1={x0} y1={guides.y} x2={x1} y2={guides.y} stroke="#e11d48" strokeWidth={sw} strokeDasharray={`${sw * 6} ${sw * 4}`} />}
+
+        {/* stair ghost while dragging */}
+        {liveStair && design.ok &&
+          (() => {
+            const s = design.stairs.find((x) => x.id === liveStair.id);
+            if (!s) return null;
+            const ed = design.edges[s.edgeIndex];
+            const dx = ed.dir.x * (liveStair.offset - s.offset);
+            const dy = ed.dir.y * (liveStair.offset - s.offset);
+            return <polygon points={s.outline.map((p) => `${p.x + dx},${p.y + dy}`).join(' ')} fill="rgba(245,158,11,.25)" stroke={COLORS.select} strokeWidth={sw * 2} />;
+          })()}
+
+        {/* hover + selection overlays */}
+        {!dragging && hover?.type === 'edge' && deckEdges[hover.index] && !(sel?.type === 'edge' && sel.index === hover.index) && (
+          <line x1={deckEdges[hover.index].a.x} y1={deckEdges[hover.index].a.y} x2={deckEdges[hover.index].b.x} y2={deckEdges[hover.index].b.y} stroke={COLORS.select} strokeWidth={sw * 6} opacity={0.35} />
+        )}
+        {!dragging && sel?.type === 'edge' && deckEdges[sel.index] && (
           <line x1={deckEdges[sel.index].a.x} y1={deckEdges[sel.index].a.y} x2={deckEdges[sel.index].b.x} y2={deckEdges[sel.index].b.y} stroke={COLORS.select} strokeWidth={sw * 6} opacity={0.8} />
         )}
-        {sel?.type === 'stair' && design.stairs.find((s) => s.id === sel.id) && (
+        {!dragging && sel?.type === 'stair' && design.stairs.find((s) => s.id === sel.id) && !liveStair && (
           <polygon points={design.stairs.find((s) => s.id === sel.id)!.outline.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke={COLORS.select} strokeWidth={sw * 4} />
         )}
         {ui.tool === 'select' &&
-          project.deck.map((p, i) => (
-            <rect key={`v${i}`} x={p.x - 5 / view.scale} y={p.y - 5 / view.scale} width={10 / view.scale} height={10 / view.scale} fill={sel?.type === 'vertex' && sel.index === i ? COLORS.select : '#fff'} stroke="#111" strokeWidth={sw} />
-          ))}
+          shownPoly.map((p, i) => {
+            const isSel = sel?.type === 'vertex' && sel.index === i;
+            const isHover = hover?.type === 'vertex' && hover.index === i;
+            const r = (isSel || isHover ? 7 : 5) / view.scale;
+            return <circle key={`v${i}`} cx={p.x} cy={p.y} r={r} fill={isSel ? COLORS.select : '#fff'} stroke={isHover || isSel ? COLORS.select : '#111'} strokeWidth={sw * (isHover ? 2 : 1.2)} />;
+          })}
 
         {/* draft */}
         {draft.length > 0 && (
@@ -621,7 +831,7 @@ export function CanvasEditor() {
             {previewPt && (
               <>
                 <line x1={draft[draft.length - 1].x} y1={draft[draft.length - 1].y} x2={previewPt.x} y2={previewPt.y} stroke="#111" strokeWidth={sw * 1.5} strokeDasharray={`${sw * 8} ${sw * 6}`} />
-                <text x={(draft[draft.length - 1].x + previewPt.x) / 2} y={(draft[draft.length - 1].y + previewPt.y) / 2 - fs * 0.5} fontSize={fs} fill="#111" textAnchor="middle" fontWeight={600}>
+                <text x={(draft[draft.length - 1].x + previewPt.x) / 2} y={(draft[draft.length - 1].y + previewPt.y) / 2 - fs * 0.5} fontSize={fs} fill="#111" textAnchor="middle" fontWeight={600} style={{ paintOrder: 'stroke' }} stroke="#fff" strokeWidth={sw * 3}>
                   {Math.round(previewLen)}
                 </text>
               </>
@@ -629,9 +839,16 @@ export function CanvasEditor() {
             {draft.map((p, i) => (
               <circle key={i} cx={p.x} cy={p.y} r={(i === 0 ? 7 : 4) / view.scale} fill={i === 0 ? COLORS.select : '#111'} />
             ))}
+            {draft.map((p, i) =>
+              i > 0 ? (
+                <text key={`dl${i}`} x={(p.x + draft[i - 1].x) / 2} y={(p.y + draft[i - 1].y) / 2 - fs * 0.5} fontSize={fs * 0.9} fill={COLORS.dim} textAnchor="middle" fontWeight={600} style={{ paintOrder: 'stroke' }} stroke="#fff" strokeWidth={sw * 3}>
+                  {Math.round(dist(p, draft[i - 1]))}
+                </text>
+              ) : null,
+            )}
           </g>
         )}
-        {cursor && (ui.tool === 'deck' || ui.tool === 'house' || ui.tool === 'stair') && (
+        {cursor && (ui.tool === 'deck' || ui.tool === 'house') && (
           <g>
             <line x1={(previewPt ?? cursor).x - fs} y1={(previewPt ?? cursor).y} x2={(previewPt ?? cursor).x + fs} y2={(previewPt ?? cursor).y} stroke="#111" strokeWidth={sw} />
             <line x1={(previewPt ?? cursor).x} y1={(previewPt ?? cursor).y - fs} x2={(previewPt ?? cursor).x} y2={(previewPt ?? cursor).y + fs} stroke="#111" strokeWidth={sw} />
@@ -639,9 +856,36 @@ export function CanvasEditor() {
         )}
       </svg>
 
-      {!ui.drawMode && design.ok &&
+      {/* floating length entry while drawing */}
+      {(ui.tool === 'deck' || ui.tool === 'house') && (
+        <div className="len-float" style={lenAnchor ? { left: Math.min(size.w - 190, Math.max(8, lenAnchor.x + 16)), top: Math.min(size.h - 20, Math.max(8, lenAnchor.y - 46)) + svgTop } : { left: 12, top: svgTop + 12 }}>
+          <input
+            ref={lenRef}
+            value={lenText}
+            inputMode="numeric"
+            onChange={(e) => setLenText(e.target.value.replace(/[^0-9.]/g, ''))}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                if (lenText.trim()) placeByLength();
+                else if (ui.tool === 'deck') finishDeck(draft);
+                else finishHouse(draft);
+              }
+              if (e.key === 'Escape') {
+                setLenText('');
+                (e.target as HTMLInputElement).blur();
+              }
+            }}
+            placeholder={t('canvas.lengthNext')}
+          />
+          <span>mm ↵</span>
+        </div>
+      )}
+
+      {!ui.drawMode && !dragging && design.ok &&
         deckEdges.map((e) => {
-          const off = 30 / view.scale;
+          if (e.length < 250) return null;
+          const off = 42 / view.scale;
           const wx = (e.a.x + e.b.x) / 2 + e.outward.x * off;
           const wy = (e.a.y + e.b.y) / 2 + e.outward.y * off;
           const sx = (wx - view.ox) * view.scale;
@@ -656,14 +900,15 @@ export function CanvasEditor() {
               house={project.houseEdges.includes(e.index)}
               selected={sel?.type === 'edge' && sel.index === e.index}
               onChange={(L) => {
-                if (!applyPolygon(setEdgeLength(project.deck, e.index, L), true, false)) showToast(t('polygon.selfIntersect'));
+                if (!applyPolygon(setEdgeLength(project.deck, e.index, L), 'h.edgeLength', false)) showToast(t('polygon.selfIntersect'));
               }}
             />
           );
         })}
-      {!ui.drawMode && sel?.type === 'edge' && deckEdges[sel.index] && (
+
+      {!ui.drawMode && !dragging && selectedEdge && sel?.type === 'edge' && (
         <div className="edgebar">
-          <span>{t('canvas.edge', { n: sel.index + 1, len: Math.round(deckEdges[sel.index].length) })}</span>
+          <span>{t('canvas.edge', { n: sel.index + 1, len: Math.round(selectedEdge.length) })}</span>
           <label className="chk">
             <input
               type="checkbox"
@@ -678,30 +923,72 @@ export function CanvasEditor() {
                     house: on && !p.house.length ? [housePolylineFor(p.deck, i)] : p.house,
                     stairs: on ? p.stairs.filter((st) => st.edgeIndex !== i) : p.stairs,
                   }),
-                  true,
+                  'h.house',
                 );
               }}
             />
             {t('canvas.house')}
           </label>
           {!project.houseEdges.includes(sel.index) && (
-            <button
-              className="tool"
-              onClick={() => {
-                const e = deckEdges[sel.index];
-                const width = Math.min(project.params.stairWidth, e.length);
-                const id = nextStairId(project.stairs);
-                const offset = Math.max(0, Math.round((e.length - width) / 2 / 10) * 10);
-                updateProject((p) => ({ ...p, stairs: [...p.stairs, { id, edgeIndex: e.index, offset, width, groundOffset: 0 }] }), true);
-                setUi({ selection: { type: 'stair', id } });
-              }}
-            >
+            <button className="tool" onClick={() => addStairOnEdge(sel.index)}>
               {t('canvas.addStair')}
             </button>
           )}
+          {selectedEdge.length >= 1400 && (
+            <>
+              <button
+                className="tool"
+                onClick={() => {
+                  const w = Math.max(600, Math.min(1200, Math.round(selectedEdge.length / 3 / 100) * 100));
+                  const next = insertNotch(project.deck, sel.index, w, 600, false);
+                  if (next) applyPolygon(next, 'h.notch', false);
+                  else showToast(t('polygon.selfIntersect'));
+                }}
+              >
+                {t('canvas.notchIn')}
+              </button>
+              <button
+                className="tool"
+                onClick={() => {
+                  const w = Math.max(600, Math.min(1200, Math.round(selectedEdge.length / 3 / 100) * 100));
+                  const next = insertNotch(project.deck, sel.index, w, 600, true);
+                  if (next) applyPolygon(next, 'h.notch', false);
+                  else showToast(t('polygon.selfIntersect'));
+                }}
+              >
+                {t('canvas.notchOut')}
+              </button>
+            </>
+          )}
+          {isJogEdge(project.deck, sel.index) && (
+            <button
+              className="tool"
+              onClick={() => {
+                const next = removeJog(project.deck, sel.index);
+                if (next) {
+                  applyPolygon(next, 'h.removeNotch', false);
+                  setUi({ selection: null });
+                }
+              }}
+            >
+              {t('canvas.removeNotch')}
+            </button>
+          )}
+          <button className="tool" onClick={() => updateProject((p) => mirrorProject(p), 'h.mirror')}>
+            {t('canvas.mirror')}
+          </button>
         </div>
       )}
-      {!ui.drawMode && sel?.type === 'stair' && project.stairs.some((st) => st.id === sel.id) && (
+      {!ui.drawMode && !dragging && sel?.type === 'vertex' && project.deck[sel.index] && (
+        <div className="edgebar">
+          <span>{t('canvas.vertex', { n: sel.index + 1 })}</span>
+          <span className="muted">
+            {Math.round(project.deck[sel.index].x)}, {Math.round(project.deck[sel.index].y)}
+          </span>
+          <span className="muted small">{t('sc.nudge')}</span>
+        </div>
+      )}
+      {!ui.drawMode && selectedStair && sel?.type === 'stair' && (
         <div className="edgebar">
           <span>{t('canvas.stair', { id: sel.id })}</span>
           <label className="inline">
@@ -710,10 +997,10 @@ export function CanvasEditor() {
               type="number"
               step={50}
               min={300}
-              value={project.stairs.find((st) => st.id === sel.id)?.width ?? 0}
+              value={selectedStair.width}
               onChange={(ev) => {
                 const w = Math.max(300, Number(ev.target.value) || 300);
-                updateProject((p) => ({ ...p, stairs: p.stairs.map((st) => (st.id === sel.id ? { ...st, width: w } : st)) }));
+                updateProject((p) => ({ ...p, stairs: p.stairs.map((st) => (st.id === sel.id ? { ...st, width: w } : st)) }), 'h.stairs');
               }}
             />
           </label>
@@ -723,17 +1010,17 @@ export function CanvasEditor() {
               type="number"
               step={10}
               min={100}
-              value={Math.round(project.stairs.find((st) => st.id === sel.id)?.rise ?? project.params.deckHeight - (project.stairs.find((st) => st.id === sel.id)?.groundOffset ?? 0))}
+              value={Math.round(selectedStair.rise ?? project.params.deckHeight - selectedStair.groundOffset)}
               onChange={(ev) => {
                 const rise = Math.max(100, Number(ev.target.value) || 100);
-                updateProject((p) => ({ ...p, stairs: p.stairs.map((st) => (st.id === sel.id ? { ...st, rise, groundOffset: 0 } : st)) }));
+                updateProject((p) => ({ ...p, stairs: p.stairs.map((st) => (st.id === sel.id ? { ...st, rise, groundOffset: 0 } : st)) }), 'h.stairs');
               }}
             />
           </label>
           <button
             className="tool danger"
             onClick={() => {
-              updateProject((p) => ({ ...p, stairs: p.stairs.filter((st) => st.id !== sel.id) }), true);
+              updateProject((p) => ({ ...p, stairs: p.stairs.filter((st) => st.id !== sel.id) }), 'h.deleteStair');
               setUi({ selection: null });
             }}
           >
@@ -743,14 +1030,39 @@ export function CanvasEditor() {
       )}
       {project.deck.length < 4 && !ui.drawMode && !draft.length && <div className="canvas-empty">{t('canvas.empty')}</div>}
 
+      <div className="zoomctl">
+        <button onClick={() => zoomAt(0.8)} title={t('canvas.zoomOut')} aria-label={t('canvas.zoomOut')}>
+          −
+        </button>
+        <button onClick={fit} title={t('tool.fit')} className="pct">
+          {zoomPct}%
+        </button>
+        <button onClick={() => zoomAt(1.25)} title={t('canvas.zoomIn')} aria-label={t('canvas.zoomIn')}>
+          +
+        </button>
+        <button onClick={fit} title={t('tool.fit')} aria-label={t('tool.fit')}>
+          ⤢
+        </button>
+      </div>
+
       <div className="statusbar">
-        <span>
-          {t('status.cursor')}: {cursor ? `${Math.round(cursor.x)}, ${Math.round(cursor.y)}` : '-'}
-        </span>
+        <span>{cursor ? `${Math.round(cursor.x)}, ${Math.round(cursor.y)}` : '-'}</span>
         <span>
           {t('status.area')}: {design.ok ? `${design.areaM2.toFixed(2)} m²` : '-'}
         </span>
-        <span className="hint">{project.deck.length < 4 && !draft.length ? t('status.noDeck') : hint}</span>
+        <span className="hint">{project.deck.length < 4 && !draft.length && !ui.drawMode ? t('status.noDeck') : hint}</span>
+        <div className="dd help">
+          <button className="linkish" onClick={() => setHelpOpen((o) => !o)} aria-expanded={helpOpen}>
+            {t('canvas.shortcuts')}
+          </button>
+          {helpOpen && (
+            <div className="dd-menu help-menu">
+              {['sc.undo', 'sc.nudge', 'sc.zoom', 'sc.snap', 'sc.delete', 'sc.draw'].map((k) => (
+                <div key={k}>{t(k)}</div>
+              ))}
+            </div>
+          )}
+        </div>
       </div>
       {toast && <div className="toast">{toast}</div>}
     </div>

@@ -36,14 +36,14 @@ function ParamsPanel() {
   const { project, updateProject, lang, setUi } = useApp();
   const { t } = useT();
   const p = project.params;
-  const set = <K extends keyof DeckParams>(k: K, v: DeckParams[K]) => updateProject((pr) => ({ ...pr, params: { ...pr.params, [k]: v } }));
+  const set = <K extends keyof DeckParams>(k: K, v: DeckParams[K]) => updateProject((pr) => ({ ...pr, params: { ...pr.params, [k]: v } }), 'h.params');
   const setBal = <K extends keyof DeckParams['balustrade']>(k: K, v: DeckParams['balustrade'][K]) =>
-    updateProject((pr) => ({ ...pr, params: { ...pr.params, balustrade: { ...pr.params.balustrade, [k]: v } } }));
+    updateProject((pr) => ({ ...pr, params: { ...pr.params, balustrade: { ...pr.params.balustrade, [k]: v } } }), 'h.params');
   const [rw, setRw] = useState(4800);
   const [rd, setRd] = useState(3600);
   const makeRect = () => {
     const deck: Pt[] = [{ x: 0, y: 0 }, { x: rw, y: 0 }, { x: rw, y: rd }, { x: 0, y: rd }];
-    updateProject((pr) => ({ ...pr, deck, houseEdges: [0], stairs: [], house: pr.house.length ? pr.house : [[{ x: -1500, y: 0 }, { x: rw + 1500, y: 0 }]] }), true);
+    updateProject((pr) => ({ ...pr, deck, houseEdges: [0], stairs: [], house: pr.house.length ? pr.house : [[{ x: -1500, y: 0 }, { x: rw + 1500, y: 0 }]] }), 'h.shape');
     setUi({ tool: 'select', selection: null });
   };
   const deckingOpts = DECKING_PRODUCTS.map((d) => ({ value: d.id, label: productName(d, lang) }));
@@ -55,15 +55,15 @@ function ParamsPanel() {
       <Group title={t('app.projectName')}>
         <label className="field">
           <span>{t('app.projectName')}</span>
-          <input value={project.name} onChange={(e) => updateProject((pr) => ({ ...pr, name: e.target.value }))} />
+          <input value={project.name} onChange={(e) => updateProject((pr) => ({ ...pr, name: e.target.value }), 'h.name')} />
         </label>
         <label className="field">
           <span>{t('app.client')}</span>
-          <input value={project.client} onChange={(e) => updateProject((pr) => ({ ...pr, client: e.target.value }))} />
+          <input value={project.client} onChange={(e) => updateProject((pr) => ({ ...pr, client: e.target.value }), 'h.name')} />
         </label>
         <label className="field">
           <span>{t('app.address')}</span>
-          <input value={project.address} onChange={(e) => updateProject((pr) => ({ ...pr, address: e.target.value }))} />
+          <input value={project.address} onChange={(e) => updateProject((pr) => ({ ...pr, address: e.target.value }), 'h.name')} />
         </label>
       </Group>
       <Group title={t('p.quickRect')}>
@@ -311,7 +311,7 @@ function SelectionPanel() {
   const applyPoly = (next: Pt[]) => {
     const norm = normalizePolygon(next);
     if (!validatePolygon(norm).ok || norm.length !== poly.length) return;
-    updateProject((p) => ({ ...p, deck: norm }), true);
+    updateProject((p) => ({ ...p, deck: norm }), 'h.edgeLength');
   };
 
   if (!sel) return <p className="muted">{t('sel.none')}</p>;
@@ -354,7 +354,7 @@ function SelectionPanel() {
                   houseEdges: v ? [...new Set([...p.houseEdges, e.index])] : p.houseEdges.filter((i) => i !== e.index),
                   stairs: v ? p.stairs.filter((s) => s.edgeIndex !== e.index) : p.stairs,
                 }),
-                true,
+                'h.house',
               )
             }
           />
@@ -373,7 +373,7 @@ function SelectionPanel() {
                   if (v === 'auto') delete edgeOverride[String(e.index)];
                   else edgeOverride[String(e.index)] = v === 'on';
                   return { ...p, params: { ...p.params, balustrade: { ...p.params.balustrade, edgeOverride } } };
-                })
+                }, 'h.params')
               }
             />
           )}
@@ -392,7 +392,7 @@ function SelectionPanel() {
                   if (m) n = Math.max(n, Number(m[1]) + 1);
                 }
                 const id = `S${n}`;
-                updateProject((p) => ({ ...p, stairs: [...p.stairs, { id, edgeIndex: e.index, offset: Math.max(0, Math.round((e.length - width) / 2 / 10) * 10), width, groundOffset: 0 }] }), true);
+                updateProject((p) => ({ ...p, stairs: [...p.stairs, { id, edgeIndex: e.index, offset: Math.max(0, Math.round((e.length - width) / 2 / 10) * 10), width, groundOffset: 0 }] }), 'h.addStair');
                 setUi({ selection: { type: 'stair', id } });
               }}
             >
@@ -414,7 +414,7 @@ function SelectionPanel() {
     if (!s) return <p className="muted">{t('sel.none')}</p>;
     const d = design.stairs.find((x) => x.id === s.id);
     const e = E[s.edgeIndex];
-    const upd = (patch: Partial<typeof s>) => updateProject((p) => ({ ...p, stairs: p.stairs.map((x) => (x.id === s.id ? { ...x, ...patch } : x)) }));
+    const upd = (patch: Partial<typeof s>) => updateProject((p) => ({ ...p, stairs: p.stairs.map((x) => (x.id === s.id ? { ...x, ...patch } : x)) }), 'h.stairs');
     return (
       <Group title={t('sel.stair', { id: s.id })}>
         <small>{t('sel.edge', { n: s.edgeIndex + 1 })}</small>
@@ -457,7 +457,7 @@ function SelectionPanel() {
         <button
           className="btn danger"
           onClick={() => {
-            updateProject((p) => ({ ...p, stairs: p.stairs.filter((x) => x.id !== s.id) }), true);
+            updateProject((p) => ({ ...p, stairs: p.stairs.filter((x) => x.id !== s.id) }), 'h.deleteStair');
             setUi({ selection: null });
           }}
         >
@@ -474,7 +474,7 @@ function RulesPanel() {
   const { t } = useT();
   const r = project.rules;
   const [saved, setSaved] = useState(false);
-  const setRules = (fn: (r: RuleSet) => RuleSet) => updateProject((p) => ({ ...p, rules: fn(JSON.parse(JSON.stringify(p.rules))) }));
+  const setRules = (fn: (r: RuleSet) => RuleSet) => updateProject((p) => ({ ...p, rules: fn(JSON.parse(JSON.stringify(p.rules))) }), 'h.rules');
   const spacings = ['400', '450', '600'];
   const flws = [1800, 2400, 3000, 3600];
   const miscKeys: (keyof RuleSet)[] = [
@@ -607,7 +607,7 @@ export function PricesPanel() {
     <div>
       <p className="muted">{t('pr.intro')}</p>
       <div className="row">
-        <button className="btn" onClick={() => updateProject((p) => ({ ...p, prices: {} }))}>
+        <button className="btn" onClick={() => updateProject((p) => ({ ...p, prices: {} }), 'h.prices')}>
           {t('pr.reset')}
         </button>
         <button
@@ -640,7 +640,7 @@ export function PricesPanel() {
               </td>
               <td>{t(`unit.${p.unit}`)}</td>
               <td>
-                <input type="number" step={0.1} min={0} value={project.prices[p.id] ?? p.defaultPrice} onChange={(e) => updateProject((pr) => ({ ...pr, prices: { ...pr.prices, [p.id]: Number(e.target.value) } }))} />
+                <input type="number" step={0.1} min={0} value={project.prices[p.id] ?? p.defaultPrice} onChange={(e) => updateProject((pr) => ({ ...pr, prices: { ...pr.prices, [p.id]: Number(e.target.value) } }), 'h.prices')} />
               </td>
             </tr>
           ))}

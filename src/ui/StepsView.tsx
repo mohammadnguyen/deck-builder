@@ -16,7 +16,7 @@ export function StepsView() {
   const keys = design.method.map((s, i) => `${i}:${s.key}`);
   const done = keys.filter((k) => project.progress[k]).length;
   const nextIdx = keys.findIndex((k) => !project.progress[k]);
-  const toggle = (k: string) => updateProject((p) => ({ ...p, progress: { ...p.progress, [k]: !p.progress[k] } }));
+  const toggle = (k: string) => updateProject((p) => ({ ...p, progress: { ...p.progress, [k]: !p.progress[k] } }), 'h.progress');
 
   return (
     <div className="steps-wrap">
@@ -31,7 +31,7 @@ export function StepsView() {
           <button className="btn" onClick={() => setUi({ mode: 'sheets' })}>
             {t('steps.sheets')}
           </button>
-          <button className="btn ghost" onClick={() => updateProject((p) => ({ ...p, progress: {} }))} disabled={!done}>
+          <button className="btn ghost" onClick={() => updateProject((p) => ({ ...p, progress: {} }), 'h.progress')} disabled={!done}>
             {t('steps.reset')}
           </button>
         </div>

@@ -4,7 +4,7 @@ import { DECKING_PRODUCTS, PRODUCT_MAP } from '../model/catalog';
 import type { Project } from '../model/types';
 import { useApp } from '../state';
 import { money } from '../utils/format';
-import { addStairOnLongestEdge, detectShape, housePolylineFor, makeShape, shapeDims, topEdgeIndex, type ShapeKind } from '../utils/shapes';
+import { addStairOnLongestEdge, detectShape, housePolylineFor, makeShape, mirrorProject, shapeDims, topEdgeIndex, type ShapeKind } from '../utils/shapes';
 import { Chk, Num, Seg } from './fields';
 import { SidePanel } from './SidePanel';
 
@@ -67,7 +67,7 @@ export function GuidePanel() {
       };
       for (let i = 0; i < pr.stairs.length; i++) next = addStairOnLongestEdge(next);
       return next;
-    }, true);
+    }, 'h.shape');
     setUi({ tool: 'select', selection: null, drawMode: false });
   };
 
@@ -83,16 +83,17 @@ export function GuidePanel() {
         stairs: pr.stairs.filter((s) => !houseEdges.includes(s.edgeIndex)),
         params: { ...pr.params, attachment: k === 'masonry' ? 'wall' : 'freestanding', wallFixing: k === 'masonry' ? 'dynabolt' : pr.params.wallFixing },
       };
-    }, true);
+    }, 'h.wall');
 
-  const setParam = <K extends keyof Project['params']>(k: K, v: Project['params'][K]) => updateProject((pr) => ({ ...pr, params: { ...pr.params, [k]: v } }));
+  const paramLabel: Partial<Record<keyof Project['params'], string>> = { deckHeight: 'h.height', footingType: 'h.wall', deckingProductId: 'h.decking', edgeBoard: 'h.edgeBoard', stairWidth: 'h.stairs' };
+  const setParam = <K extends keyof Project['params']>(k: K, v: Project['params'][K]) => updateProject((pr) => ({ ...pr, params: { ...pr.params, [k]: v } }), paramLabel[k] ?? 'h.params');
 
   const chooseDecking = (id: string) => {
     const prod = PRODUCT_MAP[id];
     updateProject((pr) => ({
       ...pr,
       params: { ...pr.params, deckingProductId: id, boardGap: prod.defaultGap ?? pr.params.boardGap, joistSpacing: Math.min(pr.params.joistSpacing, prod.maxJoistSpacing ?? pr.params.joistSpacing) },
-    }));
+    }), 'h.decking');
   };
 
   const priceLabel = (id: string): string => {
@@ -106,14 +107,14 @@ export function GuidePanel() {
   const stairRise = project.stairs.length ? Math.round(project.stairs[0].rise ?? p.deckHeight - project.stairs[0].groundOffset) : p.deckHeight;
   const setStairRise = (v: number) => {
     const rise = Math.max(100, v);
-    updateProject((pr) => ({ ...pr, stairs: pr.stairs.map((s) => ({ ...s, rise: rise === pr.params.deckHeight ? undefined : rise, groundOffset: 0 })) }));
+    updateProject((pr) => ({ ...pr, stairs: pr.stairs.map((s) => ({ ...s, rise: rise === pr.params.deckHeight ? undefined : rise, groundOffset: 0 })) }), 'h.stairs');
   };
   const setStairWidth = (w: number) => {
     const width = Math.max(600, w);
     updateProject((pr) => {
       const E = polyEdges(pr.deck);
       return { ...pr, params: { ...pr.params, stairWidth: width }, stairs: pr.stairs.map((s) => ({ ...s, width: Math.min(width, E[s.edgeIndex]?.length ?? width) })) };
-    });
+    }, 'h.stairs');
   };
 
   return (
@@ -143,6 +144,11 @@ export function GuidePanel() {
             {t('g.shape.custom')}
           </button>
         </div>
+        {project.deck.length >= 4 && !ui.drawMode && (
+          <button type="button" className="btn ghost mirror" onClick={() => updateProject((pr) => mirrorProject(pr), 'h.mirror')}>
+            ⇋ {t('g.mirror')}
+          </button>
+        )}
         {ui.drawMode ? (
           <p className="hint">{t('g.drawing')}</p>
         ) : project.deck.length >= 4 ? (
@@ -224,13 +230,13 @@ export function GuidePanel() {
         </h3>
         <div className="stair-row">
           <div className="seg counter" role="group" aria-label={t('g.stairs')}>
-            <button type="button" onClick={() => updateProject((pr) => ({ ...pr, stairs: pr.stairs.slice(0, -1) }), true)} disabled={!project.stairs.length} aria-label="-">
+            <button type="button" onClick={() => updateProject((pr) => ({ ...pr, stairs: pr.stairs.slice(0, -1) }), 'h.stairs')} disabled={!project.stairs.length} aria-label="-">
               −
             </button>
             <button type="button" className="on">
               {t('g.stairCount', { n: project.stairs.length })}
             </button>
-            <button type="button" onClick={() => updateProject((pr) => addStairOnLongestEdge(pr), true)} disabled={!exposedEdges.length} aria-label="+">
+            <button type="button" onClick={() => updateProject((pr) => addStairOnLongestEdge(pr), 'h.stairs')} disabled={!exposedEdges.length} aria-label="+">
               +
             </button>
           </div>

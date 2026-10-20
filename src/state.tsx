@@ -1,9 +1,10 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { computeDesign, type DesignResult } from './engine';
 import { LangContext, translate } from './i18n';
 import { defaultParams, defaultRules, newProject } from './model/defaults';
 import { PRODUCT_MAP, resolveProductId } from './model/catalog';
 import type { DeckParams, Lang, Project, RuleSet } from './model/types';
+import { canRedo as hCanRedo, canUndo as hCanUndo, currentState, initHistory, jumpHistory, pushHistory, redoHistory, undoHistory, type History } from './utils/history';
 
 export type Tool = 'select' | 'deck' | 'house' | 'stair' | 'pan';
 export type Selection =
@@ -32,6 +33,13 @@ export interface UIState {
   advanced: boolean;
   /** free drawing tools shown on the canvas */
   drawMode: boolean;
+}
+
+/** what undo / redo / jump just did, so the canvas can confirm it in a toast */
+export interface HistoryAction {
+  kind: 'undo' | 'redo' | 'jump';
+  label: string;
+  at: number;
 }
 
 const LS = {
@@ -114,6 +122,12 @@ export function isProjectLike(x: unknown): x is Partial<Project> {
   return !!x && typeof x === 'object' && Array.isArray((x as Project).deck) && typeof (x as Project).params === 'object';
 }
 
+interface Store {
+  projects: Project[];
+  /** edit history per project id; the entry at index holds the project as it is now */
+  histories: Record<string, History<Project>>;
+}
+
 interface AppCtx {
   project: Project;
   projects: Project[];
@@ -121,10 +135,21 @@ interface AppCtx {
   lang: Lang;
   ui: UIState;
   canUndo: boolean;
+  canRedo: boolean;
+  /** labels and times of every step for the history list */
+  history: { label: string; at: number }[];
+  historyIndex: number;
+  lastHistoryAction: HistoryAction | null;
   setLang: (l: Lang) => void;
   setUi: (patch: Partial<UIState>) => void;
-  updateProject: (fn: (p: Project) => Project, undoable?: boolean) => void;
+  /**
+   * Change the current project. Every change is undoable; `label` names it in the history
+   * (an i18n key) and rapid changes with the same label coalesce into one step.
+   */
+  updateProject: (fn: (p: Project) => Project, label?: string | boolean, coalesceMs?: number) => void;
   undo: () => void;
+  redo: () => void;
+  jumpTo: (index: number) => void;
   createProject: (sample: boolean) => void;
   openProject: (id: string) => void;
   duplicateProject: () => void;
@@ -137,20 +162,21 @@ interface AppCtx {
 
 const Ctx = createContext<AppCtx | null>(null);
 
+const historyFor = (store: Store, p: Project): History<Project> => store.histories[p.id] ?? initHistory(p, 'h.open');
+
 export function AppProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(() => loadJSON<Lang>(LS.lang, 'zh'));
-  const [projects, setProjects] = useState<Project[]>(() => {
+  const [store, setStore] = useState<Store>(() => {
     const stored = loadJSON<Partial<Project>[]>(LS.projects, []);
-    const list = stored.filter(isProjectLike).map(migrateProject);
-    if (list.length) return list;
-    const rules = loadJSON<RuleSet | null>(LS.rules, null);
-    const prices = loadJSON<Record<string, number> | null>(LS.prices, null);
-    return [newProject(lang === 'zh' ? '示例 deck' : 'Sample deck', true, rules ?? undefined, prices ?? undefined)];
+    let list = stored.filter(isProjectLike).map(migrateProject);
+    if (!list.length) {
+      const rules = loadJSON<RuleSet | null>(LS.rules, null);
+      const prices = loadJSON<Record<string, number> | null>(LS.prices, null);
+      list = [newProject(lang === 'zh' ? '示例 deck' : 'Sample deck', true, rules ?? undefined, prices ?? undefined)];
+    }
+    return { projects: list, histories: {} };
   });
-  const [currentId, setCurrentId] = useState<string>(() => {
-    const id = loadJSON<string>(LS.current, '');
-    return id;
-  });
+  const [currentId, setCurrentId] = useState<string>(() => loadJSON<string>(LS.current, ''));
   const [ui, setUiState] = useState<UIState>({
     tool: 'select',
     selection: null,
@@ -161,10 +187,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     advanced: false,
     drawMode: false,
   });
-  const history = useRef<string[]>([]);
-  const [canUndo, setCanUndo] = useState(false);
+  const [lastHistoryAction, setLastHistoryAction] = useState<HistoryAction | null>(null);
 
+  const projects = store.projects;
   const project = useMemo(() => projects.find((p) => p.id === currentId) ?? projects[0], [projects, currentId]);
+  const cur = project?.id;
 
   useEffect(() => {
     if (project && project.id !== currentId) setCurrentId(project.id);
@@ -185,82 +212,103 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const setUi = useCallback((patch: Partial<UIState>) => setUiState((u) => ({ ...u, ...patch })), []);
 
   const updateProject = useCallback(
-    (fn: (p: Project) => Project, undoable = false) => {
-      setProjects((list) =>
-        list.map((p) => {
-          if (p.id !== (currentId || list[0]?.id)) return p;
-          if (undoable) {
-            history.current.push(JSON.stringify(p));
-            if (history.current.length > 50) history.current.shift();
-            setCanUndo(true);
-          }
-          const next = fn(p);
-          return { ...next, updatedAt: new Date().toISOString() };
-        }),
-      );
+    (fn: (p: Project) => Project, label: string | boolean = 'h.edit', coalesceMs = 1200) => {
+      const lbl = typeof label === 'string' ? label : 'h.edit';
+      setStore((s) => {
+        const id = cur ?? s.projects[0]?.id;
+        const p = s.projects.find((x) => x.id === id);
+        if (!p) return s;
+        const changed = fn(p);
+        if (changed === p) return s;
+        const next = { ...changed, updatedAt: new Date().toISOString() };
+        const h = pushHistory(historyFor(s, p), next, lbl, Date.now(), coalesceMs);
+        return { projects: s.projects.map((x) => (x.id === id ? next : x)), histories: { ...s.histories, [id]: h } };
+      });
     },
-    [currentId],
+    [cur],
   );
 
-  const undo = useCallback(() => {
-    const snap = history.current.pop();
-    setCanUndo(history.current.length > 0);
-    if (!snap) return;
-    const prev = JSON.parse(snap) as Project;
-    setProjects((list) => list.map((p) => (p.id === prev.id ? prev : p)));
-  }, []);
+  const applyHistory = useCallback(
+    (kind: HistoryAction['kind'], move: (h: History<Project>) => History<Project>) => {
+      setStore((s) => {
+        const p = s.projects.find((x) => x.id === cur);
+        if (!p) return s;
+        const h = historyFor(s, p);
+        const nh = move(h);
+        if (nh === h) return s;
+        const from = h.entries[h.index];
+        const label = kind === 'undo' ? from.label : nh.entries[nh.index].label;
+        setLastHistoryAction({ kind, label, at: Date.now() });
+        return { projects: s.projects.map((x) => (x.id === p.id ? currentState(nh) : x)), histories: { ...s.histories, [p.id]: nh } };
+      });
+    },
+    [cur],
+  );
+  const undo = useCallback(() => applyHistory('undo', undoHistory), [applyHistory]);
+  const redo = useCallback(() => applyHistory('redo', redoHistory), [applyHistory]);
+  const jumpTo = useCallback((index: number) => applyHistory('jump', (h) => jumpHistory(h, index)), [applyHistory]);
+
+  const hist = project ? historyFor(store, project) : null;
+  const canUndo = hist ? hCanUndo(hist) : false;
+  const canRedo = hist ? hCanRedo(hist) : false;
+  const history = useMemo(() => (hist ? hist.entries.map((e) => ({ label: e.label, at: e.at })) : []), [hist]);
+  const historyIndex = hist ? hist.index : 0;
 
   const defaultRulesForNew = useCallback((): RuleSet => {
     const r = loadJSON<RuleSet | null>(LS.rules, null);
     return r ? migrateProject({ rules: r } as Partial<Project>).rules : defaultRules();
   }, []);
 
+  const addProject = useCallback((p: Project) => {
+    setStore((s) => ({ projects: [...s.projects, p], histories: { ...s.histories, [p.id]: initHistory(p, 'h.open') } }));
+    setCurrentId(p.id);
+    setUiState((u) => ({ ...u, selection: null, tool: 'select', mode: 'design', drawMode: false }));
+  }, []);
+
   const createProject = useCallback(
     (sample: boolean) => {
       const prices = loadJSON<Record<string, number> | null>(LS.prices, null);
       const name = `${lang === 'zh' ? 'Deck 项目' : 'Deck project'} ${projects.length + 1}`;
-      const p = newProject(name, sample, defaultRulesForNew(), prices ?? undefined);
-      history.current = [];
-      setCanUndo(false);
-      setProjects((list) => [...list, p]);
-      setCurrentId(p.id);
-      setUiState((u) => ({ ...u, selection: null, tool: 'select', mode: 'design', drawMode: false }));
+      addProject(newProject(name, sample, defaultRulesForNew(), prices ?? undefined));
     },
-    [lang, projects.length, defaultRulesForNew],
+    [lang, projects.length, defaultRulesForNew, addProject],
   );
 
   const openProject = useCallback((id: string) => {
-    history.current = [];
-    setCanUndo(false);
     setCurrentId(id);
     setUiState((u) => ({ ...u, selection: null, mode: 'design', drawMode: false }));
   }, []);
 
   const duplicateProject = useCallback(() => {
     const copy = { ...JSON.parse(JSON.stringify(project)), id: newProject('x').id, name: `${project.name} (copy)` } as Project;
-    setProjects((list) => [...list, copy]);
-    setCurrentId(copy.id);
-  }, [project]);
+    addProject(copy);
+  }, [project, addProject]);
 
   const deleteProject = useCallback(() => {
-    setProjects((list) => {
-      const rest = list.filter((p) => p.id !== project.id);
-      if (!rest.length) rest.push(newProject(lang === 'zh' ? 'Deck 项目 1' : 'Deck project 1', false, defaultRulesForNew()));
+    setStore((s) => {
+      const rest = s.projects.filter((p) => p.id !== project.id);
+      const histories = { ...s.histories };
+      delete histories[project.id];
+      if (!rest.length) {
+        const fresh = newProject(lang === 'zh' ? 'Deck 项目 1' : 'Deck project 1', false, defaultRulesForNew());
+        rest.push(fresh);
+        histories[fresh.id] = initHistory(fresh, 'h.open');
+      }
       setCurrentId(rest[0].id);
-      return rest;
+      return { projects: rest, histories };
     });
-    history.current = [];
-    setCanUndo(false);
   }, [project, lang, defaultRulesForNew]);
 
-  const importProject = useCallback((data: unknown): boolean => {
-    if (!isProjectLike(data)) return false;
-    const p = migrateProject(data);
-    p.id = newProject('x').id;
-    setProjects((list) => [...list, p]);
-    setCurrentId(p.id);
-    return true;
-  }, []);
+  const importProject = useCallback(
+    (data: unknown): boolean => {
+      if (!isProjectLike(data)) return false;
+      const p = migrateProject(data);
+      p.id = newProject('x').id;
+      addProject(p);
+      return true;
+    },
+    [addProject],
+  );
 
   const saveDefaultRules = useCallback(() => saveJSON(LS.rules, project.rules), [project]);
   const saveDefaultPrices = useCallback(() => saveJSON(LS.prices, project.prices), [project]);
@@ -269,7 +317,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const t = useCallback((key: string, params?: Record<string, string | number>) => translate(lang, key, params), [lang]);
 
   const value: AppCtx = {
-    project, projects, design, lang, ui, canUndo, setLang, setUi, updateProject, undo, createProject, openProject,
+    project, projects, design, lang, ui, canUndo, canRedo, history, historyIndex, lastHistoryAction,
+    setLang, setUi, updateProject, undo, redo, jumpTo, createProject, openProject,
     duplicateProject, deleteProject, importProject, saveDefaultRules, saveDefaultPrices, defaultRulesForNew,
   };
   return (

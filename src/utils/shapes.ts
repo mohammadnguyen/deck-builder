@@ -1,5 +1,5 @@
 import type { Project, Pt, Stair } from '../model/types';
-import { bbox, edges } from '../engine/geometry';
+import { bbox, edges, moveVertex, normalizePolygon, polygonAreaMm2, validatePolygon } from '../engine/geometry';
 
 export type ShapeKind = 'rect' | 'L' | 'U' | 'custom';
 
@@ -107,4 +107,146 @@ export function addStairOnLongestEdge(p: Project): Project {
   const width = Math.min(p.params.stairWidth, e.length);
   const offset = Math.max(0, Math.round((e.length - width) / 2 / 10) * 10);
   return { ...p, stairs: [...p.stairs, { id: nextStairId(p.stairs), edgeIndex: e.index, offset, width, groundOffset: 0 }] };
+}
+
+// ---------------------------------------------------------------------------
+// Direct editing helpers: clamped moves, notches, mirroring
+// ---------------------------------------------------------------------------
+
+export const MIN_EDGE = 100;
+
+/**
+ * Clamp the new coordinate of edge `i` (its y when horizontal, x when vertical) so the
+ * two edges joining it keep their direction and at least MIN_EDGE of length.
+ */
+export function clampEdgeValue(poly: Pt[], i: number, value: number): number {
+  const n = poly.length;
+  const A = poly[i];
+  const B = poly[(i + 1) % n];
+  const P = poly[(i - 1 + n) % n];
+  const N = poly[(i + 2) % n];
+  const horizontal = Math.abs(A.y - B.y) < 0.5;
+  const cur = horizontal ? A.y : A.x;
+  const pv = horizontal ? P.y : P.x;
+  const nv = horizontal ? N.y : N.x;
+  let v = value;
+  v = cur > pv ? Math.max(v, pv + MIN_EDGE) : Math.min(v, pv - MIN_EDGE);
+  v = cur > nv ? Math.max(v, nv + MIN_EDGE) : Math.min(v, nv - MIN_EDGE);
+  return v;
+}
+
+/** Move edge i to `value` along its normal axis, keeping the polygon orthogonal and valid. */
+export function moveEdgeTo(poly: Pt[], i: number, value: number): Pt[] | null {
+  const n = poly.length;
+  const v = clampEdgeValue(poly, i, value);
+  const out = poly.map((p) => ({ ...p }));
+  const j = (i + 1) % n;
+  if (Math.abs(poly[i].y - poly[j].y) < 0.5) {
+    out[i].y = v;
+    out[j].y = v;
+  } else {
+    out[i].x = v;
+    out[j].x = v;
+  }
+  const norm = normalizePolygon(out);
+  return norm.length === n && validatePolygon(norm).ok ? out : null;
+}
+
+/**
+ * Clamp a vertex move so the four edges it affects (its own two and the next ones
+ * out) keep their direction and MIN_EDGE of length.
+ */
+export function clampVertex(poly: Pt[], i: number, v: Pt): Pt {
+  const n = poly.length;
+  const V = poly[i];
+  const P = poly[(i - 1 + n) % n];
+  const N = poly[(i + 1) % n];
+  const PP = poly[(i - 2 + n) % n];
+  const NN = poly[(i + 2) % n];
+  let { x, y } = v;
+  const keep = (cur: number, other: number, val: number): number => (cur > other ? Math.max(val, other + MIN_EDGE) : Math.min(val, other - MIN_EDGE));
+  if (Math.abs(P.y - V.y) < 0.5) {
+    // prev edge horizontal: x sets its length, y drags P (and PP's vertical edge)
+    x = keep(V.x, P.x, x);
+    y = keep(V.y, PP.y, y);
+    y = keep(V.y, N.y, y);
+    x = keep(V.x, NN.x, x);
+  } else {
+    y = keep(V.y, P.y, y);
+    x = keep(V.x, PP.x, x);
+    x = keep(V.x, N.x, x);
+    y = keep(V.y, NN.y, y);
+  }
+  return { x, y };
+}
+
+/** Move vertex i (neighbours follow) with clamping; null when the result is not a valid outline. */
+export function moveVertexTo(poly: Pt[], i: number, v: Pt): Pt[] | null {
+  const n = poly.length;
+  const out = moveVertex(poly, i, clampVertex(poly, i, v));
+  const norm = normalizePolygon(out);
+  return norm.length === n && validatePolygon(norm).ok ? out : null;
+}
+
+/**
+ * Cut a notch into edge `i` (inward) or add a bump-out (outward), centred on the edge.
+ * Returns the new outline, or null when the edge is too short or the result is invalid.
+ */
+export function insertNotch(poly: Pt[], i: number, width: number, depth: number, outward: boolean): Pt[] | null {
+  const E = edges(poly);
+  const e = E[i];
+  if (!e || e.length < width + 2 * MIN_EDGE) return null;
+  const t0 = Math.round((e.length - width) / 2 / 50) * 50;
+  const d = e.dir;
+  const m = outward ? e.outward : { x: -e.outward.x, y: -e.outward.y };
+  const P1 = { x: e.a.x + d.x * t0, y: e.a.y + d.y * t0 };
+  const P2 = { x: P1.x + m.x * depth, y: P1.y + m.y * depth };
+  const P4 = { x: P1.x + d.x * width, y: P1.y + d.y * width };
+  const P3 = { x: P4.x + m.x * depth, y: P4.y + m.y * depth };
+  const out = [...poly.slice(0, i + 1), P1, P2, P3, P4, ...poly.slice(i + 1)];
+  const norm = normalizePolygon(out);
+  return norm.length === poly.length + 4 && validatePolygon(norm).ok ? norm : null;
+}
+
+/** Remove the jog (notch or bump-out) whose bottom is edge i, joining the two outer edges into one. */
+export function removeJog(poly: Pt[], i: number): Pt[] | null {
+  const n = poly.length;
+  if (n < 8) return null;
+  const E = edges(poly);
+  const e = E[i];
+  const prev = E[(i - 1 + n) % n];
+  const next = E[(i + 1) % n];
+  const before = E[(i - 2 + n) % n];
+  const after = E[(i + 2) % n];
+  if (!e || prev.axis !== next.axis || before.axis !== e.axis || after.axis !== e.axis) return null;
+  if (Math.abs(prev.length - next.length) > 0.5) return null;
+  const collinear = e.axis === 'x' ? Math.abs(before.a.y - after.a.y) < 0.5 : Math.abs(before.a.x - after.a.x) < 0.5;
+  if (!collinear) return null;
+  const drop = new Set([(i - 1 + n) % n, i, (i + 1) % n, (i + 2) % n]);
+  const out = normalizePolygon(poly.filter((_, k) => !drop.has(k)));
+  if (out.length < 4 || !validatePolygon(out).ok) return null;
+  // only the jog's own area may change, which rules out reading the body of the deck as a jog of its notch
+  const jogArea = e.length * prev.length;
+  if (Math.abs(Math.abs(polygonAreaMm2(out) - polygonAreaMm2(poly)) - jogArea) > jogArea * 0.01 + 1) return null;
+  return out;
+}
+
+/** True when edge i is the bottom of a jog that removeJog can flatten. */
+export function isJogEdge(poly: Pt[], i: number): boolean {
+  return removeJog(poly, i) !== null;
+}
+
+/** Mirror the whole project left to right; edge indices stay valid, stairs keep their edge. */
+export function mirrorProject(p: Project): Project {
+  if (p.deck.length < 3) return p;
+  const bb = bbox(p.deck);
+  const mx = (x: number) => bb.minX + bb.maxX - x;
+  const deck = p.deck.map((q) => ({ x: mx(q.x), y: q.y }));
+  const E = edges(p.deck);
+  const stairs = p.stairs.map((s) => {
+    const e = E[s.edgeIndex];
+    return e ? { ...s, offset: Math.max(0, e.length - s.offset - s.width) } : s;
+  });
+  const house = p.house.map((pl) => pl.map((q) => ({ x: mx(q.x), y: q.y })));
+  return { ...p, deck, stairs, house };
 }

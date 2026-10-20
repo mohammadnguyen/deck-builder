@@ -31,7 +31,7 @@ export function StepsView() {
           <button className="btn" onClick={() => setUi({ mode: 'sheets' })}>
             {t('steps.sheets')}
           </button>
-          <button className="btn ghost" onClick={() => updateProject((p) => ({ ...p, progress: {} }), 'h.progress')} disabled={!done}>
+          <button className="btn ghost" onClick={() => { if (window.confirm(t('steps.resetConfirm'))) updateProject((p) => ({ ...p, progress: {} }), 'h.progress'); }} disabled={!done}>
             {t('steps.reset')}
           </button>
         </div>

@@ -178,7 +178,7 @@ export function GuidePanel() {
           ]}
           onChange={setWall}
         />
-        <p className="hint">{t(`g.wallHint.${wallKind}`)}</p>
+        <p className="hint">{t(`g.wallHint.${wallKind}`, { inset: project.rules.houseBearerInset, edge: p.edgeBoard ? t('g.wallHint.none.edge') : '' })}</p>
         <Seg<'stump' | 'slab'>
           label={t('g.ground')}
           value={p.footingType === 'slab' ? 'slab' : 'stump'}

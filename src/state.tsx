@@ -20,13 +20,18 @@ export interface Layers {
   house: boolean;
 }
 export type PanelTab = 'params' | 'selection' | 'rules' | 'prices' | 'results';
+export type Mode = 'design' | 'sheets' | 'materials' | 'steps';
 export interface UIState {
   tool: Tool;
   selection: Selection;
   snap: number;
   layers: Layers;
-  mode: 'design' | 'sheets';
+  mode: Mode;
   panelTab: PanelTab;
+  /** full parameter / rules / prices panels instead of the five-step guide */
+  advanced: boolean;
+  /** free drawing tools shown on the canvas */
+  drawMode: boolean;
 }
 
 const LS = {
@@ -77,6 +82,8 @@ export function migrateProject(p: Partial<Project>): Project {
     ...(p.params ?? {}),
     balustrade: { ...dp.balustrade, ...(p.params?.balustrade ?? {}) },
   } as DeckParams;
+  // company practice: 200 mm auger holes; projects still on the old 300 default follow
+  if (params.footingDiameter === 300) params.footingDiameter = 200;
   if ((params.attachment as string) === 'ledger') {
     params.attachment = 'wall';
     params.wallFixing = 'bolt';
@@ -99,6 +106,7 @@ export function migrateProject(p: Partial<Project>): Project {
     prices,
     rules,
     params,
+    progress: p.progress ?? {},
   } as Project;
 }
 
@@ -147,9 +155,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     tool: 'select',
     selection: null,
     snap: 50,
-    layers: { frame: true, boards: false, posts: true, balustrade: true, dims: true, house: true },
+    layers: { frame: true, boards: true, posts: true, balustrade: true, dims: false, house: true },
     mode: 'design',
     panelTab: 'params',
+    advanced: false,
+    drawMode: false,
   });
   const history = useRef<string[]>([]);
   const [canUndo, setCanUndo] = useState(false);
@@ -214,7 +224,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCanUndo(false);
       setProjects((list) => [...list, p]);
       setCurrentId(p.id);
-      setUiState((u) => ({ ...u, selection: null, tool: sample ? 'select' : 'deck', mode: 'design' }));
+      setUiState((u) => ({ ...u, selection: null, tool: 'select', mode: 'design', drawMode: false }));
     },
     [lang, projects.length, defaultRulesForNew],
   );
@@ -223,7 +233,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     history.current = [];
     setCanUndo(false);
     setCurrentId(id);
-    setUiState((u) => ({ ...u, selection: null, mode: 'design' }));
+    setUiState((u) => ({ ...u, selection: null, mode: 'design', drawMode: false }));
   }, []);
 
   const duplicateProject = useCallback(() => {

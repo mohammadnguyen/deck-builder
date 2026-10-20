@@ -219,4 +219,6 @@ export interface Project {
   rules: RuleSet;
   /** productId -> unit price override */
   prices: Record<string, number>;
+  /** method step key -> ticked off on site */
+  progress: Record<string, boolean>;
 }

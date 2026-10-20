@@ -223,6 +223,30 @@ export function edgePoint(e: Edge, t: number): Pt {
   return { x: e.a.x + e.dir.x * t, y: e.a.y + e.dir.y * t };
 }
 
+/** Move vertex i and drag its two neighbours so the polygon stays orthogonal. */
+export function moveVertex(poly: Pt[], i: number, v: Pt): Pt[] {
+  const n = poly.length;
+  const out = poly.map((p) => ({ ...p }));
+  const old = poly[i];
+  const pi = (i - 1 + n) % n;
+  const ni = (i + 1) % n;
+  out[i] = { ...v };
+  if (Math.abs(poly[pi].y - old.y) < 0.5) out[pi].y = v.y;
+  else out[pi].x = v.x;
+  if (Math.abs(poly[ni].y - old.y) < 0.5) out[ni].y = v.y;
+  else out[ni].x = v.x;
+  return out;
+}
+
+/** Set the length of edge `index` by moving its end vertex along the edge direction. */
+export function setEdgeLength(poly: Pt[], index: number, length: number): Pt[] {
+  const E = edges(poly);
+  const e = E[index];
+  if (!e || length < 100) return poly;
+  const b = { x: e.a.x + e.dir.x * length, y: e.a.y + e.dir.y * length };
+  return moveVertex(poly, (index + 1) % poly.length, b);
+}
+
 export function round(v: number, step = 1): number {
   return Math.round(v / step) * step;
 }

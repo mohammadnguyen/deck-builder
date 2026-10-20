@@ -107,7 +107,10 @@ describe('design', () => {
     expect(lay.edgeBoards.find((e) => e.edgeIndex === 2)!.endCorner).toBe('concave');
     expect(lay.edgeBoards.find((e) => e.edgeIndex === 2)!.length).toBeCloseTo(2400 + 140, 3);
     expect(lay.fieldPoly).toEqual([{ x: 145, y: 0 }, { x: 5855, y: 0 }, { x: 5855, y: 2255 }, { x: 3455, y: 2255 }, { x: 3455, y: 4055 }, { x: 145, y: 4055 }]);
-    expect(lay.totals.frameJoists).toBe(3);
+    expect(lay.totals.frameJoists).toBe(6); // a touching pair under each of the three exposed joist-parallel edges
+    expect(lay.joists.filter((j) => j.kind === 'frame').map((j) => Math.round(j.pos * 10) / 10)).toEqual([122.5, 167.5, 3432.5, 3477.5, 5832.5, 5877.5]);
+    expect(d.footings.diameter).toBe(200);
+    expect(d.footings.bags).toBeLessThan(30);
     expect(d.edgeBoardProductId).toBe('modelo-endboard-140x23');
     const eb = d.bom.lines.find((l) => l.productId === 'modelo-endboard-140x23');
     expect(eb && eb.tags).toEqual(['edgeBoard']);

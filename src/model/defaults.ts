@@ -102,7 +102,7 @@ export function defaultParams(): DeckParams {
     wallFixing: 'dynabolt',
     footingType: 'stump',
     footingDepth: 500,
-    footingDiameter: 300,
+    footingDiameter: 200,
     padSize: 400,
     padDepth: 400,
     concreteProductId: 'rapid-set-20kg',
@@ -170,5 +170,6 @@ export function newProject(name: string, withSample = false, rules?: RuleSet, pr
     params: defaultParams(),
     rules: rules ? JSON.parse(JSON.stringify(rules)) : defaultRules(),
     prices: prices ? { ...prices } : {},
+    progress: {},
   };
 }

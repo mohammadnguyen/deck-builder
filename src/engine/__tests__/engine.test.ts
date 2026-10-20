@@ -72,6 +72,9 @@ describe('design', () => {
     for (const j of lay.joists) expect(j.pieces.length).toBeGreaterThanOrEqual(1);
     expect(lay.joistSpanUsed).toBeLessThanOrEqual(lay.maxJoistSpan + 1);
     for (const b of lay.bearers) expect(b.postSpacing).toBeLessThanOrEqual(b.maxSpan + 1);
+    // single 140x45 bearers follow the company grid: posts at up to 1500 centres
+    for (const b of lay.bearers) expect(b.maxSpan).toBe(1500);
+    expect(Math.max(...lay.bearers.map((b) => b.postSpacing))).toBeLessThanOrEqual(1500);
     expect(d.stairs.length).toBe(1);
     expect(d.stairs[0].risers).toBeGreaterThanOrEqual(3);
     expect(d.bom.lines.length).toBeGreaterThan(5);

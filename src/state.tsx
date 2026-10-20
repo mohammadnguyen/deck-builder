@@ -60,6 +60,13 @@ export function migrateProject(p: Partial<Project>): Project {
   const dr = defaultRules();
   const dp = defaultParams();
   const rules: RuleSet = { ...dr, ...(p.rules ?? {}), stair: { ...dr.stair, ...(p.rules?.stair ?? {}) } } as RuleSet;
+  // rows that still hold a superseded default are upgraded; customised rows are left alone
+  const superseded: Record<string, string> = {
+    'tp-140x45|1': JSON.stringify([{ flw: 1800, span: 1300 }, { flw: 2400, span: 1100 }, { flw: 3000, span: 1000 }, { flw: 3600, span: 900 }]),
+  };
+  for (const [key, oldJson] of Object.entries(superseded)) {
+    if (JSON.stringify(rules.bearerSpan[key]) === oldJson) rules.bearerSpan[key] = dr.bearerSpan[key];
+  }
   const params: DeckParams = {
     ...dp,
     ...(p.params ?? {}),

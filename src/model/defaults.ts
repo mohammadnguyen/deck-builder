@@ -19,7 +19,8 @@ export function defaultRules(): RuleSet {
     bearerSpan: {
       'tp-90x45|1': [{ flw: 1800, span: 800 }, { flw: 2400, span: 700 }, { flw: 3000, span: 600 }, { flw: 3600, span: 600 }],
       'tp-90x45|2': [{ flw: 1800, span: 1200 }, { flw: 2400, span: 1000 }, { flw: 3000, span: 900 }, { flw: 3600, span: 800 }],
-      'tp-140x45|1': [{ flw: 1800, span: 1300 }, { flw: 2400, span: 1100 }, { flw: 3000, span: 1000 }, { flw: 3600, span: 900 }],
+      // company practice: single 140x45 bearers on posts at 1500 centres with joists spanning up to 1500
+      'tp-140x45|1': [{ flw: 1800, span: 1500 }, { flw: 2400, span: 1300 }, { flw: 3000, span: 1100 }, { flw: 3600, span: 1000 }],
       'tp-140x45|2': [{ flw: 1800, span: 1800 }, { flw: 2400, span: 1600 }, { flw: 3000, span: 1400 }, { flw: 3600, span: 1300 }],
       'tp-190x45|1': [{ flw: 1800, span: 1800 }, { flw: 2400, span: 1500 }, { flw: 3000, span: 1400 }, { flw: 3600, span: 1200 }],
       'tp-190x45|2': [{ flw: 1800, span: 2400 }, { flw: 2400, span: 2100 }, { flw: 3000, span: 1900 }, { flw: 3600, span: 1700 }],

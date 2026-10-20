@@ -1,5 +1,6 @@
 import type { DesignResult } from '../engine';
-import { edges as polyEdges } from '../engine/geometry';
+import { edges as polyEdges, type Edge } from '../engine/geometry';
+import type { CornerKind, EdgeBoardRun } from '../engine/layout';
 import { useT } from '../i18n';
 import type { Project, Pt, Seg } from '../model/types';
 import { PRODUCT_MAP, sizeLabel } from '../model/catalog';
@@ -18,11 +19,19 @@ export interface LayerFlags {
   bearerLabels: boolean;
   joins: boolean;
   fascia: boolean;
+  /** picture-frame edge boards (drawn with the boards layer) */
+  edgeBoards: boolean;
+  /** joist centre dimension chain and spacing per bay */
+  frameDims: boolean;
+  joistLabels: boolean;
+  /** board row numbers along the first run of every fifth row */
+  rowNumbers: boolean;
 }
 
 export const ALL_LAYERS: LayerFlags = {
   house: true, outline: true, frame: true, boards: true, posts: true, balustrade: true, stairs: true,
   dims: true, labels: true, postLabels: true, bearerLabels: true, joins: true, fascia: true,
+  edgeBoards: true, frameDims: false, joistLabels: false, rowNumbers: false,
 };
 
 export const COLORS = {
@@ -35,6 +44,9 @@ export const COLORS = {
   post: '#1f2937',
   board: '#e9d2a8',
   boardStroke: '#c9a874',
+  edgeBoard: '#c98f4f',
+  edgeBoardStroke: '#7c4a1d',
+  frameJoist: '#7c4a1d',
   join: '#7c2d12',
   balPost: '#0f766e',
   stair: '#9ca3af',
@@ -56,6 +68,23 @@ function segRect(seg: Seg, thickness: number): { x: number; y: number; w: number
 
 function mid(seg: Seg): Pt {
   return { x: (seg.a.x + seg.b.x) / 2, y: (seg.a.y + seg.b.y) / 2 };
+}
+
+const cornerShift = (c: CornerKind): number => (c === 'convex' ? 1 : c === 'concave' ? -1 : 0);
+
+/** Plan outline of a mitred edge board: outer line on the deck edge, inner line one board in. */
+export function edgeBoardPolygon(e: Edge, eb: EdgeBoardRun): { pts: Pt[]; mitres: Seg[] } {
+  const n = { x: -e.outward.x, y: -e.outward.y };
+  const d = e.dir;
+  const w = eb.width;
+  const s0 = cornerShift(eb.startCorner);
+  const s1 = cornerShift(eb.endCorner);
+  const innerStart = { x: e.a.x + n.x * w + d.x * w * s0, y: e.a.y + n.y * w + d.y * w * s0 };
+  const innerEnd = { x: e.b.x + n.x * w - d.x * w * s1, y: e.b.y + n.y * w - d.y * w * s1 };
+  const mitres: Seg[] = [];
+  if (eb.startCorner !== 'butt') mitres.push({ a: e.a, b: innerStart });
+  if (eb.endCorner !== 'butt') mitres.push({ a: e.b, b: innerEnd });
+  return { pts: [e.a, e.b, innerEnd, innerStart], mitres };
 }
 
 export function DimChain({ positions, fixed, axis, fs, color = COLORS.dim, sw }: {
@@ -156,12 +185,76 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
           ),
         )}
 
+      {L.boards && L.edgeBoards && lay &&
+        lay.edgeBoards.map((eb) => {
+          const e = E[eb.edgeIndex];
+          if (!e) return null;
+          const { pts, mitres } = edgeBoardPolygon(e, eb);
+          const n = { x: -e.outward.x, y: -e.outward.y };
+          return (
+            <g key={`eb${eb.edgeIndex}`}>
+              <polygon points={pts.map((p) => `${p.x},${p.y}`).join(' ')} fill={COLORS.edgeBoard} stroke={COLORS.edgeBoardStroke} strokeWidth={sw * 0.8} />
+              {mitres.map((m, i) => (
+                <line key={`m${i}`} x1={m.a.x} y1={m.a.y} x2={m.b.x} y2={m.b.y} stroke={COLORS.edgeBoardStroke} strokeWidth={sw * 1.2} />
+              ))}
+              {eb.joinPts.map((jp, i) => (
+                <line key={`ej${i}`} x1={jp.x} y1={jp.y} x2={jp.x + n.x * eb.width} y2={jp.y + n.y * eb.width} stroke={COLORS.join} strokeWidth={sw * 2} />
+              ))}
+            </g>
+          );
+        })}
+      {L.boards && L.rowNumbers && lay &&
+        lay.boards.map((row, i, rows) => {
+          if (!row.runs.length || !(i === 0 || (i + 1) % 5 === 0 || i === rows.length - 1)) return null;
+          const run = row.runs[0];
+          const horizontal = Math.abs(run.seg.a.y - run.seg.b.y) < 0.5;
+          const x = horizontal ? Math.min(run.seg.a.x, run.seg.b.x) + fs * 0.3 : run.seg.a.x;
+          const y = horizontal ? run.seg.a.y : Math.min(run.seg.a.y, run.seg.b.y) + fs * 0.3;
+          return (
+            <text key={`rn${i}`} x={x} y={y + fs * 0.3} fontSize={fs * 0.8} fill={COLORS.join} fontWeight={600} textAnchor={horizontal ? 'start' : 'middle'}>
+              {i + 1}
+            </text>
+          );
+        })}
+
       {L.frame && lay && (
         <g>
           {lay.joists.map((j) => {
             const r = segRect(j.seg, jw);
-            return <rect key={j.id} x={r.x} y={r.y} width={r.w} height={r.h} fill={COLORS.joist} opacity={0.75} />;
+            return (
+              <rect
+                key={j.id}
+                x={r.x}
+                y={r.y}
+                width={r.w}
+                height={r.h}
+                fill={COLORS.joist}
+                opacity={j.kind === 'frame' ? 0.95 : 0.75}
+                stroke={j.kind === 'frame' ? COLORS.frameJoist : undefined}
+                strokeWidth={j.kind === 'frame' ? sw * 1.2 : undefined}
+                strokeDasharray={j.kind === 'frame' ? `${sw * 6} ${sw * 4}` : undefined}
+              />
+            );
           })}
+          {L.joistLabels &&
+            lay.joists.map((j) => {
+              const horizontal = Math.abs(j.seg.a.y - j.seg.b.y) < 0.5;
+              const x = horizontal ? Math.min(j.seg.a.x, j.seg.b.x) + fs * 0.4 : j.seg.a.x;
+              const y = horizontal ? j.seg.a.y : Math.min(j.seg.a.y, j.seg.b.y) + fs * 0.4;
+              return (
+                <text
+                  key={`jl${j.id}`}
+                  x={x}
+                  y={y}
+                  fontSize={fs * 0.7}
+                  fill={COLORS.frameJoist}
+                  textAnchor="start"
+                  transform={horizontal ? `translate(0 ${-jw / 2 - fs * 0.2})` : `rotate(90 ${x} ${y}) translate(0 ${-jw / 2 - fs * 0.2})`}
+                >
+                  {j.id}
+                </text>
+              );
+            })}
           {lay.bearers.map((b) => {
             const r = segRect(b.seg, bw);
             const horizontal = Math.abs(b.seg.a.y - b.seg.b.y) < 0.5;
@@ -212,6 +305,40 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
             )}
           </g>
         ))}
+
+      {L.frameDims && lay && design.ok && lay.joistPositions.length > 1 && (() => {
+        // keep the joist chain clear of stairs hanging off the bottom / right edge
+        let maxY = design.bb.maxY;
+        let maxX = design.bb.maxX;
+        for (const st of design.stairs) for (const pt of st.outline) {
+          maxY = Math.max(maxY, pt.y);
+          maxX = Math.max(maxX, pt.x);
+        }
+        const lineY = maxY + fs * 2.2;
+        const lineX = maxX + fs * 3.2;
+        return (
+          <g>
+            {lay.boardAxis === 'x' ? (
+              <DimChain axis="x" fixed={lineY} positions={lay.joistPositions} fs={fs * 0.8} sw={sw} color={COLORS.frameJoist} />
+            ) : (
+              <DimChain axis="y" fixed={lineX} positions={lay.joistPositions} fs={fs * 0.8} sw={sw} color={COLORS.frameJoist} />
+            )}
+            {lay.joistBays.map((b, i) => {
+              const c = (b.from + b.to) / 2;
+              const label = `${b.count} x @${Math.round(b.spacing)}`;
+              return lay.boardAxis === 'x' ? (
+                <text key={`bay${i}`} x={c} y={lineY + fs * 2} fontSize={fs * 0.85} fill={COLORS.frameJoist} textAnchor="middle" fontWeight={600}>
+                  {label}
+                </text>
+              ) : (
+                <text key={`bay${i}`} x={lineX + fs * 1.6} y={c} fontSize={fs * 0.85} fill={COLORS.frameJoist} textAnchor="middle" fontWeight={600} transform={`rotate(-90 ${lineX + fs * 1.6} ${c})`}>
+                  {label}
+                </text>
+              );
+            })}
+          </g>
+        );
+      })()}
 
       {L.fascia && design.ok && design.fascia.length > 0 &&
         design.fascia.map((f) => {

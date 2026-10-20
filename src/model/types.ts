@@ -42,7 +42,12 @@ export interface DeckParams {
   /** finished deck surface above ground */
   deckHeight: number;
   deckingProductId: string;
+  /** auto: joists spread evenly per bay, as close to the target as possible but never over joistSpacingMax */
+  joistSpacingMode: 'auto' | 'fixed';
+  /** nominal joist spacing when joistSpacingMode is 'fixed' */
   joistSpacing: number;
+  /** hard cap for auto spacing */
+  joistSpacingMax: number;
   boardGap: number;
   boardAxis: 'auto' | Axis;
   joistProductId: string;
@@ -66,6 +71,11 @@ export interface DeckParams {
   padSize: number;
   padDepth: number;
   concreteProductId: string;
+  /** picture-frame edge board around every exposed edge, mitred at the corners */
+  edgeBoard: boolean;
+  /** 'auto' uses the decking's edge board product (solid edge) or the decking itself */
+  edgeBoardProductId: 'auto' | string;
+  /** vertical fascia board covering the frame on exposed edges */
   fascia: boolean;
   oil: boolean;
   joistTape: boolean;
@@ -106,6 +116,10 @@ export interface RuleSet {
   postMaxHeight: Record<string, number>;
   /** decking product id -> max joist spacing */
   deckingMaxJoistSpacing: Record<string, number>;
+  /** auto joist spacing aims for this value (then evens out within the cap) */
+  joistSpacingTarget: number;
+  /** extra joist under the edge board / field board joint on edges parallel to the joists */
+  frameJoist: boolean;
   bearerEdgeInset: number;
   houseBearerInset: number;
   /** house-side bearer centre inset from the wall when joists are hung flush */
@@ -172,6 +186,8 @@ export interface Product {
   defaultGap?: number;
   maxJoistSpacing?: number;
   fasciaProductId?: string;
+  /** solid-edge board laid as the outermost (picture frame) board */
+  edgeBoardProductId?: string;
   rollLength?: number;
   /** pieces per pack when the supplier sells by the box */
   packSize?: number;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { newProject } from '../../model/defaults';
+import { defaultRules, newProject } from '../../model/defaults';
 import { packPieces, splitRun } from '../cutlist';
+import { joistMaxSpan, joistSpaces } from '../layout';
 import { clipHorizontal, clipVertical, detectHouseEdges, edges, normalizePolygon, polygonAreaMm2, validatePolygon } from '../geometry';
 import { computeDesign } from '../index';
 
@@ -95,6 +96,22 @@ describe('design', () => {
     // perimeter bearers sit at the deck edge (25 mm to centre), joist ends flush
     const last = lay.supports[lay.supports.length - 1];
     expect(Math.abs(last.pos - (4200 - 25))).toBeLessThan(1);
+    // auto joist spacing: even per bay, between 400 and the 500 cap
+    expect(lay.joistSpacingUsed).toBeLessThanOrEqual(500);
+    expect(lay.joistSpacingMin).toBeGreaterThanOrEqual(400);
+    expect(d.joistSpacingText).toMatch(/^\d+(-\d+)?$/);
+    // picture frame: one edge board per exposed edge, four mitred corners, field inset by board + gap
+    expect(lay.edgeBoards.length).toBe(5);
+    expect(lay.totals.mitres).toBe(4);
+    expect(lay.edgeBoards.find((e) => e.edgeIndex === 1)!.startCorner).toBe('butt');
+    expect(lay.edgeBoards.find((e) => e.edgeIndex === 2)!.endCorner).toBe('concave');
+    expect(lay.edgeBoards.find((e) => e.edgeIndex === 2)!.length).toBeCloseTo(2400 + 140, 3);
+    expect(lay.fieldPoly).toEqual([{ x: 145, y: 0 }, { x: 5855, y: 0 }, { x: 5855, y: 2255 }, { x: 3455, y: 2255 }, { x: 3455, y: 4055 }, { x: 145, y: 4055 }]);
+    expect(lay.totals.frameJoists).toBe(3);
+    expect(d.edgeBoardProductId).toBe('modelo-endboard-140x23');
+    const eb = d.bom.lines.find((l) => l.productId === 'modelo-endboard-140x23');
+    expect(eb && eb.tags).toEqual(['edgeBoard']);
+    expect(d.bom.lines.some((l) => l.tags.includes('fascia'))).toBe(false);
     expect(d.bom.pricesIncludeGst).toBe(true);
     expect(d.bom.total).toBeCloseTo(d.bom.linesTotal - d.bom.discount + d.bom.delivery, 6);
     expect(d.levels.groundClearance).toBe(450 - 23 - 90 - 140);
@@ -147,6 +164,45 @@ describe('design', () => {
     expect(d.bom.lines.some((l) => l.productId === 'rapid-set-20kg')).toBe(false);
     expect(d.postLength).toBe(Math.round(d.levels.postTop));
     expect(d.warnings.some((w) => w.key === 'compliance.slabBlocks')).toBe(true);
+  });
+  it('spreads joists evenly within the cap and interpolates spans', () => {
+    const rules = defaultRules();
+    const auto = { ...newProject('a', true).params, joistSpacingMode: 'auto' as const, joistSpacingMax: 500 };
+    expect(joistSpaces(3310, auto, rules, 500)).toBe(7); // 472.9
+    expect(joistSpaces(1050, auto, rules, 500)).toBe(3); // 525 would break the cap
+    expect(joistSpaces(900, auto, rules, 500)).toBe(2); // 450
+    const fixed = { ...auto, joistSpacingMode: 'fixed' as const, joistSpacing: 450 };
+    expect(joistSpaces(3310, fixed, rules, 500)).toBe(8); // 413.75 <= 450
+    expect(joistMaxSpan(rules, 'tp-90x45', 400).span).toBe(1500);
+    expect(joistMaxSpan(rules, 'tp-90x45', 425).span).toBe(1450);
+    expect(joistMaxSpan(rules, 'tp-90x45', 500).span).toBe(1330);
+    expect(joistMaxSpan(rules, 'tp-90x45', 350).span).toBe(1500);
+    expect(joistMaxSpan(rules, 'tp-90x45', 900).extrapolated).toBe(true);
+  });
+  it('keeps fixed spacing and respects the decking cap', () => {
+    const p = newProject('fixed', true);
+    p.params.joistSpacingMode = 'fixed';
+    p.params.joistSpacing = 400;
+    const d = computeDesign(p);
+    expect(d.layout!.joistSpacingUsed).toBeLessThanOrEqual(400);
+    const hw = newProject('hw', true);
+    hw.params.deckingProductId = 'hw-86x19';
+    hw.params.boardGap = 4;
+    const dh = computeDesign(hw);
+    expect(dh.layout!.joistSpacingUsed).toBeLessThanOrEqual(450); // 19 mm hardwood caps at 450
+    expect(dh.edgeBoardProductId).toBe('hw-86x19'); // no solid-edge product: same board, counted separately
+    expect(dh.bom.lines.find((l) => l.productId === 'hw-86x19')!.tags).toContain('edgeBoard');
+  });
+  it('lays boards to the edge when the picture frame is off', () => {
+    const p = newProject('plain', true);
+    p.params.edgeBoard = false;
+    const d = computeDesign(p);
+    const lay = d.layout!;
+    expect(lay.edgeBoards.length).toBe(0);
+    expect(lay.totals.frameJoists).toBe(0);
+    expect(lay.fieldPoly).toEqual(d.poly);
+    expect(lay.boards[0].runs[0].length).toBeCloseTo(6000, 3);
+    expect(d.bom.lines.some((l) => l.productId === 'modelo-endboard-140x23')).toBe(false);
   });
   it('rejects a non orthogonal polygon', () => {
     const p = newProject('bad');

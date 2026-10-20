@@ -178,14 +178,36 @@ function ParamsPanel() {
             const prod = PRODUCT_MAP[v];
             updateProject((pr) => ({
               ...pr,
-              params: { ...pr.params, deckingProductId: v, boardGap: prod.defaultGap ?? pr.params.boardGap, joistSpacing: prod.maxJoistSpacing ?? pr.params.joistSpacing },
+              params: { ...pr.params, deckingProductId: v, boardGap: prod.defaultGap ?? pr.params.boardGap, joistSpacing: Math.min(pr.params.joistSpacing, prod.maxJoistSpacing ?? pr.params.joistSpacing) },
             }));
           }}
         />
+        <Num label={t('p.boardGap')} value={p.boardGap} onChange={(v) => set('boardGap', v)} min={0} max={20} />
+        <Sel
+          label={t('p.joistSpacingMode')}
+          value={p.joistSpacingMode}
+          options={[
+            { value: 'auto', label: t('p.joistSpacingMode.auto') },
+            { value: 'fixed', label: t('p.joistSpacingMode.fixed') },
+          ]}
+          onChange={(v) => set('joistSpacingMode', v as DeckParams['joistSpacingMode'])}
+        />
         <div className="row">
-          <Num label={t('p.boardGap')} value={p.boardGap} onChange={(v) => set('boardGap', v)} min={0} max={20} />
-          <Num label={t('p.joistSpacing')} value={p.joistSpacing} onChange={(v) => set('joistSpacing', v)} step={50} min={200} max={900} />
+          {p.joistSpacingMode === 'fixed' ? (
+            <Num label={t('p.joistSpacing')} value={p.joistSpacing} onChange={(v) => set('joistSpacing', v)} step={50} min={200} max={900} />
+          ) : (
+            <Num label={t('p.joistSpacingMax')} value={p.joistSpacingMax} onChange={(v) => set('joistSpacingMax', v)} step={50} min={300} max={900} />
+          )}
         </div>
+        <Chk label={t('p.edgeBoard')} checked={p.edgeBoard} onChange={(v) => set('edgeBoard', v)} />
+        {p.edgeBoard && (
+          <Sel
+            label={t('p.edgeBoardProduct')}
+            value={p.edgeBoardProductId}
+            options={[{ value: 'auto', label: t('p.edgeBoard.auto') }, ...CATALOG.filter((d) => d.category === 'decking').map((d) => ({ value: d.id, label: productName(d, lang) }))]}
+            onChange={(v) => set('edgeBoardProductId', v)}
+          />
+        )}
         <Chk label={t('p.fascia')} checked={p.fascia} onChange={(v) => set('fascia', v)} />
         <Chk label={t('p.joistTape')} checked={p.joistTape} onChange={(v) => set('joistTape', v)} />
         <Chk label={t('p.weedMat')} checked={p.weedMat} onChange={(v) => set('weedMat', v)} />
@@ -506,7 +528,7 @@ function RulesPanel() {
     'lowDeckClearance', 'minGroundClearance', 'balustradeTriggerHeight', 'handrailTriggerRise', 'exemptMaxArea', 'exemptMaxHeight',
     'kerf', 'staggerOffset', 'minBoardPiece', 'boardEndAllowance', 'joistEndAllowance', 'screwsPerCrossing', 'boltsPerPost',
     'ledgerBoltSpacing', 'oilCoverage', 'oilCoats', 'stirrupLift', 'concreteBagYield', 'flushHouseInset', 'battenScrewsPerPost',
-    'hangerNails', 'skewNailsPerCrossing',
+    'hangerNails', 'skewNailsPerCrossing', 'joistSpacingTarget',
   ];
   const stairKeys = ['minRiser', 'maxRiser', 'targetRiser', 'minGoing', 'maxGoing', 'min2RG', 'max2RG', 'maxRisers', 'stringerSpacing', 'nosing'] as const;
   return (
@@ -614,6 +636,7 @@ function RulesPanel() {
         ))}
       </Group>
       <Group title={t('r.misc')}>
+        <Chk label={t('r.frameJoist')} checked={r.frameJoist} onChange={(v) => setRules((rr) => ({ ...rr, frameJoist: v }))} />
         {miscKeys.map((k) => (
           <Num key={k} label={t(`r.${k}`)} value={r[k] as number} step={k === 'elevatedFactor' || k === 'concreteBagYield' ? 0.01 : 1} onChange={(v) => setRules((rr) => ({ ...rr, [k]: v }))} />
         ))}
@@ -704,8 +727,10 @@ function ResultsPanel() {
     [t('res.posts'), String(lay.posts.length)],
     [t('res.bearers'), String(lay.bearers.length)],
     [t('res.joists'), String(lay.joists.length)],
+    [t('res.joistSpacing'), `${design.joistSpacingText} mm`],
     [t('res.boards'), `${(lay.totals.boardLm / 1000).toFixed(1)} m`],
     [t('res.rows'), String(lay.totals.boardRows)],
+    ...(lay.edgeBoards.length ? ([[t('res.edgeBoards'), `${lay.edgeBoards.length} / ${(lay.totals.edgeBoardLm / 1000).toFixed(1)} m`], [t('res.mitres'), String(lay.totals.mitres)]] as [string, string][]) : []),
     [t('res.screws'), String(lay.totals.screws)],
     [t('res.cost'), money(design.bom.total)],
   ];

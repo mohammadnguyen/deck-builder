@@ -133,6 +133,11 @@ export function SheetsView() {
   const joistGroups = new Map<number, number>();
   for (const j of lay.joists) joistGroups.set(Math.round(j.length), (joistGroups.get(Math.round(j.length)) ?? 0) + 1);
   const joistSummary = [...joistGroups.entries()].sort((a, b) => b[0] - a[0]).map(([len, n]) => `${n} x ${len}`).join(', ');
+  const spacingMode = p.joistSpacingMode === 'auto' ? t('sheet.spacingAuto', { max: p.joistSpacingMax }) : t('sheet.spacingFixed');
+  const baySummary = lay.joistBays.map((b) => `${b.count} x @${Math.round(b.spacing)}`).join(', ');
+  const edgeBoardLine = design.bom.lines.find((l) => l.tags.includes('edgeBoard'));
+  const lastRow = lay.boards[lay.boards.length - 1];
+  const bw = PRODUCT_MAP[p.deckingProductId]?.width ?? 0;
 
   const clipLine = design.bom.lines.find((l) => l.tags.includes('clip'));
   const edgeScrewLine = design.bom.lines.find((l) => l.tags.includes('edgeScrew'));
@@ -194,7 +199,7 @@ export function SheetsView() {
 
         <Sheet n={2} total={total} title={t('sheet.framing')} project={project} scale={scaleLabel}>
           <div className="plan-area">
-            <PlanSvg project={project} design={design} S={S} vb={vb} layers={{ frame: true, boards: false, balustrade: false, fascia: false, stairs: true, posts: true, dims: false, labels: true, postLabels: false }} />
+            <PlanSvg project={project} design={design} S={S} vb={vb} layers={{ frame: true, boards: false, balustrade: false, fascia: false, stairs: true, posts: true, dims: false, labels: true, postLabels: false, frameDims: true, joistLabels: true }} />
           </div>
           <div className="side-col">
             <h3>{t('sheet.memberSchedule')}</h3>
@@ -225,6 +230,22 @@ export function SheetsView() {
                   <td>{sizeLabel(p.joistProductId)}</td>
                   <td colSpan={3}>{joistSummary}</td>
                 </tr>
+                <tr>
+                  <td>{t('col.spacing')}</td>
+                  <td>@{design.joistSpacingText}</td>
+                  <td colSpan={3}>
+                    {baySummary} ({spacingMode})
+                  </td>
+                </tr>
+                {lay.totals.frameJoists > 0 && (
+                  <tr>
+                    <td>{t('legend.frameJoist')}</td>
+                    <td>{sizeLabel(p.joistProductId)}</td>
+                    <td colSpan={3}>
+                      {lay.totals.frameJoists} x @ {bw + p.boardGap}
+                    </td>
+                  </tr>
+                )}
                 {lay.ledgers.map((l, i) => (
                   <tr key={`L${i}`}>
                     <td>{t('legend.wall')}</td>
@@ -263,22 +284,27 @@ export function SheetsView() {
               </tbody>
             </table>
             <h3>{t('sheet.notes')}</h3>
-            <p>{t('sheet.framingNote1', { lam: p.bearerLaminations, bearer: p.bearerProductId, joist: p.joistProductId, spacing: p.joistSpacing })}</p>
-            <p>{t('sheet.framingNote2', { post: design.postProductId, footing: footingText })}</p>
+            <p>{t('sheet.framingNote1', { lam: p.bearerLaminations, bearer: sizeLabel(p.bearerProductId), joist: sizeLabel(p.joistProductId), spacing: design.joistSpacingText, mode: spacingMode })}</p>
+            <p>{t('sheet.framingNote2', { post: sizeLabel(design.postProductId), footing: footingText })}</p>
             <p>{t('sheet.framingNote3')}</p>
+            {lay.totals.frameJoists > 0 && <p>{t('sheet.framingNote4')}</p>}
             {design.braces.count > 0 && <p>{t('m.bracing', { count: design.braces.count })}</p>}
-            <Legend items={[{ color: COLORS.bearer, label: t('legend.bearer') }, { color: COLORS.joist, label: t('legend.joist') }, { color: COLORS.post, label: t('legend.post') }, { color: COLORS.ledger, label: t('legend.wall') }]} />
+            <Legend items={[{ color: COLORS.bearer, label: t('legend.bearer') }, { color: COLORS.joist, label: t('legend.joist') }, { color: COLORS.frameJoist, label: t('legend.frameJoist') }, { color: COLORS.post, label: t('legend.post') }, { color: COLORS.ledger, label: t('legend.wall') }]} />
           </div>
         </Sheet>
 
         <Sheet n={3} total={total} title={t('sheet.decking')} project={project} scale={scaleLabel}>
           <div className="plan-area">
-            <PlanSvg project={project} design={design} S={S} vb={vb} layers={{ frame: false, boards: true, joins: true, balustrade: true, fascia: true, stairs: true, posts: false, dims: false, labels: true }} />
+            <PlanSvg project={project} design={design} S={S} vb={vb} layers={{ frame: false, boards: true, joins: true, edgeBoards: true, rowNumbers: true, balustrade: true, fascia: true, stairs: true, posts: false, dims: false, labels: true, frameDims: true }} />
           </div>
           <div className="side-col">
             <h3>{t('sheet.notes')}</h3>
-            <p>{t(clipLine ? 'sheet.deckingNote1.clips' : 'sheet.deckingNote1', { decking: p.deckingProductId, gap: p.boardGap })}</p>
+            <p>{t(clipLine ? 'sheet.deckingNote1.clips' : 'sheet.deckingNote1', { decking: productName(p.deckingProductId, lang), gap: p.boardGap, pitch: bw + p.boardGap })}</p>
+            {lay.edgeBoards.length > 0 && (
+              <p>{t('sheet.deckingNote4', { product: productName(design.edgeBoardProductId, lang), n: lay.edgeBoards.length, lm: (lay.totals.edgeBoardLm / 1000).toFixed(1), mitres: lay.totals.mitres, gap: p.boardGap })}</p>
+            )}
             <p>{t('sheet.deckingNote2')}</p>
+            {lastRow && <p>{t('sheet.deckingNote5', { last: Math.round(lastRow.width) })}</p>}
             {design.balustrade.enabled && <p>{t('sheet.deckingNote3')}</p>}
             <table className="sch">
               <tbody>
@@ -294,6 +320,20 @@ export function SheetsView() {
                   <td>{t('legend.join')}</td>
                   <td>{lay.totals.boardJoins}</td>
                 </tr>
+                {lay.edgeBoards.length > 0 && (
+                  <>
+                    <tr>
+                      <td>{t('legend.edgeBoard')}</td>
+                      <td>
+                        {lay.edgeBoards.length} / {(lay.totals.edgeBoardLm / 1000).toFixed(1)} m{edgeBoardLine ? ` / ${edgeBoardLine.qty} x ${stockLabel(edgeBoardLine.stockBreakdown)}` : ''}
+                      </td>
+                    </tr>
+                    <tr>
+                      <td>{t('legend.mitre')}</td>
+                      <td>{lay.totals.mitres}</td>
+                    </tr>
+                  </>
+                )}
                 {clipLine ? (
                   <>
                     <tr>
@@ -322,7 +362,7 @@ export function SheetsView() {
             {design.stairs.map((s) => (
               <p key={s.id}>{t('m.stairs', { id: s.id, width: s.width, risers: s.risers, riser: Math.round(s.riser), going: s.going, treads: s.treads, run: Math.round(s.totalRun), stringers: s.stringerCount, stringerLength: s.stringerLength, boards: s.boardsPerTread })}</p>
             ))}
-            <Legend items={[{ color: COLORS.board, label: t('legend.joist') + ' / ' + t('layer.boards') }, { color: COLORS.join, label: t('legend.join'), shape: 'line' }, { color: COLORS.balPost, label: t('legend.balPost') }, { color: COLORS.stair, label: t('legend.stair') }]} />
+            <Legend items={[{ color: COLORS.board, label: t('legend.board') }, { color: COLORS.edgeBoard, label: t('legend.edgeBoard') }, { color: COLORS.join, label: t('legend.join'), shape: 'line' }, { color: COLORS.balPost, label: t('legend.balPost') }, { color: COLORS.stair, label: t('legend.stair') }]} />
           </div>
         </Sheet>
 

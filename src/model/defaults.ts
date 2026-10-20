@@ -34,6 +34,8 @@ export function defaultRules(): RuleSet {
     deckingMaxJoistSpacing: Object.fromEntries(
       CATALOG.filter((p) => p.isDecking).map((p) => [p.id, p.maxJoistSpacing ?? 450]),
     ),
+    joistSpacingTarget: 450,
+    frameJoist: true,
     // perimeter bearer sits at the deck edge; joist ends finish flush with its outer face
     bearerEdgeInset: 25,
     houseBearerInset: 200,
@@ -84,7 +86,9 @@ export function defaultParams(): DeckParams {
   return {
     deckHeight: 450,
     deckingProductId: 'modelo-140x23',
-    joistSpacing: 400,
+    joistSpacingMode: 'auto',
+    joistSpacing: 450,
+    joistSpacingMax: 500,
     boardGap: 5,
     boardAxis: 'auto',
     joistProductId: 'tp-90x45',
@@ -102,7 +106,9 @@ export function defaultParams(): DeckParams {
     padSize: 400,
     padDepth: 400,
     concreteProductId: 'rapid-set-20kg',
-    fascia: true,
+    edgeBoard: true,
+    edgeBoardProductId: 'auto',
+    fascia: false,
     oil: false,
     joistTape: true,
     weedMat: true,

@@ -19,6 +19,8 @@ export interface ComplianceInput {
   edgeCount: number;
   deckingMaxJoistSpacing: number;
   deckingFamily: string;
+  /** largest joist centre spacing actually laid out */
+  joistSpacingUsed: number;
 }
 
 export function assessCompliance(inp: ComplianceInput): { warnings: WarningItem[]; pathway: Pathway } {
@@ -51,8 +53,8 @@ export function assessCompliance(inp: ComplianceInput): { warnings: WarningItem[
   } else if (inp.groundClearance < rules.lowDeckClearance) {
     w.push({ severity: 'warn', key: 'compliance.lowDeck', params: { clearance: Math.round(inp.groundClearance), min: rules.lowDeckClearance } });
   }
-  if (params.joistSpacing > inp.deckingMaxJoistSpacing) {
-    w.push({ severity: 'error', key: 'compliance.joistSpacingTooWide', params: { spacing: params.joistSpacing, max: inp.deckingMaxJoistSpacing } });
+  if (Math.round(inp.joistSpacingUsed) > inp.deckingMaxJoistSpacing + 0.5) {
+    w.push({ severity: 'warn', key: 'compliance.joistSpacingTooWide', params: { spacing: Math.round(inp.joistSpacingUsed), max: inp.deckingMaxJoistSpacing } });
   }
   if (inp.deckingFamily === 'composite') w.push({ severity: 'info', key: 'compliance.compositeNotes' });
   if (inp.deckingFamily === 'hardwood') w.push({ severity: 'info', key: 'compliance.hardwoodNotes' });

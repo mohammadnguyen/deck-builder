@@ -101,7 +101,7 @@ describe('design', () => {
     const lay = d.layout!;
     expect(lay.totals.hangers).toBe(lay.joists.reduce((s, j) => s + j.pieces.length * 2, 0));
     expect(lay.totals.joistBearerCrossings).toBe(0);
-    expect(Math.abs(lay.supports[0].pos - 150)).toBeLessThan(1); // house side inset
+    expect(Math.abs(lay.supports[0].pos - 22.5)).toBeLessThan(1); // wall bearer against the wall
     expect(Math.abs(lay.supports[lay.supports.length - 1].pos - 4200 + 45)).toBeLessThan(1); // perimeter bearer at the edge
     expect(d.bom.lines.some((l) => l.productId === 'js-9045')).toBe(true);
     expect(d.levels.groundClearance).toBe(450 - 23 - 140);
@@ -139,15 +139,24 @@ describe('design', () => {
     expect(d.ok).toBe(false);
     expect(d.problem).toBe('notOrthogonal');
   });
-  it('handles boards along y with a ledger', () => {
-    const p = newProject('ledger', true);
-    p.params.attachment = 'ledger';
-    const d = computeDesign(p);
-    expect(d.layout!.attachment).toBe('ledger');
-    expect(d.layout!.ledgers.length).toBe(1);
-    expect(d.layout!.totals.hangers).toBeGreaterThan(5);
-    p.params.boardAxis = 'y';
-    const d2 = computeDesign(p);
+  it('anchors the house-side bearer to the wall and drops its posts', () => {
+    const wall = newProject('wall', true);
+    wall.params.attachment = 'wall';
+    const free = newProject('free', true);
+    free.params.attachment = 'freestanding';
+    const dw = computeDesign(wall);
+    const df = computeDesign(free);
+    expect(dw.layout!.attachment).toBe('wall');
+    expect(dw.layout!.ledgers.length).toBe(1);
+    const wallRun = dw.layout!.bearers.find((b) => b.onWall)!;
+    expect(wallRun.posts.length).toBe(0);
+    expect(Math.abs(wallRun.seg.a.y - 22.5)).toBeLessThan(1); // single 45 bearer against the wall
+    expect(dw.layout!.posts.length).toBeLessThan(df.layout!.posts.length);
+    expect(dw.bom.lines.some((l) => l.productId === 'dynabolt-m12x100')).toBe(true);
+    expect(dw.layout!.totals.hangers).toBe(0); // joists sit on the wall bearer
+    // a wall bearer needs a house edge parallel to the bearers
+    wall.params.boardAxis = 'y';
+    const d2 = computeDesign(wall);
     expect(d2.layout!.swapped).toBe(true);
     expect(d2.layout!.attachment).toBe('freestanding');
   });

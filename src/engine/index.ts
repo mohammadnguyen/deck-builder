@@ -189,7 +189,7 @@ export function computeDesign(project: Project): DesignResult {
     if (qty > 0) counts.push({ productId, qty, tag });
   };
 
-  for (const b of layout.bearers) for (const lam of b.pieces) for (const len of lam) push(bearer.id, len, 'bearer');
+  for (const b of layout.bearers) for (const lam of b.pieces) for (const len of lam) push(bearer.id, len, b.onWall ? 'wallBearer' : 'bearer');
   for (const j of layout.joists) for (const len of j.pieces) push(joist.id, flush ? len : len, 'joist');
   for (let i = 0; i < layout.totals.boardJoins; i++) push(joist.id, 300, 'joinBlock');
   for (const row of layout.boards) for (const run of row.runs) for (const len of run.pieces) push(decking.id, len, 'decking');
@@ -227,11 +227,9 @@ export function computeDesign(project: Project): DesignResult {
     treadScrews += s.treads * s.boardsPerTread * s.stringerCount * 2;
     count('bolt-m12-hdg', s.stringerCount * 2 + s.handrailPosts * 2, 'stairs');
   }
-  for (const l of layout.ledgers) {
-    const split = splitRun(0, l.length, [], maxStock(joist.id) - rules.joistEndAllowance, 600);
-    for (const len of split.pieces) push(joist.id, len + rules.joistEndAllowance, 'ledger');
-    count('bolt-m12-hdg', l.bolts, 'ledger');
-  }
+  // wall bearers are already in layout.bearers (timber); add their wall anchors
+  const wallAnchors = layout.ledgers.reduce((s, l) => s + l.bolts, 0);
+  if (wallAnchors > 0) count(params.wallFixing === 'dynabolt' ? 'dynabolt-m12x100' : 'bolt-m12-hdg', wallAnchors, 'wallBearer');
   // ---- decking fixings: hidden clips on grooved boards, screws elsewhere ----
   let clipCount = 0;
   let edgeScrews = 0;
@@ -262,8 +260,6 @@ export function computeDesign(project: Project): DesignResult {
     } else {
       count('nail-75x3.05', layout.totals.joistBearerCrossings * rules.skewNailsPerCrossing, 'joist');
     }
-    count(hangerFor(joist.id), layout.totals.hangers, 'ledger');
-    count('nail-75x3.05', layout.totals.hangers * rules.hangerNails, 'ledger');
   }
   // ---- bearer to post ----
   if (params.bearerToPost === 'bolted') count('bolt-m12-hdg', postCount * rules.boltsPerPost, 'bearer');
@@ -294,6 +290,7 @@ export function computeDesign(project: Project): DesignResult {
   if (params.bearerToPost === 'screwed') compliance.warnings.push({ severity: 'info', key: 'compliance.screwedBearers', params: { n: rules.battenScrewsPerPost } });
   if (flush) compliance.warnings.push({ severity: 'info', key: 'compliance.flushNotes' });
   if (!flush && params.joistFixing === 'skewNails') compliance.warnings.push({ severity: 'info', key: 'compliance.skewNails', params: { n: rules.skewNailsPerCrossing } });
+  if (layout.ledgers.length) compliance.warnings.push({ severity: 'info', key: params.wallFixing === 'dynabolt' ? 'compliance.wallBearerMasonry' : 'compliance.wallBearerTimber', params: { n: wallAnchors } });
 
   const method = buildMethod({
     params, rules, layout, areaM2, postCount, postTop, postLength, postName: postProductId, concreteM3, bags,

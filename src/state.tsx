@@ -72,6 +72,10 @@ export function migrateProject(p: Partial<Project>): Project {
     ...(p.params ?? {}),
     balustrade: { ...dp.balustrade, ...(p.params?.balustrade ?? {}) },
   } as DeckParams;
+  if ((params.attachment as string) === 'ledger') {
+    params.attachment = 'wall';
+    params.wallFixing = 'bolt';
+  }
   for (const k of ['deckingProductId', 'joistProductId', 'bearerProductId', 'concreteProductId'] as const) {
     const id = resolveProductId(params[k]);
     params[k] = PRODUCT_MAP[id] ? id : dp[k];

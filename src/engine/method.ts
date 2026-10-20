@@ -77,10 +77,15 @@ export function buildMethod(m: MethodInput): MethodStep[] {
     notes: [{ key: 'm.bearers.n1' }, { key: 'm.bearers.n2' }, ...(flush ? [{ key: 'm.bearers.flush' }] : [])],
   });
   if (m.layout.ledgers.length) {
+    const anchors = m.layout.ledgers.reduce((s, l) => s + l.bolts, 0);
     steps.push({
-      key: 'm.ledger',
-      params: { count: m.layout.ledgers.length, spacing: m.rules.ledgerBoltSpacing },
-      notes: [{ key: 'm.ledger.n1' }, { key: 'm.ledger.n2' }],
+      key: p.wallFixing === 'dynabolt' ? 'm.wall.dynabolt' : 'm.wall.bolt',
+      params: { count: m.layout.ledgers.length, spacing: m.rules.ledgerBoltSpacing, anchors, bearer: m.bearerName, lam: p.bearerLaminations },
+      notes: [
+        { key: p.wallFixing === 'dynabolt' ? 'm.wall.n1.masonry' : 'm.wall.n1.timber' },
+        { key: 'm.wall.n2' },
+        { key: flush ? 'm.wall.n3.flush' : 'm.wall.n3.onTop' },
+      ],
     });
   }
   const nails = p.joistFixing === 'skewNails';

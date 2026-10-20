@@ -295,27 +295,45 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
       )}
 
       {design.layout && design.layout.ledgers.length > 0 && (
-        <Frame title={t('detail.ledger')}>
+        <Frame title={p.wallFixing === 'dynabolt' ? t('detail.wall') : t('detail.ledger')}>
           <rect x={20} y={20} width={40} height={190} fill="#eee" stroke={INK} strokeWidth={0.6} />
           <Hatch x={20} y={20} w={40} h={190} />
-          <rect x={64} y={60} width={12} height={40} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
-          <rect x={60} y={60} width={4} height={40} fill="#fff" stroke={INK} strokeWidth={0.4} />
-          <line x1={40} y1={70} x2={80} y2={70} stroke={INK} strokeWidth={1.4} />
-          <line x1={40} y1={90} x2={80} y2={90} stroke={INK} strokeWidth={1.4} />
-          <polyline points="40,48 76,48 76,58 80,62" fill="none" stroke={INK} strokeWidth={1.2} />
-          <rect x={76} y={60} width={180} height={40} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
-          <polyline points="76,70 76,100 92,100 92,70" fill="none" stroke={INK} strokeWidth={1.4} />
-          {[90, 116, 142, 168, 194, 220, 246].map((x) => (
+          {/* wall bearer end-on against the wall */}
+          <rect x={60} y={flush ? 60 : 74} width={14} height={40} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
+          <line x1={36} y1={flush ? 72 : 86} x2={78} y2={flush ? 72 : 86} stroke={INK} strokeWidth={1.6} />
+          <line x1={36} y1={flush ? 90 : 104} x2={78} y2={flush ? 90 : 104} stroke={INK} strokeWidth={1.6} />
+          {flush ? (
+            <>
+              <rect x={74} y={60} width={182} height={26} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+              <polyline points="74,66 74,86 90,86 90,66" fill="none" stroke={INK} strokeWidth={1.4} />
+            </>
+          ) : (
+            <rect x={60} y={60} width={196} height={14} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+          )}
+          {[64, 90, 116, 142, 168, 194, 220].map((x) => (
             <rect key={x} x={x} y={54} width={24} height={6} fill={TIMBER} stroke={INK} strokeWidth={0.5} />
           ))}
-          <Lbl x={24} y={120} size={7}>{t('d.house')}</Lbl>
-          <Lbl x={110} y={130}>{`${t('d.ledger')} ${sizeOf(joist)}, M12 @ ${project.rules.ledgerBoltSpacing}`}</Lbl>
-          <Leader from={[108, 127]} to={[72, 95]} />
-          <Lbl x={110} y={40}>{t('d.flashing')}</Lbl>
-          <Leader from={[108, 42]} to={[70, 48]} />
-          <Lbl x={110} y={150}>{t('d.hanger')}</Lbl>
-          <Leader from={[108, 147]} to={[90, 100]} />
-          <Lbl x={110} y={170} size={7}>{`${t('d.joist')} ${sizeOf(joist)}`}</Lbl>
+          {p.wallFixing === 'bolt' && <polyline points="40,48 70,48 70,58 76,62" fill="none" stroke={INK} strokeWidth={1.2} />}
+          <Lbl x={110} y={124}>{p.wallFixing === 'dynabolt' ? t('d.masonry') : t('d.house')}</Lbl>
+          <Leader from={[108, 121]} to={[60, 115]} />
+          <Lbl x={110} y={140}>{`${t('d.wallBearer')} ${p.bearerLaminations}/${sizeOf(bearer)}`}</Lbl>
+          <Leader from={[108, 137]} to={[72, 100]} />
+          <Lbl x={110} y={152}>{p.wallFixing === 'dynabolt' ? t('d.anchors', { spacing: project.rules.ledgerBoltSpacing }) : `M12 @ ${project.rules.ledgerBoltSpacing}`}</Lbl>
+          {p.wallFixing === 'bolt' && (
+            <>
+              <Lbl x={110} y={40}>{t('d.flashing')}</Lbl>
+              <Leader from={[108, 42]} to={[70, 48]} />
+            </>
+          )}
+          {flush && (
+            <>
+              <Lbl x={110} y={170}>{t('d.hanger')}</Lbl>
+              <Leader from={[108, 167]} to={[90, 86]} />
+            </>
+          )}
+          <Lbl x={110} y={186} size={7}>{`${t('d.joist')} ${sizeOf(joist)} @ ${p.joistSpacing}`}</Lbl>
+          <Lbl x={24} y={205} size={7}>{t('d.ground')}</Lbl>
+          <line x1={60} y1={200} x2={280} y2={200} stroke={INK} strokeWidth={0.6} />
         </Frame>
       )}
     </div>

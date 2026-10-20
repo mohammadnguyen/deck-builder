@@ -152,11 +152,22 @@ function ParamsPanel() {
           label={t('p.attachment')}
           value={p.attachment}
           options={[
+            { value: 'wall', label: t('p.attachment.wall') },
             { value: 'freestanding', label: t('p.attachment.freestanding') },
-            { value: 'ledger', label: t('p.attachment.ledger') },
           ]}
           onChange={(v) => set('attachment', v as DeckParams['attachment'])}
         />
+        {p.attachment === 'wall' && (
+          <Sel
+            label={t('p.wallFixing')}
+            value={p.wallFixing}
+            options={[
+              { value: 'dynabolt', label: t('p.wallFixing.dynabolt') },
+              { value: 'bolt', label: t('p.wallFixing.bolt') },
+            ]}
+            onChange={(v) => set('wallFixing', v as DeckParams['wallFixing'])}
+          />
+        )}
       </Group>
       <Group title={t('p.group.decking')}>
         <Sel

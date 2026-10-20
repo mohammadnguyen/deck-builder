@@ -213,8 +213,8 @@ export function SheetsView() {
                       {p.bearerLaminations}/{sizeLabel(p.bearerProductId)}
                     </td>
                     <td>{Math.round(b.length)}</td>
-                    <td>{b.posts.length}</td>
-                    <td>{Math.round(b.postSpacing)}</td>
+                    <td>{b.onWall ? t('legend.wall') : b.posts.length}</td>
+                    <td>{b.onWall ? (p.wallFixing === 'dynabolt' ? 'Dynabolt' : 'M12') + ` @ ${project.rules.ledgerBoltSpacing}` : Math.round(b.postSpacing)}</td>
                   </tr>
                 ))}
                 <tr>
@@ -224,10 +224,12 @@ export function SheetsView() {
                 </tr>
                 {lay.ledgers.map((l, i) => (
                   <tr key={`L${i}`}>
-                    <td>Ledger</td>
-                    <td>{sizeLabel(p.joistProductId)}</td>
+                    <td>{t('legend.wall')}</td>
+                    <td>{sizeLabel(p.bearerProductId)}</td>
                     <td>{Math.round(l.length)}</td>
-                    <td colSpan={2}>M12 x {l.bolts}</td>
+                    <td colSpan={2}>
+                      {p.wallFixing === 'dynabolt' ? 'Dynabolt M12x100' : 'M12'} x {l.bolts}
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -262,7 +264,7 @@ export function SheetsView() {
             <p>{t('sheet.framingNote2', { post: design.postProductId, footing: footingText })}</p>
             <p>{t('sheet.framingNote3')}</p>
             {design.braces.count > 0 && <p>{t('m.bracing', { count: design.braces.count })}</p>}
-            <Legend items={[{ color: COLORS.bearer, label: t('legend.bearer') }, { color: COLORS.joist, label: t('legend.joist') }, { color: COLORS.post, label: t('legend.post') }, { color: COLORS.ledger, label: t('legend.ledger') }]} />
+            <Legend items={[{ color: COLORS.bearer, label: t('legend.bearer') }, { color: COLORS.joist, label: t('legend.joist') }, { color: COLORS.post, label: t('legend.post') }, { color: COLORS.ledger, label: t('legend.wall') }]} />
           </div>
         </Sheet>
 

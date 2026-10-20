@@ -136,6 +136,8 @@ export const CATALOG: Product[] = [
   { id: 'nail-75x3.05', category: 'hardware', packSize: 3000, ref: 'Macsim 75x3.05 GAL NAIL 3000pcs $90',
     name: { zh: '镀锌框架钉 75 x 3.05（3000 个/盒）', en: 'Galvanised framing nail 75 x 3.05 (box of 3000)' }, unit: 'ea', defaultPrice: 0.03 },
   { id: 'nail-30x2.8-galv', category: 'hardware', packSize: 500, name: { zh: '连接件钉 30 x 2.8 镀锌，估价', en: 'Connector nail 30 x 2.8 galv, estimate' }, unit: 'ea', defaultPrice: 0.02 },
+  { id: 'dynabolt-m12x100', category: 'hardware', packSize: 25,
+    name: { zh: 'Dynabolt M12 x 100 镀锌膨胀螺栓（25 个/盒），估价', en: 'Dynabolt M12 x 100 galvanised sleeve anchor (box of 25), estimate' }, unit: 'ea', defaultPrice: 2.8 },
   { id: 'bolt-m12-hdg', category: 'hardware', name: { zh: 'M12 热镀锌螺栓套装，估价', en: 'M12 HDG bolt set (cup head, nut, washer), estimate' }, unit: 'ea', defaultPrice: 3.5 },
   { id: 'triple-grip', category: 'hardware', name: { zh: 'Triple grip 框架连接件 HDG，估价', en: 'Triple grip framing anchor HDG, estimate' }, unit: 'ea', defaultPrice: 0.9 },
   { id: 'stirrup-hdg', category: 'hardware', name: { zh: '柱脚 stirrup HDG，估价', en: 'Post stirrup HDG, estimate' }, unit: 'ea', defaultPrice: 13.0 },

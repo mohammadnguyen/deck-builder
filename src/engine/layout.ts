@@ -9,6 +9,8 @@ export const ELEVATED_HEIGHT = 1000;
 export interface BearerRun {
   id: string;
   lineIndex: number;
+  /** bearer anchored to the house wall instead of sitting on posts */
+  onWall: boolean;
   seg: Seg;
   length: number;
   posts: Pt[];
@@ -25,7 +27,7 @@ export interface BearerRun {
 
 export interface SupportLine {
   pos: number;
-  kind: 'edge' | 'house' | 'inter' | 'ledger';
+  kind: 'edge' | 'house' | 'inter' | 'wall';
   edgeIndex?: number;
 }
 
@@ -64,6 +66,7 @@ export interface PostInfo {
   bearerId: string;
 }
 
+/** a bearer run fixed to the house wall (Dynabolts into masonry or bolts into a timber frame) */
 export interface Ledger {
   edgeIndex: number;
   seg: Seg;
@@ -83,7 +86,7 @@ export interface LayoutResult {
   joists: JoistRun[];
   boards: BoardRow[];
   ledgers: Ledger[];
-  attachment: 'freestanding' | 'ledger';
+  attachment: 'freestanding' | 'wall';
   maxJoistSpan: number;
   joistSpanUsed: number;
   maxBearerSpanUsed: number;
@@ -170,10 +173,10 @@ export function computeLayout(
 
   const houseX = houseEdges.filter((i) => E[i] && E[i].axis === 'x');
   const houseY = houseEdges.filter((i) => E[i] && E[i].axis === 'y');
-  let attachment = params.attachment;
-  if (attachment === 'ledger' && (houseY.length || !houseX.length)) {
+  let attachment: 'freestanding' | 'wall' = params.attachment === 'wall' ? 'wall' : 'freestanding';
+  if (attachment === 'wall' && !houseX.length) {
     attachment = 'freestanding';
-    warnings.push({ severity: 'warn', key: 'layout.ledgerNotPossible' });
+    if (houseEdges.length) warnings.push({ severity: 'warn', key: 'layout.wallBearerNotPossible' });
   }
 
   // ---- support lines (bearer centrelines and ledgers), measured along y ----
@@ -182,8 +185,9 @@ export function computeLayout(
   for (const e of E) {
     if (e.axis !== 'x') continue;
     const isHouse = houseEdges.includes(e.index);
-    if (isHouse && attachment === 'ledger') {
-      lines.push({ pos: e.a.y, kind: 'ledger', edgeIndex: e.index });
+    if (isHouse && attachment === 'wall') {
+      // bearer hard against the wall face; its centreline sits half a bearer width in
+      lines.push({ pos: e.a.y - e.outward.y * (ctx.bearerWidth / 2), kind: 'wall', edgeIndex: e.index });
       continue;
     }
     // Flush framing puts the perimeter bearer at the deck edge (joists cannot cantilever
@@ -197,7 +201,7 @@ export function computeLayout(
   const mergedLines: SupportLine[] = [];
   for (const l of lines) {
     const last = mergedLines[mergedLines.length - 1];
-    if (last && last.kind !== 'ledger' && l.kind !== 'ledger' && l.pos - last.pos < rules.minBearerGap) {
+    if (last && last.kind !== 'wall' && l.kind !== 'wall' && l.pos - last.pos < rules.minBearerGap) {
       last.pos = (last.pos + l.pos) / 2;
       if (l.kind === 'house') last.kind = 'house';
       continue;
@@ -229,18 +233,7 @@ export function computeLayout(
   let maxBearerSpanUsed = 0;
   let bearerCounter = 0;
   lines.forEach((line, li) => {
-    if (line.kind === 'ledger') {
-      const e = E[line.edgeIndex!];
-      const length = e.length;
-      ledgers.push({
-        edgeIndex: e.index,
-        seg: { a: { ...e.a }, b: { ...e.b } },
-        length,
-        bolts: Math.ceil(length / rules.ledgerBoltSpacing) + 1,
-        hangers: 0,
-      });
-      return;
-    }
+    const onWall = line.kind === 'wall';
     const prevGap = li > 0 ? line.pos - lines[li - 1].pos : line.pos - bb.minY;
     const nextGap = li + 1 < lines.length ? lines[li + 1].pos - line.pos : bb.maxY - line.pos;
     const flw = (prevGap + nextGap) / 2;
@@ -263,7 +256,9 @@ export function computeLayout(
       const pEnd = xe - sbE;
       const postXs: number[] = [];
       let postSpacing = 0;
-      if (pEnd - pStart < 300) {
+      if (onWall) {
+        // carried by the wall anchors, no posts
+      } else if (pEnd - pStart < 300) {
         postXs.push((xs + xe) / 2);
       } else {
         const n = Math.max(1, Math.ceil((pEnd - pStart) / maxSpan));
@@ -284,9 +279,19 @@ export function computeLayout(
         pieces.push(rev.pieces.map((p) => p + rules.joistEndAllowance));
         splices.push(rev.joins.map((j) => xe - j));
       }
+      if (onWall) {
+        ledgers.push({
+          edgeIndex: line.edgeIndex ?? -1,
+          seg: { a: { x: xs, y: line.pos }, b: { x: xe, y: line.pos } },
+          length,
+          bolts: Math.ceil(length / rules.ledgerBoltSpacing) + 1,
+          hangers: 0,
+        });
+      }
       bearers.push({
         id,
         lineIndex: li,
+        onWall,
         seg: { a: { x: xs, y: line.pos }, b: { x: xe, y: line.pos } },
         length,
         posts: postXs.map((x) => ({ x, y: line.pos })),
@@ -320,8 +325,8 @@ export function computeLayout(
       for (let k = 1; k < n; k++) joistXs.push({ x: edgeSorted[i] + (w * k) / n, edge: false });
     }
   }
-  const bearerPositions = lines.filter((l) => l.kind !== 'ledger').map((l) => l.pos);
-  const ledgerPositions = lines.filter((l) => l.kind === 'ledger').map((l) => l.pos);
+  const bearerPositions = lines.map((l) => l.pos);
+  const ledgerPositions: number[] = [];
   const allSupports = lines.map((l) => l.pos).sort((p, q) => p - q);
   const joists: JoistRun[] = [];
   let joistCounter = 0;
@@ -377,7 +382,7 @@ export function computeLayout(
       });
     }
   }
-  for (const l of ledgers) l.hangers = joists.filter((j) => Math.abs(j.seg.a.y - l.seg.a.y) < 1 || Math.abs(j.seg.b.y - l.seg.a.y) < 1).length;
+  for (const l of ledgers) l.hangers = ctx.flush ? joists.filter((j) => Math.abs(j.seg.a.y - l.seg.a.y) < 1 || Math.abs(j.seg.b.y - l.seg.a.y) < 1).length : 0;
 
   // ---- boards ----
   const bw = ctx.boardWidth;

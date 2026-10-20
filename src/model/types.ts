@@ -54,7 +54,10 @@ export interface DeckParams {
   joistFixing: 'skewNails' | 'tripleGrip';
   bearerToPost: 'bolted' | 'screwed' | 'onTop';
   postProductId: 'auto' | string;
-  attachment: 'freestanding' | 'ledger';
+  /** freestanding: own posts near the wall; wall: house-side bearer anchored to the wall, no posts on that line */
+  attachment: 'freestanding' | 'wall';
+  /** anchor used for a wall bearer: Dynabolts into masonry, or M12 bolts into a timber frame */
+  wallFixing: 'dynabolt' | 'bolt';
   footingType: 'stump' | 'stirrup';
   footingDepth: number;
   footingDiameter: number;

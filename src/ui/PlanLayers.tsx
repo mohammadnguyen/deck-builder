@@ -1,3 +1,4 @@
+import { useId } from 'react';
 import type { DesignResult } from '../engine';
 import { edges as polyEdges, type Edge } from '../engine/geometry';
 import type { CornerKind, EdgeBoardRun } from '../engine/layout';
@@ -139,6 +140,7 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
   sw: number;
 }) {
   const { t } = useT();
+  const hatchId = useId().replace(/:/g, '');
   const L: LayerFlags = { ...ALL_LAYERS, ...layers };
   const poly = design.poly;
   const lay = design.layout;
@@ -204,6 +206,40 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
             </g>
           );
         })}
+      {L.boards && lay && lay.rip && (
+        <g>
+          <defs>
+            <pattern id={`rip-${hatchId}`} patternUnits="userSpaceOnUse" width={fs * 0.8} height={fs * 0.8} patternTransform="rotate(45)">
+              <line x1={0} y1={0} x2={0} y2={fs * 0.8} stroke={COLORS.join} strokeWidth={sw * 1.2} />
+            </pattern>
+          </defs>
+          {lay.boards[lay.boards.length - 1].runs.map((run, ri) => {
+            const row = lay.boards[lay.boards.length - 1];
+            const r = segRect(run.seg, row.width);
+            const horizontal = Math.abs(run.seg.a.y - run.seg.b.y) < 0.5;
+            const lx = horizontal ? Math.max(run.seg.a.x, run.seg.b.x) - fs * 0.4 : run.seg.a.x;
+            const ly = horizontal ? run.seg.a.y : Math.max(run.seg.a.y, run.seg.b.y) - fs * 0.4;
+            return (
+              <g key={`rip${ri}`}>
+                <rect x={r.x} y={r.y} width={r.w} height={r.h} fill={`url(#rip-${hatchId})`} stroke={COLORS.join} strokeWidth={sw * 0.8} />
+                {L.rowNumbers && (
+                  <text
+                    x={lx}
+                    y={ly + (horizontal ? fs * 0.3 : 0)}
+                    fontSize={fs * 0.8}
+                    fill={COLORS.join}
+                    fontWeight={700}
+                    textAnchor="end"
+                    transform={horizontal ? undefined : `rotate(-90 ${lx} ${ly})`}
+                  >
+                    {t('plan.rip', { width: lay.rip!.width })}
+                  </text>
+                )}
+              </g>
+            );
+          })}
+        </g>
+      )}
       {L.boards && lay &&
         lay.breakers.map((br, i) => {
           const r = segRect(br.seg, br.width);

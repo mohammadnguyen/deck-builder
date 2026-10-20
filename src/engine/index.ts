@@ -125,6 +125,7 @@ export function computeDesign(project: Project): DesignResult {
     flush,
     edgeBoard: params.edgeBoard,
     breakerBoards: params.breakerBoards === 'on' || (params.breakerBoards === 'auto' && decking.family === 'composite'),
+    kerf: rules.kerf,
     deckingMaxJoistSpacing: maxTreadSpan,
     deckingMaxStock: maxStock(decking.id),
     edgeBoardMaxStock: maxStock(edgeBoardProductId),

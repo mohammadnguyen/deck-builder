@@ -158,6 +158,19 @@ function ParamsPanel() {
           ]}
           onChange={(v) => set('breakerBoards', v as DeckParams['breakerBoards'])}
         />
+        {p.breakerBoards !== 'off' && (
+          <Sel
+            label={t('p.breakerCount')}
+            value={String(p.breakerCount)}
+            options={[
+              { value: 'auto', label: t('p.breakerCount.auto') },
+              { value: '1', label: t('p.breakerCount.1') },
+              { value: '2', label: t('p.breakerCount.2') },
+              { value: '3', label: t('p.breakerCount.3') },
+            ]}
+            onChange={(v) => set('breakerCount', v === 'auto' ? 'auto' : (Number(v) as 1 | 2 | 3))}
+          />
+        )}
         <Chk label={t('p.fascia')} checked={p.fascia} onChange={(v) => set('fascia', v)} />
         <Chk label={t('p.joistTape')} checked={p.joistTape} onChange={(v) => set('joistTape', v)} />
         <Chk label={t('p.weedMat')} checked={p.weedMat} onChange={(v) => set('weedMat', v)} />

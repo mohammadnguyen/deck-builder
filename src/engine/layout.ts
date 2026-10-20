@@ -139,6 +139,8 @@ export interface LayoutResult {
   joistSpacingUsed: number;
   joistSpacingMin: number;
   boards: BoardRow[];
+  /** last row ripped to width: which row, how wide, how many boards */
+  rip: { row: number; width: number; boards: number } | null;
   edgeBoards: EdgeBoardRun[];
   breakers: BreakerRun[];
   /** polygon the field boards fill (deck outline inset behind the edge boards) */
@@ -182,6 +184,7 @@ export interface LayoutContext {
   edgeBoard: boolean;
   /** divide runs longer than one board with breaker boards instead of staggered joins */
   breakerBoards: boolean;
+  kerf: number;
   /** the decking's own joist spacing limit */
   deckingMaxJoistSpacing: number;
   deckingMaxStock: number;
@@ -321,6 +324,7 @@ export function computeLayout(
   const strip = bw + 2 * gap;
   interface BandBreaker { xc: number; y0: number; y1: number; aligned: boolean }
   const bandBreakers: BandBreaker[] = [];
+  const breakerSaving: { n: number; saving: number }[] = [];
   if (ctx.breakerBoards) {
     const fE = edges(fieldPoly);
     const ys = [...new Set(fieldPoly.map((p) => Math.round(p.y * 10) / 10))].sort((p, q) => p - q);
@@ -331,10 +335,26 @@ export function computeLayout(
       for (const [x0, x1] of clipHorizontal(fieldPoly, (y0 + y1) / 2)) {
         const len = x1 - x0;
         if (len <= maxBoard) continue;
-        // first choice: continue an edge board line from an inside corner that touches this band
+        const rowsInBand = Math.max(1, Math.round((y1 - y0) / (bw + gap)));
+        // stock boards this band needs with n symmetric breakers (pieces nested into stock lengths)
+        const boardsWith = (n: number): number => {
+          const bay = (len - n * strip) / (n + 1);
+          const perBoard = Math.max(1, Math.floor((ctx.deckingMaxStock + ctx.kerf) / (bay + rules.boardEndAllowance + ctx.kerf)));
+          return rowsInBand * Math.ceil((n + 1) / perBoard) + n * Math.ceil((y1 - y0) / maxBoard);
+        };
+        const nMin = Math.max(1, Math.ceil(len / maxBoard) - 1);
+        let nWanted = params.breakerCount === 'auto' ? nMin : Math.max(nMin, params.breakerCount);
+        while ((len - nWanted * strip) / (nWanted + 1) > maxBoard) nWanted++;
+        // tell the user when more breakers would nest the pieces into fewer boards
+        let bestN = nWanted;
+        for (let n = nWanted + 1; n <= 3; n++) if (boardsWith(n) < boardsWith(bestN)) bestN = n;
+        if (bestN !== nWanted && boardsWith(nWanted) - boardsWith(bestN) >= 3) {
+          breakerSaving.push({ n: bestN, saving: boardsWith(nWanted) - boardsWith(bestN) });
+        }
+        // first choice (when the count is not forced): continue an edge board line from an inside corner
         let aligned: number | null = null;
         let balance = Infinity;
-        for (const e of fE) {
+        for (const e of params.breakerCount === 'auto' ? fE : []) {
           if (e.axis !== 'y') continue;
           const ya = Math.min(e.a.y, e.b.y);
           const yb = Math.max(e.a.y, e.b.y);
@@ -354,12 +374,16 @@ export function computeLayout(
           bandBreakers.push({ xc: aligned, y0, y1, aligned: true });
           continue;
         }
-        let n = Math.max(1, Math.ceil(len / maxBoard) - 1);
-        while ((len - n * strip) / (n + 1) > maxBoard) n++;
+        const n = nWanted;
         const bay = (len - n * strip) / (n + 1);
         for (let k = 1; k <= n; k++) bandBreakers.push({ xc: x0 + k * bay + (k - 1) * strip + strip / 2, y0, y1, aligned: false });
       }
     }
+  }
+  if (breakerSaving.length) {
+    const n = Math.max(...breakerSaving.map((b) => b.n));
+    const saving = breakerSaving.reduce((s, b) => s + b.saving, 0);
+    warnings.push({ severity: 'info', key: 'layout.breakerSaving', params: { n, saving } });
   }
   // merge breakers that continue across band boundaries at the same position
   bandBreakers.sort((p, q) => p.xc - q.xc || p.y0 - q.y0);
@@ -394,11 +418,37 @@ export function computeLayout(
       fixedXs.push({ x: joint + jt / 2, kind: 'frame' });
     }
   }
-  // a breaker board sits on a joist of its own, with a joist under each row of board ends beside it
+  // a breaker board is carried by one joist under each of its two joints: centred on the gap, so the
+  // joist takes the breaker edge on one half and the field board ends on the other. Where joists
+  // already there give both their bearing (an edge board line at an inside corner) nothing is added;
+  // where a new joist would overlap an existing one it is moved to touch it on the far side.
+  const overlap = (a0: number, a1: number, b0: number, b1: number): number => Math.max(0, Math.min(a1, b1) - Math.max(a0, b0));
   for (const b of breakerRuns) {
-    fixedXs.push({ x: b.xc, kind: 'frame' });
-    fixedXs.push({ x: b.xc - (bw / 2 + gap + jt / 2), kind: 'frame' });
-    fixedXs.push({ x: b.xc + (bw / 2 + gap + jt / 2), kind: 'frame' });
+    for (const s of [-1, 1]) {
+      // this side's half of the breaker, and the first joist width of the field boards beyond the gap
+      const breakerLo = s > 0 ? b.xc : b.xc - bw / 2;
+      const breakerHi = s > 0 ? b.xc + bw / 2 : b.xc;
+      const endLine = b.xc + s * (bw / 2 + gap);
+      const boardLo = s > 0 ? endLine : endLine - jt;
+      const boardHi = s > 0 ? endLine + jt : endLine;
+      let breakerOk = false;
+      let boardOk = false;
+      for (const f of fixedXs) {
+        if (f.kind !== 'edge' && f.kind !== 'frame') continue;
+        const j0 = f.x - jt / 2;
+        const j1 = f.x + jt / 2;
+        if (overlap(j0, j1, breakerLo, breakerHi) >= 15) breakerOk = true;
+        if (overlap(j0, j1, boardLo, boardHi) >= 15) boardOk = true;
+      }
+      if (breakerOk && boardOk) continue;
+      let x = b.xc + s * (bw / 2 + gap / 2);
+      for (let guard = 0; guard < 4; guard++) {
+        const clash = fixedXs.find((f) => Math.abs(f.x - x) < jt - 0.5);
+        if (!clash) break;
+        x = clash.x + s * jt;
+      }
+      fixedXs.push({ x, kind: 'frame' });
+    }
   }
   fixedXs.sort((p, q) => p.x - q.x);
   const fixedSorted: { x: number; kind: JoistKind }[] = [];
@@ -694,9 +744,11 @@ export function computeLayout(
   }
   if (offSupportJoins) warnings.push({ severity: 'info', key: 'layout.joinOffSupport' });
   const lastRow = boards[boards.length - 1];
-  if (lastRow && lastRow.ripped && lastRow.width < bw / 2) {
-    warnings.push({ severity: 'info', key: 'layout.narrowRip', params: { width: Math.round(lastRow.width) } });
-  }
+  const rip = lastRow && lastRow.ripped
+    ? { row: lastRow.index + 1, width: Math.round(lastRow.width), boards: lastRow.runs.reduce((n, r) => n + r.pieces.length, 0) }
+    : null;
+  if (rip) warnings.push({ severity: 'info', key: 'layout.rip', params: { row: rip.row, width: rip.width, n: rip.boards } });
+  if (rip && rip.width < bw / 2) warnings.push({ severity: 'warn', key: 'layout.narrowRip', params: { width: rip.width } });
 
   // ---- edge boards: one run per exposed edge, mitred where two exposed edges meet ----
   const edgeBoards: EdgeBoardRun[] = [];
@@ -804,6 +856,7 @@ export function computeLayout(
     joistSpacingUsed,
     joistSpacingMin,
     boards: boards.map((r) => ({ ...r, runs: r.runs.map(fix) })),
+    rip,
     edgeBoards: edgeBoards.map((eb) => ({ ...fix(eb), joinPts: swapped ? eb.joinPts.map(swapPt) : eb.joinPts })),
     breakers: breakers.map(fix),
     fieldPoly: swapped ? swapPoly(fieldPoly) : fieldPoly,

@@ -81,6 +81,8 @@ export interface DeckParams {
   fascia: boolean;
   /** breaker boards instead of staggered butt joins when a run is longer than one board; auto = composite only */
   breakerBoards: 'auto' | 'on' | 'off';
+  /** breakers per long run: 'auto' = the fewest that work (one in the middle), or a fixed symmetric count */
+  breakerCount: 'auto' | 1 | 2 | 3;
   oil: boolean;
   joistTape: boolean;
   weedMat: boolean;

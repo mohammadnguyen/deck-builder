@@ -96,6 +96,18 @@ export interface EdgeBoardRun {
   alongJoists: boolean;
 }
 
+/** a board laid across the field boards, dividing a run that is longer than one stock length */
+export interface BreakerRun {
+  /** centreline along the joists, a -> b */
+  seg: Seg;
+  width: number;
+  length: number;
+  pieces: number[];
+  screws: number;
+  /** true when it continues an edge board line at an inside corner */
+  aligned: boolean;
+}
+
 export interface PostInfo {
   id: string;
   pt: Pt;
@@ -128,6 +140,7 @@ export interface LayoutResult {
   joistSpacingMin: number;
   boards: BoardRow[];
   edgeBoards: EdgeBoardRun[];
+  breakers: BreakerRun[];
   /** polygon the field boards fill (deck outline inset behind the edge boards) */
   fieldPoly: Pt[];
   ledgers: Ledger[];
@@ -151,6 +164,9 @@ export interface LayoutResult {
     edgeBoardScrews: number;
     mitres: number;
     frameJoists: number;
+    breakerLm: number;
+    breakerPieces: number;
+    breakerScrews: number;
   };
 }
 
@@ -164,6 +180,8 @@ export interface LayoutContext {
   flush: boolean;
   /** picture-frame edge boards around the exposed edges */
   edgeBoard: boolean;
+  /** divide runs longer than one board with breaker boards instead of staggered joins */
+  breakerBoards: boolean;
   /** the decking's own joist spacing limit */
   deckingMaxJoistSpacing: number;
   deckingMaxStock: number;
@@ -297,6 +315,65 @@ export function computeLayout(
     }
   }
 
+  // ---- breaker boards: a run longer than one board is divided symmetrically by boards laid
+  //      across it (stopping at the edge boards), instead of staggered butt joins ----
+  const maxBoard = ctx.deckingMaxStock - rules.boardEndAllowance;
+  const strip = bw + 2 * gap;
+  interface BandBreaker { xc: number; y0: number; y1: number; aligned: boolean }
+  const bandBreakers: BandBreaker[] = [];
+  if (ctx.breakerBoards) {
+    const fE = edges(fieldPoly);
+    const ys = [...new Set(fieldPoly.map((p) => Math.round(p.y * 10) / 10))].sort((p, q) => p - q);
+    for (let bi = 0; bi + 1 < ys.length; bi++) {
+      const y0 = ys[bi];
+      const y1 = ys[bi + 1];
+      if (y1 - y0 < 1) continue;
+      for (const [x0, x1] of clipHorizontal(fieldPoly, (y0 + y1) / 2)) {
+        const len = x1 - x0;
+        if (len <= maxBoard) continue;
+        // first choice: continue an edge board line from an inside corner that touches this band
+        let aligned: number | null = null;
+        let balance = Infinity;
+        for (const e of fE) {
+          if (e.axis !== 'y') continue;
+          const ya = Math.min(e.a.y, e.b.y);
+          const yb = Math.max(e.a.y, e.b.y);
+          const touches = Math.abs(yb - y0) < 1 || Math.abs(ya - y1) < 1;
+          if (!touches || e.a.x <= x0 + 1 || e.a.x >= x1 - 1) continue;
+          const xc = e.a.x + e.outward.x * (gap + bw / 2);
+          const left = xc - strip / 2 - x0;
+          const right = x1 - (xc + strip / 2);
+          if (left > maxBoard || right > maxBoard || left < rules.minBoardPiece || right < rules.minBoardPiece) continue;
+          const b = Math.abs(left - right);
+          if (b < balance) {
+            balance = b;
+            aligned = xc;
+          }
+        }
+        if (aligned !== null) {
+          bandBreakers.push({ xc: aligned, y0, y1, aligned: true });
+          continue;
+        }
+        let n = Math.max(1, Math.ceil(len / maxBoard) - 1);
+        while ((len - n * strip) / (n + 1) > maxBoard) n++;
+        const bay = (len - n * strip) / (n + 1);
+        for (let k = 1; k <= n; k++) bandBreakers.push({ xc: x0 + k * bay + (k - 1) * strip + strip / 2, y0, y1, aligned: false });
+      }
+    }
+  }
+  // merge breakers that continue across band boundaries at the same position
+  bandBreakers.sort((p, q) => p.xc - q.xc || p.y0 - q.y0);
+  const breakerRuns: BandBreaker[] = [];
+  for (const b of bandBreakers) {
+    const last = breakerRuns[breakerRuns.length - 1];
+    if (last && Math.abs(last.xc - b.xc) < 1 && Math.abs(last.y1 - b.y0) < 1) {
+      last.y1 = b.y1;
+      last.aligned = last.aligned || b.aligned;
+      continue;
+    }
+    breakerRuns.push({ ...b });
+  }
+
   const houseX = houseEdges.filter((i) => E[i] && E[i].axis === 'x');
   const houseY = houseEdges.filter((i) => E[i] && E[i].axis === 'y');
   let attachment: 'freestanding' | 'wall' = params.attachment === 'wall' ? 'wall' : 'freestanding';
@@ -317,13 +394,21 @@ export function computeLayout(
       fixedXs.push({ x: joint + jt / 2, kind: 'frame' });
     }
   }
+  // a breaker board sits on a joist of its own, with a joist under each row of board ends beside it
+  for (const b of breakerRuns) {
+    fixedXs.push({ x: b.xc, kind: 'frame' });
+    fixedXs.push({ x: b.xc - (bw / 2 + gap + jt / 2), kind: 'frame' });
+    fixedXs.push({ x: b.xc + (bw / 2 + gap + jt / 2), kind: 'frame' });
+  }
   fixedXs.sort((p, q) => p.x - q.x);
   const fixedSorted: { x: number; kind: JoistKind }[] = [];
   for (const f of fixedXs) {
     const last = fixedSorted[fixedSorted.length - 1];
-    const pair = last && last.kind === 'frame' && f.kind === 'frame' && Math.abs(f.x - last.x - jt) < 1;
-    if (last && f.x - last.x <= 60 && !pair) {
-      if (f.kind === 'edge') last.kind = 'edge';
+    // exact duplicates merge; two edge joists from a small jog merge; frame joists keep their place
+    const duplicate = last && Math.abs(f.x - last.x) < 1;
+    const jog = last && last.kind === 'edge' && f.kind === 'edge' && f.x - last.x <= 60;
+    if (duplicate || jog) {
+      if (f.kind === 'edge' && last) last.kind = 'edge';
       continue;
     }
     fixedSorted.push({ ...f });
@@ -549,7 +634,24 @@ export function computeLayout(
   let boardLm = 0;
   let boardJoins = 0;
   let screws = 0;
-  const maxBoard = ctx.deckingMaxStock - rules.boardEndAllowance;
+  const splitAtBreakers = (iv: [number, number], yc: number): [number, number][] => {
+    let parts: [number, number][] = [iv];
+    for (const b of breakerRuns) {
+      if (yc < b.y0 || yc > b.y1) continue;
+      const s0 = b.xc - strip / 2;
+      const s1 = b.xc + strip / 2;
+      const next: [number, number][] = [];
+      for (const [a, c] of parts) {
+        if (s1 <= a || s0 >= c) next.push([a, c]);
+        else {
+          if (s0 - a > 50) next.push([a, s0]);
+          if (c - s1 > 50) next.push([s1, c]);
+        }
+      }
+      parts = next;
+    }
+    return parts;
+  };
   for (let k = 0; k < 2000; k++) {
     let yc: number;
     let visible: number;
@@ -564,7 +666,7 @@ export function computeLayout(
       visible = Math.min(bw, bottom - fbb.minY);
       yc = bottom - visible / 2;
     }
-    const intervals = clipHorizontal(fieldPoly, yc);
+    const intervals = clipHorizontal(fieldPoly, yc).flatMap((iv) => splitAtBreakers(iv, yc));
     if (!intervals.length) continue;
     const runs: BoardRun[] = [];
     for (const [x0, x1] of intervals) {
@@ -665,6 +767,23 @@ export function computeLayout(
     }
   }
 
+  // ---- breaker boards as pieces ----
+  const breakers: BreakerRun[] = [];
+  let breakerLm = 0;
+  let breakerPieces = 0;
+  let breakerScrews = 0;
+  for (const b of breakerRuns) {
+    const length = b.y1 - b.y0;
+    if (length < 100) continue;
+    const parts = Math.max(1, Math.ceil(length / maxBoard));
+    const pieces = Array.from({ length: parts }, () => length / parts + rules.boardEndAllowance);
+    const screws = (Math.floor(length / 450) + 1) * rules.screwsPerCrossing;
+    breakerLm += length;
+    breakerPieces += parts;
+    breakerScrews += screws;
+    breakers.push({ seg: { a: { x: b.xc, y: b.y0 }, b: { x: b.xc, y: b.y1 } }, width: bw, length, pieces, screws, aligned: b.aligned });
+  }
+
   // ---- posts (numbered by line then position) ----
   const posts: PostInfo[] = [];
   let pc = 0;
@@ -686,6 +805,7 @@ export function computeLayout(
     joistSpacingMin,
     boards: boards.map((r) => ({ ...r, runs: r.runs.map(fix) })),
     edgeBoards: edgeBoards.map((eb) => ({ ...fix(eb), joinPts: swapped ? eb.joinPts.map(swapPt) : eb.joinPts })),
+    breakers: breakers.map(fix),
     fieldPoly: swapped ? swapPoly(fieldPoly) : fieldPoly,
     ledgers: ledgers.map(fix),
     attachment,
@@ -708,6 +828,9 @@ export function computeLayout(
       edgeBoardScrews,
       mitres,
       frameJoists,
+      breakerLm,
+      breakerPieces,
+      breakerScrews,
     },
   };
   return result;

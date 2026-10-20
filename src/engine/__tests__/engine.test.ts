@@ -86,7 +86,8 @@ describe('design', () => {
     expect(d.bom.lines.length).toBeGreaterThan(5);
     expect(d.bom.total).toBeGreaterThan(0);
     expect(d.method.length).toBeGreaterThan(5);
-    const boardLm = lay.totals.boardLm / 1000;
+    // field boards + edge boards + breakers cover the area
+    const boardLm = (lay.totals.boardLm + lay.totals.edgeBoardLm + lay.totals.breakerLm) / 1000;
     expect(boardLm).toBeGreaterThan((d.areaM2 * 1000) / (140 + 5) * 0.9);
     // joists on top of single 140x45 bearers, skew nailed, composite boards on hidden clips
     expect(lay.totals.joistBearerCrossings).toBeGreaterThan(20);
@@ -112,11 +113,23 @@ describe('design', () => {
     expect(lay.edgeBoards.find((e) => e.edgeIndex === 2)!.endCorner).toBe('concave');
     expect(lay.edgeBoards.find((e) => e.edgeIndex === 2)!.length).toBeCloseTo(2400 + 140, 3);
     expect(lay.fieldPoly).toEqual([{ x: 145, y: 0 }, { x: 5855, y: 0 }, { x: 5855, y: 2255 }, { x: 3455, y: 2255 }, { x: 3455, y: 4055 }, { x: 145, y: 4055 }]);
-    expect(lay.totals.frameJoists).toBe(6); // a touching pair under each of the three exposed joist-parallel edges
-    expect(lay.joists.filter((j) => j.kind === 'frame').map((j) => Math.round(j.pos * 10) / 10)).toEqual([122.5, 167.5, 3432.5, 3477.5, 5832.5, 5877.5]);
+    // a touching pair under each of the three exposed joist-parallel edges, plus the breaker's own joist
+    // and the one under the board ends on its right (its left one coincides with the notch pair)
+    expect(lay.totals.frameJoists).toBe(8);
+    expect(lay.joists.filter((j) => j.kind === 'frame').map((j) => Math.round(j.pos * 10) / 10)).toEqual([122.5, 167.5, 3432.5, 3477.5, 3530, 3627.5, 5832.5, 5877.5]);
     expect(d.footings.diameter).toBe(200);
     expect(d.footings.bags).toBeLessThan(30);
     expect(d.edgeBoardProductId).toBe('modelo-endboard-140x23');
+    // composite: the 5710 run above the notch is divided by one breaker continuing the notch edge board line
+    expect(lay.breakers.length).toBe(1);
+    expect(lay.breakers[0].aligned).toBe(true);
+    expect(lay.breakers[0].seg.a.x).toBeCloseTo(3530, 3); // strip 3460..3600 beside the field edge at 3455
+    expect(lay.breakers[0].seg.a.y).toBeCloseTo(0, 3);
+    expect(lay.breakers[0].seg.b.y).toBeCloseTo(2255, 3);
+    expect(lay.totals.boardJoins).toBe(0);
+    for (const row of lay.boards) for (const run of row.runs) expect(run.pieces.length).toBe(1);
+    expect(lay.boards[0].runs.map((r) => Math.round(r.length))).toEqual([3310, 2250]);
+    expect(d.bom.lines.find((l) => l.productId === 'modelo-140x23')!.tags).toContain('breaker');
     const eb = d.bom.lines.find((l) => l.productId === 'modelo-endboard-140x23');
     expect(eb && eb.tags).toEqual(['edgeBoard']);
     expect(d.bom.lines.some((l) => l.tags.includes('fascia'))).toBe(false);
@@ -201,15 +214,42 @@ describe('design', () => {
     expect(dh.edgeBoardProductId).toBe('hw-86x19'); // no solid-edge product: same board, counted separately
     expect(dh.bom.lines.find((l) => l.productId === 'hw-86x19')!.tags).toContain('edgeBoard');
   });
+  it('centres breaker boards on plain runs and skips them for timber', () => {
+    const p = newProject('rect', true);
+    p.deck = [{ x: 0, y: 0 }, { x: 6000, y: 0 }, { x: 6000, y: 3600 }, { x: 0, y: 3600 }];
+    p.stairs = [];
+    const d = computeDesign(p);
+    const lay = d.layout!;
+    expect(lay.breakers.length).toBe(1);
+    expect(lay.breakers[0].aligned).toBe(false);
+    expect(lay.breakers[0].seg.a.x).toBeCloseTo(3000, 3);
+    expect(lay.breakers[0].length).toBeCloseTo(3455, 3); // wall to the inner side of the far edge board
+    expect(lay.boards[0].runs.map((r) => Math.round(r.length))).toEqual([2780, 2780]);
+    expect(lay.totals.boardJoins).toBe(0);
+    // three joists carry the breaker and the board ends either side
+    const frames = lay.joists.filter((j) => j.kind === 'frame').map((j) => Math.round(j.pos * 10) / 10);
+    expect(frames).toEqual(expect.arrayContaining([2902.5, 3000, 3097.5]));
+    const hw = newProject('hw', true);
+    hw.params.deckingProductId = 'hw-86x19';
+    hw.params.boardGap = 4;
+    const dh = computeDesign(hw);
+    expect(dh.layout!.breakers.length).toBe(0);
+    expect(dh.layout!.totals.boardJoins).toBeGreaterThan(0);
+    hw.params.breakerBoards = 'on';
+    expect(computeDesign(hw).layout!.breakers.length).toBeGreaterThan(0);
+  });
   it('lays boards to the edge when the picture frame is off', () => {
     const p = newProject('plain', true);
     p.params.edgeBoard = false;
     const d = computeDesign(p);
     const lay = d.layout!;
     expect(lay.edgeBoards.length).toBe(0);
-    expect(lay.totals.frameJoists).toBe(0);
     expect(lay.fieldPoly).toEqual(d.poly);
-    expect(lay.boards[0].runs[0].length).toBeCloseTo(6000, 3);
+    // composite still gets a breaker, here in line with the notch edge (3600 + gap + half a board)
+    expect(lay.breakers.length).toBe(1);
+    expect(lay.breakers[0].seg.a.x).toBeCloseTo(3675, 3);
+    expect(lay.boards[0].runs.map((r) => Math.round(r.length))).toEqual([3600, 2250]);
+    expect(lay.totals.frameJoists).toBe(2); // the breaker's own joists; its left one merges with the notch edge joist
     expect(d.bom.lines.some((l) => l.productId === 'modelo-endboard-140x23')).toBe(false);
   });
   it('sizes stairs from a given height to the NCC band', () => {

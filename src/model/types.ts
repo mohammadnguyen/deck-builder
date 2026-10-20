@@ -79,6 +79,8 @@ export interface DeckParams {
   edgeBoardProductId: 'auto' | string;
   /** vertical fascia board covering the frame on exposed edges */
   fascia: boolean;
+  /** breaker boards instead of staggered butt joins when a run is longer than one board; auto = composite only */
+  breakerBoards: 'auto' | 'on' | 'off';
   oil: boolean;
   joistTape: boolean;
   weedMat: boolean;

@@ -148,6 +148,16 @@ function ParamsPanel() {
             onChange={(v) => set('edgeBoardProductId', v)}
           />
         )}
+        <Sel
+          label={t('p.breakerBoards')}
+          value={p.breakerBoards}
+          options={[
+            { value: 'auto', label: t('p.breakerBoards.auto') },
+            { value: 'on', label: t('p.breakerBoards.on') },
+            { value: 'off', label: t('p.breakerBoards.off') },
+          ]}
+          onChange={(v) => set('breakerBoards', v as DeckParams['breakerBoards'])}
+        />
         <Chk label={t('p.fascia')} checked={p.fascia} onChange={(v) => set('fascia', v)} />
         <Chk label={t('p.joistTape')} checked={p.joistTape} onChange={(v) => set('joistTape', v)} />
         <Chk label={t('p.weedMat')} checked={p.weedMat} onChange={(v) => set('weedMat', v)} />

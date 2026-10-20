@@ -214,6 +214,7 @@ export function GuidePanel() {
         </div>
         <Chk label={t('g.edgeBoard')} checked={p.edgeBoard} onChange={(v) => setParam('edgeBoard', v)} />
         {p.edgeBoard && design.ok && <p className="hint">{t('g.edgeBoardNote', { product: productName(design.edgeBoardProductId, lang) })}</p>}
+        {design.ok && design.layout && design.layout.breakers.length > 0 && <p className="hint">{t('g.breakerNote')}</p>}
       </section>
 
       <section className="gstep">

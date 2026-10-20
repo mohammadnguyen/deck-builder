@@ -124,6 +124,7 @@ export function computeDesign(project: Project): DesignResult {
     bearerWidth,
     flush,
     edgeBoard: params.edgeBoard,
+    breakerBoards: params.breakerBoards === 'on' || (params.breakerBoards === 'auto' && decking.family === 'composite'),
     deckingMaxJoistSpacing: maxTreadSpan,
     deckingMaxStock: maxStock(decking.id),
     edgeBoardMaxStock: maxStock(edgeBoardProductId),
@@ -214,6 +215,7 @@ export function computeDesign(project: Project): DesignResult {
   for (let i = 0; i < layout.totals.boardJoins; i++) push(joist.id, 300, 'joinBlock');
   for (const row of layout.boards) for (const run of row.runs) for (const len of run.pieces) push(decking.id, len, 'decking');
   for (const eb of layout.edgeBoards) for (const len of eb.pieces) push(edgeBoardProductId, len, 'edgeBoard');
+  for (const br of layout.breakers) for (const len of br.pieces) push(decking.id, len, 'breaker');
   const fasciaMax = maxStock(fasciaProductId) - rules.boardEndAllowance;
   let fasciaScrews = 0;
   for (const f of fascia) {
@@ -267,9 +269,9 @@ export function computeDesign(project: Project): DesignResult {
     });
     count(clipId, clipCount, 'clip');
     // edge boards have no groove on the exposed side: face screwed with colour screws
-    count(deckScrew, edgeScrews + layout.totals.edgeBoardScrews + treadScrews + fasciaScrews, 'edgeScrew');
+    count(deckScrew, edgeScrews + layout.totals.edgeBoardScrews + layout.totals.breakerScrews + treadScrews + fasciaScrews, 'edgeScrew');
   } else {
-    count(deckScrew, layout.totals.screws + layout.totals.edgeBoardScrews + treadScrews + fasciaScrews, 'decking');
+    count(deckScrew, layout.totals.screws + layout.totals.edgeBoardScrews + layout.totals.breakerScrews + treadScrews + fasciaScrews, 'decking');
   }
   // ---- joist to bearer ----
   if (flush) {

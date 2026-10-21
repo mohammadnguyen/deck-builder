@@ -20,7 +20,7 @@ owner can change rather than a hidden constant.
   Breakers can be moved, resized, added and deleted by hand; no limit on the distance between breakers.
 - Stumps 200 diameter x 500 deep. The stump at a house wall stays clear of the house footing.
 - Every bearer end sits fully on a stump; bearers join only over a stump, each piece taking half;
-  double bearers join over different stumps.
+  double bearers join over different stumps (a double wall bearer's joins at least a bolt spacing apart).
 - Every joist end sits on a bearer; joists join only over a bearer, half each; only the perimeter ends
   under the edge boards overhang. A run that fits one stick is never joined.
 - H3 treated pine MGP10 comes in 2.4 to 6.0 m in 0.3 m steps; each timber size is ordered in one length.
@@ -28,6 +28,14 @@ owner can change rather than a hidden constant.
   automatically from the stocked sizes and kept standard unless another frame is clearly cheaper once
   stump labour is counted (rules: labour per stump, switch margin, sizes to choose from).
 - Stairs to the NCC from the deck height; the last ripped board row is marked; the order list is editable.
+
+## Drawings (owner's ask)
+
+Drawings are for the crew to build from, read by the client and the owner too: the big picture on the sheet
+in the simplest form, the small details left to the crew on site. Joists and bearers look clearly different;
+every cut of framing timber gets a letter on the framing plan, and the cutting diagrams draw which stick each
+letter comes from (lengths within 5 mm share a letter, cut to the longer); the set-out sheet works from string
+lines and a datum; standard details show the joins, edge boards and breakers the deck actually has.
 
 ## Working in this repo
 

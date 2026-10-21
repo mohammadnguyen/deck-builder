@@ -16,6 +16,40 @@ function Lbl({ x, y, children, anchor = 'start', size = 8 }: { x: number; y: num
   );
 }
 
+/** notes under a detail, wrapped to the frame: Latin text at the spaces, Chinese anywhere */
+function Notes({ y, texts, size = 7.5 }: { y: number; texts: string[]; size?: number }) {
+  const width = 264;
+  const wide = /[\u2e80-\u9fff\uff00-\uffef]/;
+  const lines: string[] = [];
+  for (const text of texts) {
+    let line = '';
+    let w = 0;
+    for (const tok of text.match(/[\u2e80-\u9fff\uff00-\uffef]|[^\s\u2e80-\u9fff\uff00-\uffef]+\s*|\s+/g) ?? []) {
+      // a line never starts with a space
+      if (!line && !tok.trim()) continue;
+      const tw = [...tok].reduce((s, ch) => s + (wide.test(ch) ? size : size * 0.5), 0);
+      if (line.trim() && w + tw > width) {
+        lines.push(line.trimEnd());
+        line = '';
+        w = 0;
+        if (!tok.trim()) continue;
+      }
+      line += tok;
+      w += tw;
+    }
+    if (line.trim()) lines.push(line.trim());
+  }
+  return (
+    <>
+      {lines.map((l, i) => (
+        <Lbl key={i} x={22} y={y + i * size * 1.4} size={size}>
+          {l}
+        </Lbl>
+      ))}
+    </>
+  );
+}
+
 function Leader({ from, to }: { from: [number, number]; to: [number, number] }) {
   return <line x1={from[0]} y1={from[1]} x2={to[0]} y2={to[1]} stroke={INK} strokeWidth={0.5} />;
 }
@@ -57,7 +91,17 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
   const flush = p.joistConnection === 'flush';
   const stump = p.footingType === 'stump';
 
-  const detailCount = 2 + (design.balustrade.enabled ? 1 : 0) + (design.stairs.length > 0 ? 1 : 0) + (design.layout && design.layout.ledgers.length > 0 ? 1 : 0);
+  const lay = design.layout;
+  // details for what this deck has: joins in the joists or the bearers, edge boards, breaker boards
+  // (joists hung flush are cut between the bearers: the post section shows them)
+  const joistJoins = !flush && !!lay && lay.joists.some((j) => j.splices.length > 0);
+  const bearerJoins = !!lay && lay.bearers.some((b) => !b.onWall && b.splices.some((s) => s.length > 0));
+  const edgeBoards = !!lay && lay.edgeBoards.length > 0;
+  const breakers = !!lay && lay.breakers.length > 0;
+  const fixing = flush ? t('d.hanger') : p.joistFixing === 'skewNails' ? `${project.rules.skewNailsPerCrossing} x 75 ${t('d.skew')}` : 'triple grip';
+  const detailCount =
+    2 + (design.balustrade.enabled ? 1 : 0) + (design.stairs.length > 0 ? 1 : 0) + (lay && lay.ledgers.length > 0 ? 1 : 0) +
+    (joistJoins ? 1 : 0) + (bearerJoins ? 1 : 0) + (edgeBoards ? 1 : 0) + (breakers ? 1 : 0);
   return (
     <div className="details-grid" style={{ gridTemplateColumns: `repeat(${detailCount <= 4 ? 2 : 3}, 1fr)` }}>
       <Frame title={t('detail.postSection')}>
@@ -172,9 +216,9 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
         )}
         <Leader from={[228, 53]} to={[250, 40]} />
         <Lbl x={294} y={43} anchor="end">{`${t('d.decking')} ${sizeOf(decking)}`}</Lbl>
-        <Leader from={[244, 64]} to={[250, 74]} />
-        <Lbl x={294} y={77} anchor="end">{`${t('d.joist')} ${sizeOf(joist)} @ ${design.joistSpacingText}`}</Lbl>
-        <Leader from={[flush ? 164 : bolted ? 174 : 180, flush ? 84 : 90]} to={[205, 100]} />
+        <Leader from={[240, 66]} to={[252, 80]} />
+        <Lbl x={294} y={88} anchor="end">{`${t('d.joist')} ${sizeOf(joist)} @ ${design.joistSpacingText}`}</Lbl>
+        <Leader from={[flush ? 164 : bolted ? 174 : 180, flush ? 84 : 90]} to={[205, 101]} />
         <Lbl x={294} y={103} anchor="end">{`${t('d.bearer')} ${fr.bearerLaminations}/${sizeOf(bearer)}`}</Lbl>
         {(screwed || checked) && <Lbl x={294} y={113} anchor="end">{`${project.rules.battenScrewsPerPost} x 14g x 100`}</Lbl>}
         {checked && <Lbl x={88} y={110} anchor="end" size={7}>{t('d.checked')}</Lbl>}
@@ -353,6 +397,134 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
           <Lbl x={110} y={186} size={7}>{`${t('d.joist')} ${sizeOf(joist)} @ ${design.joistSpacingText}`}</Lbl>
           <Lbl x={24} y={205} size={7}>{t('d.ground')}</Lbl>
           <line x1={60} y1={200} x2={280} y2={200} stroke={INK} strokeWidth={0.6} />
+        </Frame>
+      )}
+
+      {joistJoins && (
+        <Frame title={t('detail.joistJoin')}>
+          {/* decking */}
+          {[30, 58, 86, 114, 142, 170, 198, 226, 254].map((x) => (
+            <rect key={x} x={x} y={48} width={24} height={6} fill={TIMBER} stroke={INK} strokeWidth={0.5} />
+          ))}
+          {/* two joist pieces butting over the bearer */}
+          <rect x={20} y={54} width={130} height={26} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+          <rect x={150} y={54} width={130} height={26} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+          <line x1={150} y1={50} x2={150} y2={84} stroke="#b91c1c" strokeWidth={1.6} />
+          {/* bearer end-on, and its stump */}
+          <rect x={150 - 10 * fr.bearerLaminations} y={80} width={20 * fr.bearerLaminations} height={36} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
+          {fr.bearerLaminations === 2 && <line x1={150} y1={80} x2={150} y2={116} stroke={INK} strokeWidth={0.4} />}
+          <rect x={142} y={116} width={16} height={44} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+          <line x1={20} y1={160} x2={280} y2={160} stroke={INK} strokeWidth={0.8} />
+          <Hatch x={20} y={160} w={260} h={10} />
+          {/* half each on the bearer */}
+          <line x1={150 - 10 * fr.bearerLaminations} y1={124} x2={150 + 10 * fr.bearerLaminations} y2={124} stroke={INK} strokeWidth={0.5} />
+          <line x1={150 - 10 * fr.bearerLaminations} y1={121} x2={150 - 10 * fr.bearerLaminations} y2={127} stroke={INK} strokeWidth={0.5} />
+          <line x1={150} y1={121} x2={150} y2={127} stroke={INK} strokeWidth={0.5} />
+          <line x1={150 + 10 * fr.bearerLaminations} y1={121} x2={150 + 10 * fr.bearerLaminations} y2={127} stroke={INK} strokeWidth={0.5} />
+          <Lbl x={176} y={130} size={7}>{t('d.halfEach', { mm: Math.round((fr.bearerLaminations * (bearer?.width ?? 45)) / 2) })}</Lbl>
+          <Leader from={[150, 52]} to={[150, 30]} />
+          <Lbl x={150} y={26} anchor="middle">{t('d.joistJoinAt')}</Lbl>
+          <Lbl x={22} y={100}>{`${t('d.joist')} ${sizeOf(joist)}`}</Lbl>
+          <Lbl x={22} y={112} size={7}>{fixing}</Lbl>
+          <Lbl x={176} y={100}>{`${t('d.bearer')} ${fr.bearerLaminations}/${sizeOf(bearer)}`}</Lbl>
+          <Notes y={188} texts={[t('d.joistJoinNote'), t('d.joistJoinNote2')]} />
+        </Frame>
+      )}
+
+      {bearerJoins && (
+        <Frame title={t('detail.bearerJoin')}>
+          {/* joists end-on along the top */}
+          {[34, 74, 114, 154, 194, 234].map((x) => (
+            <rect key={x} x={x} y={44} width={10} height={24} fill={TIMBER} stroke={INK} strokeWidth={0.5} />
+          ))}
+          {/* two bearer pieces butting over the stump */}
+          <rect x={20} y={68} width={130} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
+          <rect x={150} y={68} width={130} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
+          <line x1={150} y1={64} x2={150} y2={102} stroke="#b91c1c" strokeWidth={1.6} />
+          {/* the stump under the join */}
+          <rect x={138} y={98} width={24} height={62} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+          {checked && <rect x={138} y={68} width={6} height={30} fill={TIMBER} stroke={INK} strokeWidth={0.5} />}
+          {bolted && (
+            <>
+              <line x1={130} y1={78} x2={146} y2={80} stroke={INK} strokeWidth={1} />
+              <line x1={154} y1={80} x2={170} y2={78} stroke={INK} strokeWidth={1} />
+              <line x1={130} y1={90} x2={146} y2={92} stroke={INK} strokeWidth={1} />
+              <line x1={154} y1={92} x2={170} y2={90} stroke={INK} strokeWidth={1} />
+            </>
+          )}
+          <line x1={20} y1={160} x2={280} y2={160} stroke={INK} strokeWidth={0.8} />
+          <Hatch x={20} y={160} w={110} h={10} />
+          <Hatch x={170} y={160} w={110} h={10} />
+          <rect x={128} y={160} width={44} height={22} fill={CONCRETE} stroke={INK} strokeWidth={0.6} />
+          <rect x={138} y={160} width={24} height={20} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+          <Leader from={[150, 66]} to={[150, 30]} />
+          <Lbl x={150} y={26} anchor="middle">{t('d.bearerJoinAt')}</Lbl>
+          <Lbl x={22} y={114}>{`${t('d.bearer')} ${fr.bearerLaminations}/${sizeOf(bearer)}`}</Lbl>
+          <Lbl x={168} y={114}>{`${t('d.post')} ${sizeOf(post)}`}</Lbl>
+          <Leader from={[166, 111]} to={[162, 111]} />
+          {/* a double bearer from above: the two plies join over different stumps */}
+          {fr.bearerLaminations === 2 && (
+            <g>
+              <rect x={196} y={134} width={84} height={5} fill={TIMBER2} stroke={INK} strokeWidth={0.4} />
+              <rect x={196} y={139} width={84} height={5} fill={TIMBER2} stroke={INK} strokeWidth={0.4} />
+              {[206, 238, 270].map((x) => (
+                <rect key={x} x={x - 4} y={132} width={8} height={14} fill="none" stroke={INK} strokeWidth={0.5} />
+              ))}
+              <line x1={206} y1={133} x2={206} y2={139} stroke="#b91c1c" strokeWidth={1.4} />
+              <line x1={238} y1={139} x2={238} y2={145} stroke="#b91c1c" strokeWidth={1.4} />
+              <Lbl x={238} y={155} anchor="middle" size={6.5}>{t('d.pliesStagger')}</Lbl>
+            </g>
+          )}
+          <Notes y={194} texts={[t('d.bearerJoinNote')]} />
+        </Frame>
+      )}
+
+      {edgeBoards && (
+        <Frame title={t('detail.edgeBoard')}>
+          {/* field boards end on, ending at the joint; the edge board along the edge */}
+          <rect x={20} y={60} width={146} height={8} fill={TIMBER} stroke={INK} strokeWidth={0.5} />
+          <rect x={169} y={60} width={84} height={8} fill="#c98f4f" stroke={INK} strokeWidth={0.6} />
+          <line x1={253} y1={60} x2={253} y2={68} stroke={INK} strokeWidth={0.6} />
+          {/* joists end-on: the pair under the joint, the edge joist at the edge */}
+          <rect x={153} y={68} width={14} height={36} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+          <rect x={167} y={68} width={14} height={36} fill={TIMBER} stroke={INK} strokeWidth={0.6} strokeDasharray="3 2" />
+          <rect x={239} y={68} width={14} height={36} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+          <rect x={60} y={68} width={14} height={36} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+          <rect x={20} y={104} width={240} height={18} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
+          <line x1={167.5} y1={44} x2={167.5} y2={68} stroke="#b91c1c" strokeWidth={1} strokeDasharray="2 2" />
+          <Lbl x={167} y={40} anchor="middle" size={7}>{t('d.edgeJoint')}</Lbl>
+          <Lbl x={211} y={30} anchor="middle">{t('d.edgeBoard')}</Lbl>
+          <Leader from={[211, 33]} to={[211, 60]} />
+          <Lbl x={60} y={52}>{t('d.fieldBoard')}</Lbl>
+          <Lbl x={22} y={140}>{t('d.framePair')}</Lbl>
+          <Leader from={[96, 132]} to={[160, 96]} />
+          <Lbl x={22} y={152} size={7}>{t('d.framePairNote')}</Lbl>
+          <Lbl x={200} y={140}>{t('d.edgeJoist')}</Lbl>
+          <Leader from={[222, 132]} to={[246, 96]} />
+          <Notes y={176} texts={[t('d.edgeBoardNote', { gap: p.boardGap }), t('d.edgeBoardNote2')]} />
+        </Frame>
+      )}
+
+      {breakers && (
+        <Frame title={t('detail.breaker')}>
+          {/* field boards from both sides end at the breaker, which runs across them */}
+          <rect x={20} y={60} width={107} height={8} fill={TIMBER} stroke={INK} strokeWidth={0.5} />
+          <rect x={130} y={60} width={40} height={8} fill="#d8b07a" stroke={INK} strokeWidth={0.7} />
+          <rect x={173} y={60} width={107} height={8} fill={TIMBER} stroke={INK} strokeWidth={0.5} />
+          {/* one joist under each joint, centred on the gap */}
+          <rect x={121.5} y={68} width={14} height={36} fill={TIMBER} stroke={INK} strokeWidth={0.6} strokeDasharray="3 2" />
+          <rect x={164.5} y={68} width={14} height={36} fill={TIMBER} stroke={INK} strokeWidth={0.6} strokeDasharray="3 2" />
+          <rect x={40} y={68} width={14} height={36} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+          <rect x={246} y={68} width={14} height={36} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+          <rect x={20} y={104} width={260} height={18} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
+          <line x1={128.5} y1={44} x2={128.5} y2={68} stroke="#b91c1c" strokeWidth={1} strokeDasharray="2 2" />
+          <line x1={171.5} y1={44} x2={171.5} y2={68} stroke="#b91c1c" strokeWidth={1} strokeDasharray="2 2" />
+          <Lbl x={150} y={30} anchor="middle">{t('d.breaker')}</Lbl>
+          <Leader from={[150, 33]} to={[150, 60]} />
+          <Lbl x={22} y={142}>{t('d.breakerJoists')}</Lbl>
+          <Leader from={[104, 133]} to={[127, 96]} />
+          <Leader from={[112, 133]} to={[170, 96]} />
+          <Notes y={164} texts={[t('d.breakerNote'), t('d.breakerNote2')]} />
         </Frame>
       )}
     </div>

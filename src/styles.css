@@ -137,6 +137,25 @@ table.bom tr.cat td { background: #e5e7eb; font-weight: 600; }
 table.bom tfoot td { font-weight: 600; }
 table.bom tr.grand td { font-size: 10pt; }
 .cut-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 3mm; width: 100%; align-content: start; }
+/* cutting diagrams: one stick per bar, drawn to scale */
+.cut-diagrams { display: flex; flex-direction: column; gap: 2.5mm; margin-bottom: 3mm; }
+.cut-product { break-inside: avoid; }
+.cut-head { display: flex; justify-content: space-between; gap: 2mm; font-size: 8pt; border-bottom: 0.2mm solid #999; margin-bottom: 0.8mm; }
+.cut-head span { color: #444; white-space: nowrap; }
+.cut-keys { display: flex; flex-wrap: wrap; gap: 0.6mm 3mm; font-size: 7.2pt; color: #333; margin-bottom: 0.8mm; }
+.cut-keys b { color: #9a3412; }
+.cut-row { display: grid; grid-template-columns: 9mm minmax(0, 1fr); align-items: center; gap: 1mm; }
+.cut-n { font-size: 8pt; font-weight: 700; text-align: right; }
+.cut-bar { width: 100%; height: auto; display: block; }
+.cut-sheet { width: 100%; columns: 2; column-gap: 8mm; }
+.cut-sheet > p { column-span: all; }
+.grid-tables { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; }
+.side-col p.small, .cut-sheet p.small { font-size: 7.5pt; color: #333; }
+/* on screen (materials page) the bars are taller */
+.materials-wrap .cut-diagrams { max-width: 900px; }
+.materials-wrap .cut-head, .materials-wrap .cut-keys, .materials-wrap .cut-n { font-size: 12px; }
+.materials-wrap .cut-row { grid-template-columns: 34px minmax(0, 1fr); gap: 6px; }
+.materials-wrap .cut-diagrams { gap: 14px; }
 table.cut th { text-align: left; }
 .method-cols { display: grid; grid-template-columns: 1.4fr 1fr; gap: 8mm; width: 100%; }
 ol.method { margin: 0; padding-left: 5mm; font-size: 8.5pt; }

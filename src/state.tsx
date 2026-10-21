@@ -20,6 +20,8 @@ export interface Layers {
   balustrade: boolean;
   dims: boolean;
   house: boolean;
+  /** piece marks on the frame (shown while the boards are hidden) */
+  cuts: boolean;
 }
 export type PanelTab = 'params' | 'selection' | 'rules' | 'prices' | 'results';
 export type Mode = 'design' | 'sheets' | 'materials' | 'steps';
@@ -212,7 +214,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     tool: 'select',
     selection: null,
     snap: 50,
-    layers: { frame: true, boards: true, posts: true, balustrade: true, dims: false, house: true },
+    layers: { frame: true, boards: true, posts: true, balustrade: true, dims: false, house: true, cuts: true },
     mode: 'design',
     panelTab: 'params',
     advanced: false,

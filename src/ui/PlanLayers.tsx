@@ -6,6 +6,7 @@ import { bayLabel } from '../engine/layout';
 import { useT } from '../i18n';
 import type { Project, Pt, Seg } from '../model/types';
 import { PRODUCT_MAP, sizeLabel } from '../model/catalog';
+import { bearerPieces, cutMarks, joistGroups, type MemberPiece } from '../utils/cutmarks';
 
 export interface LayerFlags {
   house: boolean;
@@ -28,20 +29,32 @@ export interface LayerFlags {
   joistLabels: boolean;
   /** board row numbers along the first run of every fifth row */
   rowNumbers: boolean;
+  /** piece marks: a typical label per group of joists, the pieces of every bearer, bearer bubbles */
+  cutMarks: boolean;
+  /** bearer centre dimensions across the bearers (the set-out of the bearer lines) */
+  supportDims: boolean;
+  /** string lines through the stumps, with bubbles and dimensions from the datum */
+  grid: boolean;
+  /** the words "existing building" by the house line (the sheets name it in the legend instead) */
+  houseLabel: boolean;
 }
 
 export const ALL_LAYERS: LayerFlags = {
   house: true, outline: true, frame: true, boards: true, posts: true, balustrade: true, stairs: true,
   dims: true, labels: true, postLabels: true, bearerLabels: true, joins: true, fascia: true,
-  edgeBoards: true, frameDims: false, joistLabels: false, rowNumbers: false,
+  edgeBoards: true, frameDims: false, joistLabels: false, rowNumbers: false, cutMarks: false, supportDims: false, grid: false, houseLabel: true,
 };
 
 export const COLORS = {
   deckFill: '#f6ecd9',
   deckStroke: '#4a3b2a',
   house: '#5b6770',
-  bearer: '#8a5a2b',
-  joist: '#c89b63',
+  bearer: '#5a3a1c',
+  bearerStroke: '#24160a',
+  joist: '#e6c58e',
+  joistStroke: '#9a6b32',
+  mark: '#9a3412',
+  gridLine: '#0e7490',
   ledger: '#c0392b',
   post: '#1f2937',
   board: '#e9d2a8',
@@ -158,7 +171,7 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
         project.house.map((pl, i) => (
           <g key={`h${i}`}>
             <polyline points={pl.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke={COLORS.house} strokeWidth={sw * 6} strokeLinejoin="miter" strokeDasharray={`${sw * 24} ${sw * 10}`} opacity={0.85} />
-            {pl.length >= 2 && (
+            {L.houseLabel && pl.length >= 2 && (
               <text x={pl[0].x + fs * 0.5} y={pl[0].y - fs * 2.6} fontSize={fs * 0.9} fill={COLORS.house} opacity={0.9}>
                 {t('legend.house')}
               </text>
@@ -275,9 +288,8 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
                 width={r.w}
                 height={r.h}
                 fill={COLORS.joist}
-                opacity={j.kind === 'frame' ? 0.95 : 0.75}
-                stroke={j.kind === 'frame' ? COLORS.frameJoist : undefined}
-                strokeWidth={j.kind === 'frame' ? sw * 1.2 : undefined}
+                stroke={j.kind === 'frame' ? COLORS.frameJoist : COLORS.joistStroke}
+                strokeWidth={j.kind === 'frame' ? sw * 1.2 : sw * 0.5}
                 strokeDasharray={j.kind === 'frame' ? `${sw * 6} ${sw * 4}` : undefined}
               />
             );
@@ -305,9 +317,16 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
             const r = segRect(b.seg, bw);
             const horizontal = Math.abs(b.seg.a.y - b.seg.b.y) < 0.5;
             const m = { x: b.seg.a.x + (b.seg.b.x - b.seg.a.x) * 0.3, y: b.seg.a.y + (b.seg.b.y - b.seg.a.y) * 0.3 };
+            const plies = design.frame.bearerLaminations;
             return (
               <g key={b.id}>
-                <rect x={r.x} y={r.y} width={r.w} height={r.h} fill={COLORS.bearer} />
+                <rect x={r.x} y={r.y} width={r.w} height={r.h} fill={COLORS.bearer} stroke={COLORS.bearerStroke} strokeWidth={sw * 1.2} />
+                {plies === 2 &&
+                  (horizontal ? (
+                    <line x1={r.x} y1={r.y + r.h / 2} x2={r.x + r.w} y2={r.y + r.h / 2} stroke="#d6b48a" strokeWidth={sw * 0.6} />
+                  ) : (
+                    <line x1={r.x + r.w / 2} y1={r.y} x2={r.x + r.w / 2} y2={r.y + r.h} stroke="#d6b48a" strokeWidth={sw * 0.6} />
+                  ))}
                 {b.splices.flat().map((s, si) =>
                   horizontal ? (
                     <line key={si} x1={s} y1={r.y - sw * 2} x2={s} y2={r.y + r.h + sw * 2} stroke="#fff" strokeWidth={sw * 1.5} />
@@ -315,7 +334,7 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
                     <line key={si} x1={r.x - sw * 2} y1={s} x2={r.x + r.w + sw * 2} y2={s} stroke="#fff" strokeWidth={sw * 1.5} />
                   ),
                 )}
-                {L.bearerLabels && (
+                {L.bearerLabels && !L.cutMarks && (
                   <text
                     x={horizontal ? m.x : m.x + fs * 0.9}
                     y={horizontal ? m.y - bw / 2 - fs * 0.4 : m.y}
@@ -372,6 +391,15 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
           })}
         </g>
       )}
+      {L.frame && L.cutMarks && lay && design.ok && <CutMarksLayer project={project} design={design} fs={fs} sw={sw} />}
+      {L.supportDims && lay && design.ok && (
+        lay.supportAxis === 'y' ? (
+          <DimChain axis="y" fixed={design.bb.minX - fs * 2.6} positions={[design.bb.minY, ...lay.supports.map((s) => s.pos), design.bb.maxY]} fs={fs * 0.85} sw={sw} color={COLORS.bearer} />
+        ) : (
+          <DimChain axis="x" fixed={design.bb.minY - fs * 2.6} positions={[design.bb.minX, ...lay.supports.map((s) => s.pos), design.bb.maxX]} fs={fs * 0.85} sw={sw} color={COLORS.bearer} />
+        )
+      )}
+      {L.grid && lay && design.ok && <GridLayer design={design} fs={fs} sw={sw} />}
       {L.frameDims && lay && design.ok && lay.joistPositions.length > 1 && (() => {
         // keep the joist chain clear of stairs hanging off the bottom / right edge
         let maxY = design.bb.maxY;
@@ -491,6 +519,174 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
           </g>
         </g>
       )}
+    </g>
+  );
+}
+
+/** a label in a white box with a thin border, centred on (x, y), optionally turned to run along a vertical member */
+function Tag({ x, y, text, fs, sw, color = COLORS.mark, vertical = false, bold = true }: { x: number; y: number; text: string; fs: number; sw: number; color?: string; vertical?: boolean; bold?: boolean }) {
+  const w = text.length * fs * 0.56 + fs * 0.7;
+  const h = fs * 1.35;
+  return (
+    <g transform={vertical ? `rotate(-90 ${x} ${y})` : undefined}>
+      <rect x={x - w / 2} y={y - h / 2} width={w} height={h} rx={h * 0.25} fill="#fff" stroke={color} strokeWidth={sw * 0.9} />
+      <text x={x} y={y + fs * 0.35} fontSize={fs} fill={color} textAnchor="middle" fontWeight={bold ? 700 : 400}>
+        {text}
+      </text>
+    </g>
+  );
+}
+
+const pieceText = (pc: MemberPiece, n?: number): string => (pc.mark ? `${n && n > 1 ? `${n} × ` : ''}${pc.mark.mark} ${pc.mark.length}` : '');
+
+/**
+ * Piece marks on the framing: each group of identical joists is labelled once, with a line across the joists it
+ * covers; every bearer piece carries its mark and length; every bearer line gets a bubble with its id.
+ */
+function CutMarksLayer({ project, design, fs, sw }: { project: Project; design: DesignResult; fs: number; sw: number }) {
+  const lay = design.layout!;
+  const marks = cutMarks(design, project.rules, project.params.joistConnection === 'flush');
+  const f = design.frame;
+  const bw = f.bearerLaminations * (PRODUCT_MAP[f.bearerProductId]?.width ?? 45);
+  const tf = fs * 0.78;
+  const els: JSX.Element[] = [];
+  // joists: one label per piece of a typical joist, centred across its group, between the bearers
+  joistGroups(lay, f.joistProductId, marks).forEach((g, gi) => {
+    const mid = (g.c0 + g.c1) / 2;
+    g.pieces.forEach((pc, pi) => {
+      const text = pieceText(pc, g.joists.length);
+      if (!text) return;
+      const at = pc.labelAt;
+      const pt = (c: number) => (g.horizontal ? { x: at, y: c } : { x: c, y: at });
+      if (g.joists.length > 1) {
+        const a = pt(g.c0);
+        const b = pt(g.c1);
+        els.push(<line key={`jg${gi}-${pi}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={COLORS.mark} strokeWidth={sw * 0.8} />);
+        // ticks at the first and last joist: where the group starts and stops
+        const t = fs * 0.5;
+        for (const e of [a, b]) {
+          els.push(<line key={`jk${gi}-${pi}-${e === a ? 0 : 1}`} x1={g.horizontal ? e.x - t : e.x} y1={g.horizontal ? e.y : e.y - t} x2={g.horizontal ? e.x + t : e.x} y2={g.horizontal ? e.y : e.y + t} stroke={COLORS.mark} strokeWidth={sw * 1.4} />);
+        }
+        g.joists.forEach((j, k) => {
+          const c = pt(g.horizontal ? j.seg.a.y : j.seg.a.x);
+          els.push(<circle key={`jd${gi}-${pi}-${k}`} cx={c.x} cy={c.y} r={sw * 1.8} fill={COLORS.mark} />);
+        });
+      }
+      const c = pt(mid);
+      // the label runs along the joists, so it never covers the joist line it describes for long
+      els.push(<Tag key={`jt${gi}-${pi}`} x={c.x} y={c.y} text={text} fs={tf} sw={sw} vertical={!g.horizontal} />);
+    });
+  });
+  // bearers: the pieces of each ply (a double bearer whose plies match is labelled once, "2 ×")
+  lay.bearers.forEach((b) => {
+    const horizontal = Math.abs(b.seg.a.y - b.seg.b.y) < 0.5;
+    const plies = bearerPieces(b, f.bearerProductId, marks);
+    const same = plies.length === 2 && plies[0].length === plies[1].length && plies[0].every((pc, i) => pc.mark === plies[1][i].mark && Math.abs(pc.from - plies[1][i].from) < 1);
+    const rows = same ? [{ pcs: plies[0], n: 2, off: 0 }] : plies.map((pcs, k) => ({ pcs, n: 1, off: plies.length === 2 ? (k === 0 ? -1 : 1) : 0 }));
+    rows.forEach((row, ri) =>
+      row.pcs.forEach((pc, pi) => {
+        const text = pieceText(pc, row.n);
+        if (!text) return;
+        const shift = row.off * (bw / 2 + tf * 0.9);
+        const x = horizontal ? pc.labelAt : b.seg.a.x + shift;
+        const y = horizontal ? b.seg.a.y + shift : pc.labelAt;
+        els.push(<Tag key={`bp${b.id}-${ri}-${pi}`} x={x} y={y} text={text} fs={tf} sw={sw} color={COLORS.bearer} vertical={!horizontal} />);
+      }),
+    );
+    // the bearer's bubble beyond the deck edge, at the end away from a house wall
+    const ends = [b.seg.a, b.seg.b];
+    const houseEnd = (k: number) => (k === 0 ? b.houseStart : b.houseEnd);
+    const k = !houseEnd(0) ? 0 : 1;
+    const end = ends[k];
+    const dir = k === 0 ? -1 : 1;
+    const r = fs * 0.85;
+    const off = fs * 2.6 + r;
+    const cx = horizontal ? end.x + dir * off : end.x;
+    const cy = horizontal ? end.y : end.y + dir * off;
+    els.push(
+      <g key={`bb${b.id}`}>
+        <line x1={end.x} y1={end.y} x2={horizontal ? cx - dir * r : cx} y2={horizontal ? cy : cy - dir * r} stroke={COLORS.bearer} strokeWidth={sw * 0.8} strokeDasharray={`${sw * 4} ${sw * 3}`} />
+        <circle cx={cx} cy={cy} r={r} fill="#fff" stroke={COLORS.bearer} strokeWidth={sw * 1.4} />
+        <text x={cx} y={cy + fs * 0.32} fontSize={fs * 0.85} fill={COLORS.bearer} textAnchor="middle" fontWeight={700}>
+          {b.id}
+        </text>
+      </g>,
+    );
+  });
+  return <g>{els}</g>;
+}
+
+/**
+ * String lines for the set-out: a line through every row and every column of stumps, lettered across and
+ * numbered down, with the distances between them and from the datum.
+ */
+export function stumpGrid(design: DesignResult): { xs: number[]; ys: number[] } {
+  const lay = design.layout;
+  if (!lay) return { xs: [], ys: [] };
+  return { xs: mergeNear(lay.posts.map((p) => p.pt.x)), ys: mergeNear(lay.posts.map((p) => p.pt.y)) };
+}
+
+/** distinct values, sorted, those within 5 mm of each other taken as one */
+function mergeNear(vals: number[]): number[] {
+  const out: number[] = [];
+  for (const v of [...vals].sort((a, b) => a - b)) if (!out.length || v - out[out.length - 1] > 5) out.push(v);
+  return out;
+}
+export const gridColName = (i: number): string => String(i + 1);
+export const gridRowName = (i: number): string => (i < 26 ? String.fromCharCode(65 + i) : `A${String.fromCharCode(65 + (i - 26))}`);
+
+function GridLayer({ design, fs, sw }: { design: DesignResult; fs: number; sw: number }) {
+  const { xs, ys } = stumpGrid(design);
+  const bb = design.bb;
+  const cornersX = mergeNear(design.poly.map((p) => p.x));
+  const cornersY = mergeNear(design.poly.map((p) => p.y));
+  const ext = fs * 3.2;
+  const r = fs * 0.8;
+  const dash = `${sw * 10} ${sw * 3} ${sw * 2} ${sw * 3}`;
+  // lines too close for their bubbles side by side get their bubbles further out, staggered
+  const stagger = (vals: number[]) => {
+    const lv: number[] = [];
+    vals.forEach((v, i) => {
+      let k = 0;
+      while (lv.some((l, j) => l === k && Math.abs(vals[j] - v) < r * 2.3)) k++;
+      lv[i] = k;
+    });
+    return lv.map((k) => ext + k * r * 2.4);
+  };
+  const outX = stagger(xs);
+  const outY = stagger(ys);
+  return (
+    <g>
+      {xs.map((x, i) => (
+        <g key={`gx${i}`}>
+          <line x1={x} y1={bb.minY - ext} x2={x} y2={bb.maxY + outX[i]} stroke={COLORS.gridLine} strokeWidth={sw * 0.7} strokeDasharray={dash} />
+          <circle cx={x} cy={bb.maxY + outX[i] + r} r={r} fill="#fff" stroke={COLORS.gridLine} strokeWidth={sw * 1.2} />
+          <text x={x} y={bb.maxY + outX[i] + r + fs * 0.3} fontSize={fs * 0.8} fill={COLORS.gridLine} textAnchor="middle" fontWeight={700}>
+            {gridColName(i)}
+          </text>
+        </g>
+      ))}
+      {ys.map((y, i) => (
+        <g key={`gy${i}`}>
+          <line x1={bb.minX - ext} y1={y} x2={bb.maxX + outY[i]} y2={y} stroke={COLORS.gridLine} strokeWidth={sw * 0.7} strokeDasharray={dash} />
+          <circle cx={bb.maxX + outY[i] + r} cy={y} r={r} fill="#fff" stroke={COLORS.gridLine} strokeWidth={sw * 1.2} />
+          <text x={bb.maxX + outY[i] + r} y={y + fs * 0.3} fontSize={fs * 0.8} fill={COLORS.gridLine} textAnchor="middle" fontWeight={700}>
+            {gridRowName(i)}
+          </text>
+        </g>
+      ))}
+      <DimChain axis="x" fixed={bb.minY - fs * 2.2} positions={[bb.minX, ...xs]} fs={fs * 0.8} sw={sw} color={COLORS.gridLine} />
+      <DimChain axis="y" fixed={bb.minX - fs * 2.2} positions={[bb.minY, ...ys]} fs={fs * 0.8} sw={sw} color={COLORS.gridLine} />
+      {/* the deck's corners (an L or a U has some inside the overall size), then the overall size */}
+      {cornersX.length > 2 && <DimChain axis="x" fixed={bb.minY - fs * 4.4} positions={cornersX} fs={fs * 0.85} sw={sw} />}
+      {cornersY.length > 2 && <DimChain axis="y" fixed={bb.minX - fs * 4.4} positions={cornersY} fs={fs * 0.85} sw={sw} />}
+      <DimChain axis="x" fixed={bb.minY - fs * (cornersX.length > 2 ? 6.6 : 4.4)} positions={[bb.minX, bb.maxX]} fs={fs * 0.85} sw={sw} />
+      <DimChain axis="y" fixed={bb.minX - fs * (cornersY.length > 2 ? 6.6 : 4.4)} positions={[bb.minY, bb.maxY]} fs={fs * 0.85} sw={sw} />
+      <g>
+        <circle cx={design.datum.x} cy={design.datum.y} r={fs * 0.45} fill="none" stroke={COLORS.dim} strokeWidth={sw * 1.5} />
+        <line x1={design.datum.x - fs * 0.7} y1={design.datum.y} x2={design.datum.x + fs * 0.7} y2={design.datum.y} stroke={COLORS.dim} strokeWidth={sw} />
+        <line x1={design.datum.x} y1={design.datum.y - fs * 0.7} x2={design.datum.x} y2={design.datum.y + fs * 0.7} stroke={COLORS.dim} strokeWidth={sw} />
+      </g>
     </g>
   );
 }

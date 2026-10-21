@@ -1,4 +1,3 @@
-import { bayLabel } from '../engine/layout';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { DesignResult } from '../engine';
 import { productName, useT } from '../i18n';
@@ -8,8 +7,9 @@ import { useApp } from '../state';
 import { exportCsv, exportProjectJson, exportXlsx } from '../utils/export';
 import { stockLabel, today } from '../utils/format';
 import { BomTable } from './BomTable';
+import { CutDiagrams, isFramingCut } from './CutDiagram';
 import { DetailsGrid } from './Details';
-import { COLORS, DesignLayers, type LayerFlags } from './PlanLayers';
+import { COLORS, DesignLayers, gridColName, gridRowName, stumpGrid, type LayerFlags } from './PlanLayers';
 import { WarningList } from './SidePanel';
 
 const SCALES = [10, 20, 25, 30, 40, 50, 60, 75, 100, 125, 150, 200, 250, 300];
@@ -77,18 +77,22 @@ function Sheet({ n, total, title, project, children, scale }: { n: number; total
 function PlanSvg({ project, design, layers, S, vb }: { project: Project; design: DesignResult; layers: Partial<LayerFlags>; S: number; vb: string }) {
   return (
     <svg className="plan-svg" viewBox={vb} preserveAspectRatio="xMidYMid meet">
-      <DesignLayers project={project} design={design} layers={layers} fs={2.6 * S} sw={0.18 * S} />
+      <DesignLayers project={project} design={design} layers={{ houseLabel: false, ...layers }} fs={2.6 * S} sw={0.18 * S} />
     </svg>
   );
 }
 
-function Legend({ items }: { items: { color: string; label: string; shape?: 'line' | 'box' | 'ring' }[] }) {
+function Legend({ items }: { items: { color: string; label: string; shape?: 'line' | 'box' | 'ring' | 'tag' | 'dash' }[] }) {
   return (
     <div className="legend">
       {items.map((it) => (
         <div key={it.label}>
           {it.shape === 'ring' ? (
             <span className="swatch" style={{ background: 'transparent', border: `2px solid ${it.color}`, borderRadius: '50%', width: 9, height: 9, boxSizing: 'border-box' }} />
+          ) : it.shape === 'tag' ? (
+            <span className="swatch" style={{ background: '#fff', border: `1.5px solid ${it.color}`, borderRadius: 2, height: 9, boxSizing: 'border-box' }} />
+          ) : it.shape === 'dash' ? (
+            <span className="swatch" style={{ background: 'transparent', borderTop: `2px dashed ${it.color}`, height: 0 }} />
           ) : (
             <span className="swatch" style={{ background: it.color, height: it.shape === 'line' ? 3 : 10 }} />
           )}
@@ -129,6 +133,7 @@ export function SheetsView() {
   const lay = design.layout;
   const p = project.params;
   const { S, vb } = fitScale(design);
+  const grid = stumpGrid(design);
   const scaleLabel = `1:${S} @ A3`;
   const total = 7;
   const footingText =
@@ -136,11 +141,7 @@ export function SheetsView() {
     : p.footingType === 'stirrup' ? t('footing.stirrup', { pad: p.padSize, depth: p.padDepth })
     : t('footing.slab');
 
-  const joistGroups = new Map<number, number>();
-  for (const j of lay.joists) joistGroups.set(Math.round(j.length), (joistGroups.get(Math.round(j.length)) ?? 0) + 1);
-  const joistSummary = [...joistGroups.entries()].sort((a, b) => b[0] - a[0]).map(([len, n]) => `${n} x ${len}`).join(', ');
   const spacingMode = design.joistSetout ? t('sheet.spacingSetout', { spacing: Math.round(design.joistSetoutSpacing) }) : t('sheet.spacingAuto', { max: design.joistSpacingCap });
-  const baySummary = lay.joistBays.map((b) => bayLabel(b)).join(', ');
   const edgeBoardLine = design.bom.lines.find((l) => l.tags.includes('edgeBoard'));
   const lastRow = lay.boards[lay.boards.length - 1];
   const houseSide = lay.startsAtHouse;
@@ -171,98 +172,67 @@ export function SheetsView() {
       <div className="sheets" style={{ zoom }}>
         <Sheet n={1} total={total} title={t('sheet.setout')} project={project} scale={scaleLabel}>
           <div className="plan-area">
-            <PlanSvg project={project} design={design} S={S} vb={vb} layers={{ frame: false, boards: false, balustrade: false, fascia: false, stairs: true, posts: true, dims: true, labels: true }} />
+            <PlanSvg project={project} design={design} S={S} vb={vb} layers={{ frame: false, boards: false, balustrade: false, fascia: false, stairs: true, posts: true, dims: false, grid: true, labels: false }} />
           </div>
           <div className="side-col">
-            <h3>{t('sheet.footingSchedule')}</h3>
-            <table className="sch">
-              <thead>
-                <tr>
-                  <th>{t('col.id')}</th>
-                  <th>{t('col.x')}</th>
-                  <th>{t('col.y')}</th>
-                  <th>{t('col.bearer')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lay.posts.map((po) => (
-                  <tr key={po.id}>
-                    <td>{po.id}</td>
-                    <td>{Math.round(po.pt.x - design.datum.x)}</td>
-                    <td>{Math.round(po.pt.y - design.datum.y)}</td>
-                    <td>{po.bearerId}</td>
+            <h3>{t('sheet.stringLines')}</h3>
+            <p>{t('sheet.stringLinesHow', { n: lay.posts.length })}</p>
+            <div className="grid-tables">
+              <table className="sch">
+                <thead>
+                  <tr>
+                    <th>{t('sheet.gridCol')}</th>
+                    <th>{t('sheet.gridFromDatum')}</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {grid.xs.map((x, i) => (
+                    <tr key={i}>
+                      <td>
+                        <b>{gridColName(i)}</b>
+                      </td>
+                      <td>{Math.round(x - design.datum.x)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <table className="sch">
+                <thead>
+                  <tr>
+                    <th>{t('sheet.gridRow')}</th>
+                    <th>{t('sheet.gridFromDatum')}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {grid.ys.map((y, i) => (
+                    <tr key={i}>
+                      <td>
+                        <b>{gridRowName(i)}</b>
+                      </td>
+                      <td>{Math.round(y - design.datum.y)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
             <h3>{t('sheet.notes')}</h3>
             <p>{t('sheet.footingNote', { footing: footingText, depth: p.footingType === 'stump' ? p.footingDepth : p.padDepth })}</p>
+            <p>{t('sheet.stumpTops', { top: Math.round(design.levels.postTop), n: lay.posts.length, post: sizeLabel(design.postProductId) })}</p>
             <p>
               {t('sheet.datum')}: {t('sheet.north')}.
             </p>
-            <Legend items={[{ color: COLORS.post, label: t('legend.post') }, { color: COLORS.house, label: t('legend.house'), shape: 'line' }, { color: COLORS.stair, label: t('legend.stair') }]} />
+            <Legend items={[{ color: COLORS.post, label: t('legend.post') }, { color: COLORS.gridLine, label: t('legend.stringLine'), shape: 'dash' }, { color: COLORS.house, label: t('legend.house'), shape: 'dash' }, { color: COLORS.stair, label: t('legend.stair') }]} />
           </div>
         </Sheet>
 
         <Sheet n={2} total={total} title={t('sheet.framing')} project={project} scale={scaleLabel}>
           <div className="plan-area">
-            <PlanSvg project={project} design={design} S={S} vb={vb} layers={{ frame: true, boards: false, balustrade: false, fascia: false, stairs: true, posts: true, dims: false, labels: true, postLabels: false, frameDims: true, joistLabels: true }} />
+            <PlanSvg project={project} design={design} S={S} vb={vb} layers={{ frame: true, boards: false, balustrade: false, fascia: false, stairs: true, posts: true, dims: false, labels: false, postLabels: false, frameDims: true, joistLabels: false, cutMarks: true, supportDims: true }} />
           </div>
           <div className="side-col">
-            <h3>{t('sheet.memberSchedule')}</h3>
-            <table className="sch">
-              <thead>
-                <tr>
-                  <th>{t('col.member')}</th>
-                  <th>{t('col.size')}</th>
-                  <th>{t('col.length')}</th>
-                  <th>{t('col.posts')}</th>
-                  <th>{t('col.span')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {lay.bearers.map((b) => (
-                  <tr key={b.id}>
-                    <td>{b.id}</td>
-                    <td>
-                      {design.frame.bearerLaminations}/{sizeLabel(design.frame.bearerProductId)}
-                    </td>
-                    <td>{Math.round(b.length)}</td>
-                    <td>{b.onWall ? t('legend.wall') : b.posts.length}</td>
-                    <td>{b.onWall ? (p.wallFixing === 'dynabolt' ? 'Dynabolt' : 'M12') + ` @ ${project.rules.ledgerBoltSpacing}` : Math.round(b.postSpacing)}</td>
-                  </tr>
-                ))}
-                <tr>
-                  <td>J1-J{lay.joists.length}</td>
-                  <td>{sizeLabel(design.frame.joistProductId)}</td>
-                  <td colSpan={3}>{joistSummary}</td>
-                </tr>
-                <tr>
-                  <td>{t('col.spacing')}</td>
-                  <td>@{design.joistSpacingText}</td>
-                  <td colSpan={3}>
-                    {baySummary} ({spacingMode})
-                  </td>
-                </tr>
-                {lay.totals.frameJoists > 0 && (
-                  <tr>
-                    <td>{t('legend.frameJoist')}</td>
-                    <td>{sizeLabel(design.frame.joistProductId)}</td>
-                    <td colSpan={3}>{lay.totals.frameJoists}</td>
-                  </tr>
-                )}
-                {lay.ledgers.map((l, i) => (
-                  <tr key={`L${i}`}>
-                    <td>{t('legend.wall')}</td>
-                    <td>{sizeLabel(design.frame.bearerProductId)}</td>
-                    <td>{Math.round(l.length)}</td>
-                    <td colSpan={2}>
-                      {p.wallFixing === 'dynabolt' ? 'Dynabolt M12x100' : 'M12'} x {l.bolts}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <h3>{t('sheet.howToCut')}</h3>
+            <p className="small">{t('sheet.howToCutNote', { bearer: `${design.frame.bearerLaminations}/${sizeLabel(design.frame.bearerProductId)}`, joist: sizeLabel(design.frame.joistProductId) })}</p>
+            <CutDiagrams design={design} project={project} filter={isFramingCut} />
             <h3>{t('sheet.levels')}</h3>
             <table className="sch">
               <tbody>
@@ -294,7 +264,7 @@ export function SheetsView() {
             <p>{t(joistsToWall ? 'sheet.framingNote3' : 'sheet.framingNote3.free')}</p>
             {lay.totals.frameJoists > 0 && <p>{t('sheet.framingNote4')}</p>}
             {design.braces.count > 0 && <p>{t('m.bracing', { count: design.braces.count })}</p>}
-            <Legend items={[{ color: COLORS.bearer, label: t('legend.bearer') }, { color: COLORS.joist, label: t('legend.joist') }, { color: COLORS.frameJoist, label: t('legend.frameJoist') }, { color: COLORS.post, label: t('legend.post') }, { color: COLORS.ledger, label: t('legend.wall') }, { color: COLORS.splice, label: t('legend.splice'), shape: 'ring' }]} />
+            <Legend items={[{ color: COLORS.bearer, label: t('legend.bearer') }, { color: COLORS.joist, label: t('legend.joist') }, { color: COLORS.frameJoist, label: t('legend.frameJoist') }, { color: COLORS.post, label: t('legend.post') }, { color: COLORS.ledger, label: t('legend.wall') }, { color: COLORS.splice, label: t('legend.splice'), shape: 'ring' }, { color: COLORS.mark, label: t('legend.mark'), shape: 'tag' }, ...(project.house.length ? [{ color: COLORS.house, label: t('legend.house'), shape: 'dash' as const }] : [])]} />
           </div>
         </Sheet>
 
@@ -374,7 +344,7 @@ export function SheetsView() {
             {design.stairs.map((s) => (
               <p key={s.id}>{t('m.stairs', { id: s.id, width: s.width, risers: s.risers, riser: Math.round(s.riser), going: s.going, treads: s.treads, run: Math.round(s.totalRun), stringers: s.stringerCount, stringerLength: s.stringerLength, boards: s.boardsPerTread })}</p>
             ))}
-            <Legend items={[{ color: COLORS.board, label: t('legend.board') }, { color: COLORS.edgeBoard, label: t('legend.edgeBoard') }, ...(lay.breakers.length ? [{ color: COLORS.breaker, label: t('legend.breaker') }] : []), ...(lay.rips.length ? [{ color: COLORS.join, label: t('legend.rip') }] : []), { color: COLORS.join, label: t('legend.join'), shape: 'line' }, { color: COLORS.balPost, label: t('legend.balPost') }, { color: COLORS.stair, label: t('legend.stair') }]} />
+            <Legend items={[{ color: COLORS.board, label: t('legend.board') }, { color: COLORS.edgeBoard, label: t('legend.edgeBoard') }, ...(lay.breakers.length ? [{ color: COLORS.breaker, label: t('legend.breaker') }] : []), ...(lay.rips.length ? [{ color: COLORS.join, label: t('legend.rip') }] : []), { color: COLORS.join, label: t('legend.join'), shape: 'line' }, { color: COLORS.balPost, label: t('legend.balPost') }, { color: COLORS.stair, label: t('legend.stair') }, ...(project.house.length ? [{ color: COLORS.house, label: t('legend.house'), shape: 'dash' as const }] : [])]} />
           </div>
         </Sheet>
 
@@ -388,36 +358,10 @@ export function SheetsView() {
         </Sheet>
 
         <Sheet n={6} total={total} title={t('sheet.cutlist')} project={project}>
-          <p className="small">{t('cut.intro')}</p>
-          <div className="cut-grid">
-            {design.bom.cutlists.map((c) => (
-              <table key={c.productId} className="sch cut">
-                <thead>
-                  <tr>
-                    <th colSpan={4}>
-                      {productName(c.productId, lang)} · {t('cut.waste')} {c.wastePct.toFixed(0)}%
-                      {lay.rips.length && c.productId === p.deckingProductId ? ` · ${lay.rips.map((r) => t('cut.rip', { n: r.boards, width: r.width })).join(t('list.sep'))}` : ''}
-                    </th>
-                  </tr>
-                  <tr>
-                    <th>{t('cut.stock')}</th>
-                    <th>{t('cut.count')}</th>
-                    <th>{t('cut.cuts')}</th>
-                    <th>{t('cut.offcut')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {c.groups.map((g, i) => (
-                    <tr key={i}>
-                      <td>{g.stock}</td>
-                      <td>{g.count}</td>
-                      <td>{g.cuts.join(' + ')}</td>
-                      <td>{Math.round(g.offcut)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            ))}
+          <div className="cut-sheet">
+            <p className="small">{t('cut.introDrawn')}</p>
+            {lay.rips.length > 0 && <p className="small">{lay.rips.map((r) => t('cut.rip', { n: r.boards, width: r.width })).join(t('list.sep'))}</p>}
+            <CutDiagrams design={design} project={project} />
           </div>
         </Sheet>
 

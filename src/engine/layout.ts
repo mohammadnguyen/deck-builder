@@ -869,11 +869,16 @@ function layoutImpl(
         const r = splitRun(0, len, fromEnd, maxLen, 600, firstTarget);
         return { pieces: r.pieces, joins: r.joins.map((j) => job.xe - j), off: r.offSupport && !job.onWall };
       };
-      const clash = (r: { joins: number[] }) => r.joins.some((j) => a.joins.some((k) => Math.abs(j - k) < 1));
+      // on stumps the two laminations never join over the same stump; on the wall, where any spot will do, their
+      // joins are at least a bolt spacing apart
+      const apart = job.onWall ? rules.ledgerBoltSpacing : 1;
+      const clash = (r: { joins: number[] }) => r.joins.some((j) => a.joins.some((k) => Math.abs(j - k) < apart));
       let b = rev();
       if (clash(b)) {
-        // the second lamination's first join moves back a stump until no join shares a stump with the first's
-        for (const dist of fromEnd.filter((x) => x > 600 && x <= maxLen).sort((p, q) => q - p)) {
+        // the second lamination's first join moves back a stump (on the wall: to clear the first's joins) until
+        // no join is too close to one of the first's
+        const firsts = job.onWall ? a.joins.flatMap((k) => [job.xe - k - apart - 1, job.xe - k + apart + 1]) : fromEnd;
+        for (const dist of firsts.filter((x) => x > 600 && x <= maxLen).sort((p, q) => q - p)) {
           const r = rev(dist + 0.5);
           if (!clash(r) && !r.off) {
             b = r;

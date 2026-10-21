@@ -1,9 +1,10 @@
 import { useState } from 'react';
-import { productName, useT } from '../i18n';
+import { useT } from '../i18n';
 import { useApp } from '../state';
 import { exportCsv, exportProjectJson, exportXlsx } from '../utils/export';
 import { supplierOrderText } from '../utils/order';
 import { withNote } from '../utils/orderEdits';
+import { CutDiagrams } from './CutDiagram';
 import { OrderEditor } from './OrderEditor';
 import { PricesPanel } from './SidePanel';
 
@@ -64,36 +65,9 @@ export function MaterialsView() {
       </div>
       <details className="card details-card">
         <summary>{t('mat.cut')}</summary>
-        <div className="cut-grid screen">
-          {design.bom.cutlists.map((c) => (
-            <table key={c.productId} className="sch cut">
-              <thead>
-                <tr>
-                  <th colSpan={4}>
-                    {productName(c.productId, lang)} · {t('cut.waste')} {c.wastePct.toFixed(0)}%
-                    {design.layout?.rips.length && c.productId === project.params.deckingProductId ? ` · ${design.layout.rips.map((r) => t('cut.rip', { n: r.boards, width: r.width })).join(t('list.sep'))}` : ''}
-                  </th>
-                </tr>
-                <tr>
-                  <th>{t('cut.stock')}</th>
-                  <th>{t('cut.count')}</th>
-                  <th>{t('cut.cuts')}</th>
-                  <th>{t('cut.offcut')}</th>
-                </tr>
-              </thead>
-              <tbody>
-                {c.groups.map((g, i) => (
-                  <tr key={i}>
-                    <td>{g.stock}</td>
-                    <td>{g.count}</td>
-                    <td>{g.cuts.join(' + ')}</td>
-                    <td>{Math.round(g.offcut)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          ))}
-        </div>
+        <p className="hint">{t('cut.introDrawn')}</p>
+        {design.layout?.rips.length ? <p className="hint">{design.layout.rips.map((r) => t('cut.rip', { n: r.boards, width: r.width })).join(t('list.sep'))}</p> : null}
+        <CutDiagrams design={design} project={project} />
       </details>
       <details className="card details-card">
         <summary>{t('mat.prices')}</summary>

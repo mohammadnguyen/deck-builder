@@ -854,6 +854,8 @@ export function CanvasEditor() {
       posts: ui.layers.posts && design.ok,
       balustrade: ui.layers.balustrade && design.ok,
       dims: ui.layers.dims && design.ok,
+      // the frame on its own reads like the framing plan: piece marks and bearer bubbles
+      cutMarks: !!ui.layers.cuts && ui.layers.frame && !ui.layers.boards && design.ok,
       postLabels: view.scale > 0.05,
       bearerLabels: view.scale > 0.04,
       joins: view.scale > 0.05,
@@ -979,7 +981,7 @@ export function CanvasEditor() {
         ) : (
           <>
             <span className="layers">
-              {(['frame', 'boards', 'posts', 'balustrade', 'dims', 'house'] as const).map((k) => (
+              {(['frame', 'cuts', 'boards', 'posts', 'balustrade', 'dims', 'house'] as const).map((k) => (
                 <button key={k} type="button" className={`pill ${ui.layers[k] ? 'on' : ''}`} onClick={() => setUi({ layers: { ...ui.layers, [k]: !ui.layers[k] } })} aria-pressed={ui.layers[k]}>
                   {t(`layer.${k}`)}
                 </button>

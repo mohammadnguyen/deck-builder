@@ -45,6 +45,8 @@ export interface BomLine {
 export interface CutList {
   productId: string;
   groups: BinGroup[];
+  /** what each cut length is for (piece tags: joist, bearer, post ...), lengths as cut */
+  uses: { length: number; tags: string[] }[];
   wastePct: number;
   totalStock: number;
   totalPieces: number;
@@ -144,9 +146,17 @@ export function buildBom(
       tags: [...new Set(list.map((p) => p.tag))],
       key: productId,
     });
+    const uses = new Map<number, Set<string>>();
+    for (const pc of list) {
+      const len = Math.ceil(pc.length);
+      const set = uses.get(len) ?? new Set<string>();
+      set.add(pc.tag);
+      uses.set(len, set);
+    }
     cutlists.push({
       productId,
       groups: pack.groups,
+      uses: [...uses.entries()].map(([length, tags]) => ({ length, tags: [...tags] })),
       wastePct: pack.wastePct,
       totalStock: pack.totalStockLength,
       totalPieces: pack.totalPieceLength,

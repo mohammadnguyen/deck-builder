@@ -32,11 +32,13 @@ describe('order list edits', () => {
     expect(l.qty).toBe(42);
     expect(l.purchasedLm).toBeCloseTo(42 * 5.4, 6);
     expect(l.total).toBeCloseTo(42 * 5.4 * l.unitPrice, 6);
-    // joists: add two 3.6 m lengths next to the calculated 6.0 / 4.8 m
+    // joists come in one length; add two 3.6 m lengths next to it
     const joist = line(p, 'tp-90x45');
+    expect(joist.stockBreakdown!.length).toBe(1);
+    const calc = joist.stockBreakdown![0];
     p = apply(p, { order: withStock(p, joist, 3600, 2) });
     l = line(p, 'tp-90x45');
-    expect(l.stockBreakdown).toEqual([{ length: 6000, count: 4 }, { length: 4800, count: 16 }, { length: 3600, count: 2 }]);
+    expect(l.stockBreakdown).toEqual([calc, { length: 3600, count: 2 }]);
     // and back to calculated
     p = apply(p, { order: asCalculated(p, 'tp-90x45') });
     expect(line(p, 'tp-90x45').edited).toBeFalsy();

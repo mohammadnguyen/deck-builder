@@ -1,7 +1,8 @@
 /**
- * 1D cutting-stock optimiser: nests required piece lengths into purchasable
- * stock lengths. Best-fit-decreasing with a merge pass, then each bin is shrunk
- * to the smallest stock length that still fits its cuts.
+ * 1D cutting-stock optimiser: nests required piece lengths into purchasable stock lengths.
+ * Company practice is to order as few different lengths as possible, so every product is cut
+ * from ONE stock length: each length that takes the longest piece is tried (best-fit-decreasing
+ * with a merge pass) and the one that buys the least timber wins, fewer sticks on a tie.
  */
 export interface Bin {
   stock: number;
@@ -40,6 +41,17 @@ export function packPieces(lengths: number[], stockLengths: number[], kerf: numb
   if (!stocks.length || !pieces.length) {
     return { bins: [], groups: [], stockCount: [], totalStockLength: 0, totalPieceLength, wastePct: 0, oversize: [] };
   }
+  const longest = Math.max(...pieces);
+  const fits = stocks.filter((s) => s >= longest);
+  let best: PackResult | null = null;
+  for (const L of fits.length ? fits : [stocks[stocks.length - 1]]) {
+    const r = packInto(pieces, [L], kerf, totalPieceLength);
+    if (!best || r.totalStockLength < best.totalStockLength - 0.5 || (Math.abs(r.totalStockLength - best.totalStockLength) <= 0.5 && r.bins.length < best.bins.length)) best = r;
+  }
+  return best as PackResult;
+}
+
+function packInto(pieces: number[], stocks: number[], kerf: number, totalPieceLength: number): PackResult {
   const maxStock = stocks[stocks.length - 1];
   const oversize: number[] = [];
   const open: { cuts: number[]; used: number }[] = [];

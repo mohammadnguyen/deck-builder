@@ -49,6 +49,7 @@ export const COLORS = {
   edgeBoard: '#c98f4f',
   edgeBoardStroke: '#7c4a1d',
   breaker: '#d8b07a',
+  splice: '#b91c1c',
   frameJoist: '#7c4a1d',
   join: '#7c2d12',
   balPost: '#0f766e',
@@ -351,6 +352,26 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
           </g>
         ))}
 
+      {/* joins, drawn over the bearers and stumps: every bearer join over a stump and every joist join over a
+          bearer, the two pieces half each */}
+      {L.frame && lay && (
+        <g>
+          {lay.bearers.flatMap((b) => {
+            const horizontal = Math.abs(b.seg.a.y - b.seg.b.y) < 0.5;
+            return [...new Set(b.splices.flat().map((s) => Math.round(s * 10) / 10))].map((s, si) => {
+              const c = horizontal ? { x: s, y: b.seg.a.y } : { x: b.seg.a.x, y: s };
+              return <circle key={`bs${b.id}-${si}`} cx={c.x} cy={c.y} r={Math.max(postW, bw) * 0.75} fill="none" stroke={COLORS.splice} strokeWidth={sw * 2} />;
+            });
+          })}
+          {lay.joists.flatMap((j) => {
+            const horizontal = Math.abs(j.seg.a.y - j.seg.b.y) < 0.5;
+            return j.splices.map((s, si) => {
+              const c = horizontal ? { x: s, y: j.seg.a.y } : { x: j.seg.a.x, y: s };
+              return <circle key={`js${j.id}-${si}`} cx={c.x} cy={c.y} r={Math.max(jw, bw) * 0.7} fill="none" stroke={COLORS.splice} strokeWidth={sw * 1.6} />;
+            });
+          })}
+        </g>
+      )}
       {L.frameDims && lay && design.ok && lay.joistPositions.length > 1 && (() => {
         // keep the joist chain clear of stairs hanging off the bottom / right edge
         let maxY = design.bb.maxY;

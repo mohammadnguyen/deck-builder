@@ -82,12 +82,16 @@ function PlanSvg({ project, design, layers, S, vb }: { project: Project; design:
   );
 }
 
-function Legend({ items }: { items: { color: string; label: string; shape?: 'line' | 'box' }[] }) {
+function Legend({ items }: { items: { color: string; label: string; shape?: 'line' | 'box' | 'ring' }[] }) {
   return (
     <div className="legend">
       {items.map((it) => (
         <div key={it.label}>
-          <span className="swatch" style={{ background: it.color, height: it.shape === 'line' ? 3 : 10 }} />
+          {it.shape === 'ring' ? (
+            <span className="swatch" style={{ background: 'transparent', border: `2px solid ${it.color}`, borderRadius: '50%', width: 9, height: 9, boxSizing: 'border-box' }} />
+          ) : (
+            <span className="swatch" style={{ background: it.color, height: it.shape === 'line' ? 3 : 10 }} />
+          )}
           {it.label}
         </div>
       ))}
@@ -290,7 +294,7 @@ export function SheetsView() {
             <p>{t(joistsToWall ? 'sheet.framingNote3' : 'sheet.framingNote3.free')}</p>
             {lay.totals.frameJoists > 0 && <p>{t('sheet.framingNote4')}</p>}
             {design.braces.count > 0 && <p>{t('m.bracing', { count: design.braces.count })}</p>}
-            <Legend items={[{ color: COLORS.bearer, label: t('legend.bearer') }, { color: COLORS.joist, label: t('legend.joist') }, { color: COLORS.frameJoist, label: t('legend.frameJoist') }, { color: COLORS.post, label: t('legend.post') }, { color: COLORS.ledger, label: t('legend.wall') }]} />
+            <Legend items={[{ color: COLORS.bearer, label: t('legend.bearer') }, { color: COLORS.joist, label: t('legend.joist') }, { color: COLORS.frameJoist, label: t('legend.frameJoist') }, { color: COLORS.post, label: t('legend.post') }, { color: COLORS.ledger, label: t('legend.wall') }, { color: COLORS.splice, label: t('legend.splice'), shape: 'ring' }]} />
           </div>
         </Sheet>
 

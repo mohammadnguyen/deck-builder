@@ -30,4 +30,18 @@ describe('saved projects', () => {
     const bad = migrateProject({ ...JSON.parse(JSON.stringify(p)), breakers: { axis: 'x' } });
     expect(bad.breakers).toBeNull();
   });
+  it('moves bearer ends out to the deck edge and onto their stumps once', () => {
+    const old = newProject('old', true);
+    old.rules.postEndSetback = 150;
+    old.rules.bearerEndInset = 45;
+    old.rules.rulesVersion = 2;
+    const m = migrateProject(JSON.parse(JSON.stringify(old)));
+    expect(m.rules.postEndSetback).toBe(0);
+    expect(m.rules.bearerEndInset).toBe(0);
+    expect(m.rules.rulesVersion).toBe(RULES_VERSION);
+    const later = newProject('later', true);
+    later.rules.postEndSetback = 150; // set by hand after the upgrade
+    expect(migrateProject(JSON.parse(JSON.stringify(later))).rules.postEndSetback).toBe(150);
+  });
 });
+

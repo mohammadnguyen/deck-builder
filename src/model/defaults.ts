@@ -7,8 +7,11 @@ import { CATALOG } from './catalog';
  * AS 1684.2 / supplier tables (or an engineer) before construction. Everything
  * here is editable in the Rules panel.
  */
-/** bumped when a default changes in a way saved rule sets should follow once (2: composite joists at 400) */
-export const RULES_VERSION = 2;
+/**
+ * bumped when a default changes in a way saved rule sets should follow once
+ * (2: composite joists at 400; 3: bearers out to the deck edge, end stumps under the bearer ends)
+ */
+export const RULES_VERSION = 3;
 
 export function defaultRules(): RuleSet {
   return {
@@ -48,9 +51,11 @@ export function defaultRules(): RuleSet {
     battenScrewsPerPost: 4,
     hangerNails: 6,
     skewNailsPerCrossing: 3,
-    postEndSetback: 150,
+    // end stumps sit under the bearer ends (0 = the stump's outer face under the bearer end)
+    postEndSetback: 0,
     minBearerGap: 300,
-    bearerEndInset: 45,
+    // bearers run out to the deck edge, under the edge joists
+    bearerEndInset: 0,
     braceHeight: 1200,
     engineerHeight: 3000,
     lowDeckClearance: 400,

@@ -10,8 +10,8 @@ import type { Product } from './types';
  */
 const HW_LENGTHS = [1800, 2100, 2400, 2700, 3000, 3300, 3600, 3900, 4200, 4500, 4800, 5100, 5400];
 const TP_DECK_LENGTHS = [3000, 3600, 4200, 4800, 5400, 6000];
-const GFT_FRAMING_LENGTHS = [4800, 5400, 6000];
-const FRAMING_LENGTHS = [3000, 3600, 4200, 4800, 5400, 6000];
+/** H3 treated pine framing (MGP10 / F7) is stocked from 2.4 m to 6.0 m in 0.3 m steps */
+const PINE_LENGTHS = [2400, 2700, 3000, 3300, 3600, 3900, 4200, 4500, 4800, 5100, 5400, 5700, 6000];
 
 export const CATALOG: Product[] = [
   // ---- composite decking (Green Forest Timber) ----
@@ -73,28 +73,28 @@ export const CATALOG: Product[] = [
     id: 'tp-90x45', category: 'framing', isFraming: true, family: 'treatedPine',
     name: { zh: 'H3 treated pine 90x45 F7/MGP10', en: 'H3 treated pine 90x45 F7/MGP10' },
     ref: 'H3 Treated Pine 90x45mm F7/MGP 10, 4.8 m $35.28 / 6.0 m $44.10',
-    width: 45, depth: 90, stockLengths: [4800, 6000], unit: 'm', defaultPrice: 7.35,
+    width: 45, depth: 90, stockLengths: PINE_LENGTHS, unit: 'm', defaultPrice: 7.35,
   },
   {
     id: 'tp-140x45', category: 'framing', isFraming: true, family: 'treatedPine',
     name: { zh: 'H3 treated pine 140x45 F7/MGP10', en: 'H3 treated pine 140x45 F7/MGP10' },
     ref: 'H3 Treated Pine 140x45mm F7/MGP10, 4.8 m $50.40 / 5.4 m $56.70 / 6.0 m $63.00',
-    width: 45, depth: 140, stockLengths: GFT_FRAMING_LENGTHS, unit: 'm', defaultPrice: 10.5,
+    width: 45, depth: 140, stockLengths: PINE_LENGTHS, unit: 'm', defaultPrice: 10.5,
   },
   {
     id: 'tp-190x45', category: 'framing', isFraming: true, family: 'treatedPine',
     name: { zh: 'H3 treated pine 190x45 MGP10，估价', en: 'H3 treated pine 190x45 MGP10, estimate' },
-    width: 45, depth: 190, stockLengths: FRAMING_LENGTHS, unit: 'm', defaultPrice: 14.5,
+    width: 45, depth: 190, stockLengths: PINE_LENGTHS, unit: 'm', defaultPrice: 14.5,
   },
   {
     id: 'tp-240x45', category: 'framing', isFraming: true, family: 'treatedPine',
     name: { zh: 'H3 treated pine 240x45 MGP10，估价', en: 'H3 treated pine 240x45 MGP10, estimate' },
-    width: 45, depth: 240, stockLengths: FRAMING_LENGTHS, unit: 'm', defaultPrice: 19.5,
+    width: 45, depth: 240, stockLengths: PINE_LENGTHS, unit: 'm', defaultPrice: 19.5,
   },
   {
     id: 'tp-290x45', category: 'framing', family: 'treatedPine',
     name: { zh: 'H3 treated pine 290x45（楼梯 stringer），估价', en: 'H3 treated pine 290x45 (stair stringers), estimate' },
-    width: 45, depth: 290, stockLengths: [3000, 3600, 4200, 4800, 5400, 6000], unit: 'm', defaultPrice: 25,
+    width: 45, depth: 290, stockLengths: PINE_LENGTHS, unit: 'm', defaultPrice: 25,
   },
   {
     id: 'tp-90x45-h4', category: 'framing', family: 'treatedPine',

@@ -1,6 +1,6 @@
 import type { Axis, BreakerLayout, DeckParams, Pt, RuleSet, Seg } from '../model/types';
 import { bbox, clipHorizontal, clipVertical, edges, pointInPolygon, swapPoly, swapPt, validatePolygon, type Edge } from './geometry';
-import { splitRun } from './cutlist';
+import { packPieces, splitRun } from './cutlist';
 import type { WarningItem } from './warnings';
 
 /** Decks at or above this height are designed for balcony loads (reduced spans). */
@@ -233,6 +233,11 @@ export interface LayoutContext {
   edgeBoardMaxStock: number;
   joistMaxStock: number;
   bearerMaxStock: number;
+  /** stock lengths the joists and the bearers come in: each is cut from the one length that buys the least timber */
+  joistStockLengths?: number[];
+  bearerStockLengths?: number[];
+  /** stump / post width, so a bearer end sits fully on its end stump */
+  postWidth?: number;
 }
 
 /**
@@ -615,6 +620,7 @@ export function computeLayout(
   const bearers: BearerRun[] = [];
   let maxBearerSpanUsed = 0;
   let bearerCounter = 0;
+  const bearerJobs: { index: number; xs: number; xe: number; postXs: number[]; onWall: boolean }[] = [];
   lines.forEach((line, li) => {
     const prevGap = li > 0 ? line.pos - lines[li - 1].pos : line.pos - bb.minY;
     const nextGap = li + 1 < lines.length ? lines[li + 1].pos - line.pos : bb.maxY - line.pos;
@@ -665,8 +671,11 @@ export function computeLayout(
       if (length < 200) continue;
       const houseStart = onHouseVertical(x0, line.pos);
       const houseEnd = onHouseVertical(x1, line.pos);
-      const sbS = houseStart ? rules.houseBearerInset : rules.postEndSetback;
-      const sbE = houseEnd ? rules.houseBearerInset : rules.postEndSetback;
+      // a bearer end sits fully on its stump (the stump's outer face under the bearer end); at a house wall
+      // the stump keeps the house inset clear of the wall footing
+      const endSet = (ctx.postWidth ?? 100) / 2 + rules.postEndSetback;
+      const sbS = houseStart ? rules.houseBearerInset : endSet;
+      const sbE = houseEnd ? rules.houseBearerInset : endSet;
       const pStart = xs + sbS;
       const pEnd = xe - sbE;
       const postXs: number[] = [];
@@ -682,18 +691,8 @@ export function computeLayout(
       }
       maxBearerSpanUsed = Math.max(maxBearerSpanUsed, postSpacing);
       const id = `B${++bearerCounter}`;
-      const pieces: number[][] = [];
-      const splices: number[][] = [];
-      const maxLen = ctx.bearerMaxStock - rules.joistEndAllowance;
-      const first = splitRun(xs, xe, postXs, maxLen, 600);
-      pieces.push(first.pieces.map((p) => p + rules.joistEndAllowance));
-      splices.push(first.joins);
-      if (params.bearerLaminations === 2) {
-        // stagger the second lamination by splitting from the opposite end
-        const rev = splitRun(0, length, postXs.map((p) => xe - p), maxLen, 600);
-        pieces.push(rev.pieces.map((p) => p + rules.joistEndAllowance));
-        splices.push(rev.joins.map((j) => xe - j));
-      }
+      // pieces are cut once the stock length is chosen (below), from these
+      bearerJobs.push({ index: bearers.length, xs, xe, postXs, onWall });
       if (onWall) {
         ledgers.push({
           edgeIndex: edgeIndex ?? line.edgeIndex ?? -1,
@@ -710,8 +709,8 @@ export function computeLayout(
         seg: { a: { x: xs, y: line.pos }, b: { x: xe, y: line.pos } },
         length,
         posts: postXs.map((x) => ({ x, y: line.pos })),
-        pieces,
-        splices,
+        pieces: [],
+        splices: [],
         flw,
         maxSpan,
         postSpacing,
@@ -720,6 +719,68 @@ export function computeLayout(
       });
     }
   });
+
+  // ---- bearer pieces: a join only over a stump, the two pieces half each; the two laminations join over
+  //      different stumps; all cut from the one stock length that buys the least timber ----
+  const splitBearer = (job: (typeof bearerJobs)[number], maxLen: number): { pieces: number[]; joins: number[]; off: boolean }[] => {
+    const sup = job.onWall ? [] : job.postXs;
+    const a = splitRun(job.xs, job.xe, sup, maxLen, 600);
+    const plies = [{ pieces: a.pieces, joins: a.joins, off: a.offSupport && !job.onWall }];
+    if (params.bearerLaminations === 2) {
+      const len = job.xe - job.xs;
+      const fromEnd = sup.map((p) => job.xe - p);
+      const rev = (firstTarget?: number) => {
+        const r = splitRun(0, len, fromEnd, maxLen, 600, firstTarget);
+        return { pieces: r.pieces, joins: r.joins.map((j) => job.xe - j), off: r.offSupport && !job.onWall };
+      };
+      const clash = (r: { joins: number[] }) => r.joins.some((j) => a.joins.some((k) => Math.abs(j - k) < 1));
+      let b = rev();
+      if (clash(b)) {
+        // the second lamination's first join moves back a stump until no join shares a stump with the first's
+        for (const dist of fromEnd.filter((x) => x > 600 && x <= maxLen).sort((p, q) => q - p)) {
+          const r = rev(dist + 0.5);
+          if (!clash(r) && !r.off) {
+            b = r;
+            break;
+          }
+        }
+      }
+      plies.push(b);
+    }
+    return plies;
+  };
+  const bStocks = [...new Set(ctx.bearerStockLengths?.length ? ctx.bearerStockLengths : [ctx.bearerMaxStock])].sort((p, q) => p - q);
+  let bearerStock = bStocks[bStocks.length - 1];
+  let bearerScore = Infinity;
+  for (const Lb of bStocks) {
+    const maxLen = Lb - rules.joistEndAllowance;
+    const pcs: number[] = [];
+    let ok = true;
+    let joins = 0;
+    for (const job of bearerJobs) {
+      for (const ply of splitBearer(job, maxLen)) {
+        if (ply.off) ok = false;
+        joins += ply.joins.length;
+        pcs.push(...ply.pieces.map((p) => p + rules.joistEndAllowance));
+      }
+    }
+    if (!ok) continue;
+    // fewest joins first (a bearer that fits one stick is never joined), then the least timber bought;
+    // a tie goes to the longer length
+    const score = joins * 1e7 + packPieces(pcs, [Lb], rules.kerf).totalStockLength;
+    if (score <= bearerScore) {
+      bearerScore = score;
+      bearerStock = Lb;
+    }
+  }
+  let bearerJoinOffPost = false;
+  for (const job of bearerJobs) {
+    const plies = splitBearer(job, bearerStock - rules.joistEndAllowance);
+    bearers[job.index].pieces = plies.map((p) => p.pieces.map((x) => x + rules.joistEndAllowance));
+    bearers[job.index].splices = plies.map((p) => p.joins);
+    if (plies.some((p) => p.off)) bearerJoinOffPost = true;
+  }
+  if (bearerJoinOffPost) warnings.push({ severity: 'warn', key: 'layout.bearerJoinOffPost' });
 
   // ---- joists ----
   const bearerPositions = lines.map((l) => l.pos);
@@ -730,12 +791,45 @@ export function computeLayout(
   let totalHangers = 0;
   let joistBearerCrossings = 0;
   let offSupportJoins = false;
+  let joistJoinOffBearer = false;
   let frameJoists = 0;
-  for (const c of joistXs) {
-    const intervals = clipVertical(poly, c.x);
-    for (const [y0, y1] of intervals) {
+  // joist runs; outside flush framing a run longer than a stick is joined only over a bearer (the two pieces
+  // half each), every end landing on a bearer, cut from the one stock length that buys the least timber
+  const jruns: { c: { x: number; kind: JoistKind }; y0: number; y1: number }[] = [];
+  for (const c of joistXs) for (const [y0, y1] of clipVertical(poly, c.x)) if (y1 - y0 >= 100) jruns.push({ c, y0, y1 });
+  const jStocks = [...new Set(ctx.joistStockLengths?.length ? ctx.joistStockLengths : [ctx.joistMaxStock])].sort((p, q) => p - q);
+  let joistStock = jStocks[jStocks.length - 1];
+  if (!ctx.flush) {
+    let jScore = Infinity;
+    for (const Lj of jStocks) {
+      const maxLen = Lj - rules.joistEndAllowance;
+      const pcs: number[] = [];
+      let ok = true;
+      let joins = 0;
+      for (const r of jruns) {
+        const s = splitRun(r.y0, r.y1, bearerPositions.filter((p) => p > r.y0 && p < r.y1), maxLen, 600);
+        if (s.offSupport) {
+          ok = false;
+          break;
+        }
+        joins += s.joins.length;
+        pcs.push(...s.pieces.map((p) => p + rules.joistEndAllowance));
+      }
+      if (!ok) continue;
+      // fewest joins first (a joist that fits one stick is never joined), then the least timber bought
+      const score = joins * 1e7 + packPieces(pcs, [Lj], rules.kerf).totalStockLength;
+      if (score <= jScore) {
+        jScore = score;
+        joistStock = Lj;
+      }
+    }
+  }
+  for (const r of jruns) {
+    const c = r.c;
+    {
+      const y0 = r.y0;
+      const y1 = r.y1;
       const length = y1 - y0;
-      if (length < 100) continue;
       if (c.kind === 'frame') frameJoists++;
       if (ctx.flush) {
         // one piece per bay between consecutive supports, hung on a joist support at each end
@@ -765,8 +859,8 @@ export function computeLayout(
       const crossings = bearerPositions.filter((p) => p > y0 + 1 && p < y1 - 1).length;
       const hangers = ledgerPositions.filter((p) => Math.abs(p - y0) < 1 || Math.abs(p - y1) < 1).length;
       const supportsInside = bearerPositions.filter((p) => p > y0 && p < y1);
-      const split = splitRun(y0, y1, supportsInside, ctx.joistMaxStock - rules.joistEndAllowance, 600);
-      if (split.offSupport) offSupportJoins = true;
+      const split = splitRun(y0, y1, supportsInside, joistStock - rules.joistEndAllowance, 600);
+      if (split.offSupport) joistJoinOffBearer = true;
       joistBearerCrossings += crossings;
       totalHangers += hangers;
       joists.push({
@@ -783,6 +877,7 @@ export function computeLayout(
       });
     }
   }
+  if (joistJoinOffBearer) warnings.push({ severity: 'warn', key: 'layout.joistJoinOffBearer' });
   for (const l of ledgers) l.hangers = ctx.flush ? joists.filter((j) => Math.abs(j.seg.a.y - l.seg.a.y) < 1 || Math.abs(j.seg.b.y - l.seg.a.y) < 1).length : 0;
   const joistPositions = joistXs.map((c) => c.x);
 

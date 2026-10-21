@@ -437,4 +437,57 @@ describe('design', () => {
       }
     }
   });
+  it('frames by the company rules: stumps under bearer ends and joins, joist joins over bearers, one length per timber', () => {
+    const decks: [string, { x: number; y: number }[], number[]][] = [
+      ['sample L', L, [0]],
+      ['shop L', [{ x: 0, y: 0 }, { x: 11300, y: 0 }, { x: 11300, y: 7800 }, { x: 6500, y: 7800 }, { x: 6500, y: 2350 }, { x: 0, y: 2350 }], [0]],
+      ['wide rect, freestanding', [{ x: 0, y: 0 }, { x: 12000, y: 0 }, { x: 12000, y: 4800 }, { x: 0, y: 4800 }], []],
+    ];
+    for (const [name, deck, houseEdges] of decks) {
+      for (const lam of [1, 2] as const) {
+        for (const axis of ['x', 'y'] as const) {
+          const p = newProject(name, true);
+          p.deck = deck;
+          p.houseEdges = houseEdges;
+          p.house = houseEdges.length ? [[{ x: -1500, y: 0 }, { x: 13500, y: 0 }]] : [];
+          p.stairs = [];
+          p.params.bearerLaminations = lam;
+          p.params.boardAxis = axis;
+          if (!houseEdges.length) p.params.attachment = 'freestanding';
+          const d = computeDesign(p);
+          const lay = d.layout!;
+          const half = (d.postProductId === 'post-100x100-h4' ? 100 : 90) / 2;
+          for (const b of lay.bearers) {
+            if (b.onWall) continue;
+            const horizontal = Math.abs(b.seg.a.y - b.seg.b.y) < 0.5;
+            const at = (q: { x: number; y: number }) => (horizontal ? q.x : q.y);
+            const posts = b.posts.map(at).sort((a, c) => a - c);
+            const lo = Math.min(at(b.seg.a), at(b.seg.b));
+            const hi = Math.max(at(b.seg.a), at(b.seg.b));
+            // every join sits on a stump centre (each piece half), and the two laminations join on different stumps
+            for (const joins of b.splices) for (const j of joins) expect(posts.some((x) => Math.abs(x - j) < 0.5)).toBe(true);
+            if (b.splices.length === 2) for (const j of b.splices[0]) expect(b.splices[1].some((k) => Math.abs(k - j) < 0.5)).toBe(false);
+            // the ends sit fully on their stumps (a house end keeps its stump off the wall)
+            if (!b.houseStart) expect(posts[0] - half).toBeLessThanOrEqual(lo + 0.5);
+            if (!b.houseEnd) expect(posts[posts.length - 1] + half).toBeGreaterThanOrEqual(hi - 0.5);
+          }
+          // joist joins only over a bearer
+          const supports = lay.supports.map((s) => s.pos);
+          for (const j of lay.joists) for (const sp of j.splices) expect(supports.some((x) => Math.abs(x - sp) < 0.5)).toBe(true);
+          // one stock length per timber product, and no join warnings
+          for (const l of d.bom.lines) expect(l.stockBreakdown?.length ?? 0).toBeLessThanOrEqual(1);
+          expect(d.warnings.some((w) => w.key === 'layout.bearerJoinOffPost' || w.key === 'layout.joistJoinOffBearer')).toBe(false);
+        }
+      }
+    }
+  });
+  it('never joins a joist or a bearer that fits one stick', () => {
+    const d = computeDesign(newProject('s', true)); // 4.2 m joists, 6 m bearers on stumps
+    expect(d.layout!.joists.every((j) => j.splices.length === 0)).toBe(true);
+    // H3 pine comes in 2.4 to 6.0 m: the joists are all cut from one of them
+    const joists = d.bom.lines.find((l) => l.productId === 'tp-90x45')!;
+    expect(joists.stockBreakdown!.length).toBe(1);
+    expect(joists.stockBreakdown![0].length % 300).toBe(0);
+  });
 });
+

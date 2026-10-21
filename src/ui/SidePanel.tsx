@@ -5,6 +5,7 @@ import { CATALOG, CONCRETE_PRODUCTS, DECKING_PRODUCTS, FRAMING_PRODUCTS, POST_PR
 import { defaultRules } from '../model/defaults';
 import type { DeckParams, Pt, RuleSet } from '../model/types';
 import { useApp, type PanelTab } from '../state';
+import { breakersForAxis } from '../utils/breakers';
 import { money } from '../utils/format';
 import { Chk, Group, Num, Sel } from './fields';
 
@@ -69,7 +70,7 @@ function ParamsPanel() {
             { value: 'x', label: t('p.boardAxis.x') },
             { value: 'y', label: t('p.boardAxis.y') },
           ]}
-          onChange={(v) => updateProject((pr) => ({ ...pr, params: { ...pr.params, boardAxis: v as DeckParams['boardAxis'] }, breakers: null }), 'h.boardAxis')}
+          onChange={(v) => updateProject((pr) => ({ ...pr, params: { ...pr.params, boardAxis: v as DeckParams['boardAxis'] }, breakers: breakersForAxis(pr, v as DeckParams['boardAxis']) }), 'h.boardAxis')}
         />
         <Sel
           label={t('p.attachment')}
@@ -122,6 +123,7 @@ function ParamsPanel() {
             <Num label={t('p.joistSpacingMax')} value={p.joistSpacingMax} onChange={(v) => set('joistSpacingMax', v)} step={50} min={300} max={900} />
           )}
         </div>
+        {p.joistSpacingMode === 'fixed' && p.joistSpacing > design.joistSpacingCap && <p className="hint warn">{t('p.joistSpacingCapped', { cap: design.joistSpacingCap })}</p>}
         <Chk label={t('p.edgeBoard')} checked={p.edgeBoard} onChange={(v) => set('edgeBoard', v)} />
         {p.edgeBoard && (
           <Sel

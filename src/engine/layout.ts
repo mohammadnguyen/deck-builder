@@ -369,19 +369,23 @@ export function computeLayout(
   interface BandBreaker { xc: number; y0: number; y1: number; aligned: boolean; id: string; manual: boolean }
   const bandBreakers: BandBreaker[] = [];
   const breakerSaving: { n: number; saving: number }[] = [];
-  const manualItems = ctx.manualBreakers && ctx.manualBreakers.axis === boardAxis && params.breakerBoards !== 'off' ? ctx.manualBreakers.items : null;
+  // hand-placed breakers count only where breakers are on for this decking (they stay in the project for when
+  // they are on again)
+  const manualItems = ctx.manualBreakers && ctx.manualBreakers.axis === boardAxis && ctx.breakerBoards ? ctx.manualBreakers.items : null;
+  const inter = (p: [number, number][], q: [number, number][]): [number, number][] => {
+    const out: [number, number][] = [];
+    for (const [a, b] of p) for (const [c, d] of q) if (Math.min(b, d) - Math.max(a, c) > 1) out.push([Math.max(a, c), Math.min(b, d)]);
+    return out;
+  };
+  // stretches across the boards where the whole width of a breaker strip centred on xc lies inside the field
+  const stripIntervals = (xc: number): [number, number][] => inter(clipVertical(fieldPoly, xc - strip / 2 + 1), clipVertical(fieldPoly, xc + strip / 2 - 1));
   if (manualItems) {
     // hand-placed: each breaker runs where its whole width lies inside the field, within its own extent
-    const inter = (p: [number, number][], q: [number, number][]): [number, number][] => {
-      const out: [number, number][] = [];
-      for (const [a, b] of p) for (const [c, d] of q) if (Math.min(b, d) - Math.max(a, c) > 1) out.push([Math.max(a, c), Math.min(b, d)]);
-      return out;
-    };
     for (const m of manualItems) {
       if (!Number.isFinite(m.pos)) continue;
       const lo = m.from === null ? -Infinity : Math.min(m.from, m.to ?? Infinity);
       const hi = m.to === null ? Infinity : Math.max(m.to, m.from ?? -Infinity);
-      for (const [a, b] of inter(clipVertical(fieldPoly, m.pos - strip / 2 + 1), clipVertical(fieldPoly, m.pos + strip / 2 - 1))) {
+      for (const [a, b] of stripIntervals(m.pos)) {
         const y0 = Math.max(a, lo);
         const y1 = Math.min(b, hi);
         if (y1 - y0 >= 50) bandBreakers.push({ xc: m.pos, y0, y1, aligned: false, id: m.id, manual: true });
@@ -459,9 +463,6 @@ export function computeLayout(
     }
     breakerRuns.push({ ...b });
   }
-  breakerRuns.forEach((b, i) => {
-    if (!b.manual) b.id = `B${i + 1}`;
-  });
 
   const houseX = houseEdges.filter((i) => E[i] && E[i].axis === 'x');
   const houseY = houseEdges.filter((i) => E[i] && E[i].axis === 'y');
@@ -470,6 +471,66 @@ export function computeLayout(
     attachment = 'freestanding';
     if (houseEdges.length) warnings.push({ severity: 'warn', key: 'layout.wallBearerNotPossible' });
   }
+
+  // ---- board rows, and where each breaker ends ----
+  const pitch = bw + gap;
+  const fbb = bbox(fieldPoly);
+  const houseAtBottom = houseX.length > 0 && Math.abs(E[houseX[0]].a.y - bb.maxY) < 1;
+  // row 1 starts at the house wall when the boards are laid from it, else at the far edge board
+  const startsAtHouse = houseAtBottom || houseX.some((i) => Math.abs(E[i].a.y - bb.minY) < 1);
+  const rowBounds = (y: number): [number, number] | null => {
+    let top: number;
+    let bot: number;
+    if (!houseAtBottom) {
+      top = fbb.minY + Math.floor((y - fbb.minY) / pitch) * pitch;
+      bot = Math.min(top + bw, fbb.maxY);
+    } else {
+      bot = fbb.maxY - Math.floor((fbb.maxY - y) / pitch) * pitch;
+      top = Math.max(bot - bw, fbb.minY);
+    }
+    return y > top + 0.5 && y < bot - 0.5 ? [top, bot] : null;
+  };
+  const touchesField = (x0: number, x1: number, y: number): boolean => clipHorizontal(fieldPoly, y).some(([a, c]) => Math.min(c, x1) - Math.max(a, x0) > 1);
+  const clearOfOthers = (b: BandBreaker, y0: number, y1: number): boolean => breakerRuns.every((o) => o === b || Math.abs(o.xc - b.xc) >= strip || o.y1 <= y0 + 0.5 || o.y0 >= y1 - 0.5);
+  const fullRunLength = (r: [number, number], xc: number): number => {
+    const t0 = clipHorizontal(fieldPoly, r[0] + 0.5);
+    const b0 = clipHorizontal(fieldPoly, r[1] - 0.5);
+    for (const [a, b] of t0) for (const [c, d] of b0) {
+      const lo = Math.max(a, c);
+      const hi = Math.min(b, d);
+      if (hi - lo > 1 && xc >= lo && xc <= hi) return hi - lo;
+    }
+    return 0;
+  };
+  // A breaker that ends part-way through a board row is moved, so the row's boards stop at it instead of
+  // overlapping it or leaving a hole:
+  // - the field goes on under the whole strip to the row's edge: the breaker runs on through the row only when
+  //   that row's board would otherwise be longer than a board, else it stops at the row (the board passes it);
+  // - the field stops inside the row (an edge board): the breaker runs to it;
+  // - the field goes on under part of the strip only (the side of a notch runs through it): the breaker stops
+  //   at the row before, and that row runs through whole.
+  for (const b of breakerRuns) {
+    for (const end of ['y0', 'y1'] as const) {
+      const y = b[end];
+      const r = rowBounds(y);
+      if (!r) continue;
+      const outward = end === 'y0' ? r[0] : r[1];
+      const inward = end === 'y0' ? r[1] : r[0];
+      // how far beyond this end the whole strip stays inside the field
+      const iv = stripIntervals(b.xc).find(([a, c]) => y >= a - 1 && y <= c + 1);
+      const fe = iv ? (end === 'y0' ? iv[0] : iv[1]) : y;
+      if (end === 'y0' ? fe <= outward + 0.5 : fe >= outward - 0.5) {
+        const through = fullRunLength(r, b.xc) > maxBoard && clearOfOthers(b, Math.min(y, outward), Math.max(y, outward));
+        b[end] = through ? outward : inward;
+      } else if (touchesField(b.xc - strip / 2, b.xc + strip / 2, (fe + outward) / 2)) b[end] = inward;
+      else b[end] = fe;
+    }
+  }
+  // a run that came to nothing (a breaker shorter than a row) is dropped, before it is given joists or an id
+  for (let i = breakerRuns.length - 1; i >= 0; i--) if (breakerRuns[i].y1 - breakerRuns[i].y0 < 50) breakerRuns.splice(i, 1);
+  breakerRuns.forEach((b, i) => {
+    if (!b.manual) b.id = `B${i + 1}`;
+  });
 
   // ---- joist positions along x: edge joists, double joists under the edge board joint, then even fill per bay ----
   const fixedXs: { x: number; kind: JoistKind }[] = [];
@@ -882,64 +943,13 @@ export function computeLayout(
   const joistPositions = joistXs.map((c) => c.x);
 
   // ---- field boards (inside the picture frame when edge boards are on) ----
-  const pitch = bw + gap;
-  const fbb = bbox(fieldPoly);
-  const houseAtBottom = houseX.length > 0 && Math.abs(E[houseX[0]].a.y - bb.maxY) < 1;
-  // row 1 starts at the house wall when the boards are laid from it, else at the far edge board
-  const startsAtHouse = houseAtBottom || houseX.some((i) => Math.abs(E[i].a.y - bb.minY) < 1);
-  // a breaker that ends part-way through a board row is moved to a row boundary, so the row's boards stop at
-  // it instead of overlapping it or leaving a hole: where the field goes on past the end, an automatic breaker
-  // runs on through the row only when that row's board would otherwise be longer than a board, and otherwise
-  // stops at the row (the row's board passes its end); a hand-placed end goes to the nearest boundary
-  const rowBounds = (y: number): [number, number] | null => {
-    let top: number;
-    let bot: number;
-    if (!houseAtBottom) {
-      top = fbb.minY + Math.floor((y - fbb.minY) / pitch) * pitch;
-      bot = Math.min(top + bw, fbb.maxY);
-    } else {
-      bot = fbb.maxY - Math.floor((fbb.maxY - y) / pitch) * pitch;
-      top = Math.max(bot - bw, fbb.minY);
-    }
-    return y > top + 0.5 && y < bot - 0.5 ? [top, bot] : null;
-  };
-  const fieldHas = (x0: number, x1: number, y: number): boolean => clipHorizontal(fieldPoly, y).some(([a, c]) => a <= x0 + 0.5 && c >= x1 - 0.5);
-  const clearOfOthers = (b: BandBreaker, y0: number, y1: number): boolean => breakerRuns.every((o) => o === b || Math.abs(o.xc - b.xc) >= strip || o.y1 <= y0 + 0.5 || o.y0 >= y1 - 0.5);
-  const fullRunLength = (r: [number, number], xc: number): number => {
-    const t0 = clipHorizontal(fieldPoly, r[0] + 0.5);
-    const b0 = clipHorizontal(fieldPoly, r[1] - 0.5);
-    for (const [a, b] of t0) for (const [c, d] of b0) {
-      const lo = Math.max(a, c);
-      const hi = Math.min(b, d);
-      if (hi - lo > 1 && xc >= lo && xc <= hi) return hi - lo;
-    }
-    return 0;
-  };
-  for (const b of breakerRuns) {
-    for (const end of ['y0', 'y1'] as const) {
-      const y = b[end];
-      const r = rowBounds(y);
-      if (!r) continue;
-      const beyond = end === 'y0' ? (r[0] + y) / 2 : (y + r[1]) / 2;
-      // the field stops at this end (an edge board): the breaker stops there too
-      if (!fieldHas(b.xc - strip / 2, b.xc + strip / 2, beyond)) continue;
-      const outward = end === 'y0' ? r[0] : r[1];
-      const inward = end === 'y0' ? r[1] : r[0];
-      let target: number;
-      if (b.manual) target = Math.abs(y - r[0]) <= Math.abs(r[1] - y) ? r[0] : r[1];
-      else {
-        const through = fullRunLength(r, b.xc) > maxBoard && clearOfOthers(b, Math.min(y, outward), Math.max(y, outward));
-        target = through ? outward : inward;
-      }
-      b[end] = target;
-    }
-  }
-  // a run that came to nothing (a hand-placed breaker shorter than a row) is dropped
-  for (let i = breakerRuns.length - 1; i >= 0; i--) if (breakerRuns[i].y1 - breakerRuns[i].y0 < 50) breakerRuns.splice(i, 1);
   const boards: BoardRow[] = [];
   let boardLm = 0;
   let boardJoins = 0;
   let screws = 0;
+  // a piece of board this short or shorter is taken up by the gaps; anything longer is laid (and shown), never
+  // left as a hole in the deck
+  const minPiece = 10;
   const splitAtBreakers = (iv: [number, number], yc: number): [number, number][] => {
     let parts: [number, number][] = [iv];
     for (const b of breakerRuns) {
@@ -950,8 +960,8 @@ export function computeLayout(
       for (const [a, c] of parts) {
         if (s1 <= a || s0 >= c) next.push([a, c]);
         else {
-          if (s0 - a > 50) next.push([a, s0]);
-          if (c - s1 > 50) next.push([s1, c]);
+          if (s0 - a > minPiece) next.push([a, s0]);
+          if (c - s1 > minPiece) next.push([s1, c]);
         }
       }
       parts = next;
@@ -977,7 +987,7 @@ export function computeLayout(
   const levelYs = [...new Set(fieldPoly.map((p) => Math.round(p.y * 10) / 10))].sort((p, q) => p - q);
   const makeRun = (x0: number, x1: number, yc: number, width: number, ripped: boolean, k: number): BoardRun | null => {
     const length = x1 - x0;
-    if (length < 50) return null;
+    if (length <= minPiece) return null;
     const J = joistPositions.filter((x) => x > x0 - 1 && x < x1 + 1);
     const inner = joistPositions.filter((x) => x > x0 + rules.minBoardPiece && x < x1 - rules.minBoardPiece);
     const firstTarget = Math.max(rules.minBoardPiece + 1, maxBoard - (k % 3) * rules.staggerOffset);
@@ -1054,6 +1064,23 @@ export function computeLayout(
     boards.push({ index: k, pos: yc, width: visible, ripped: rowRipped, runs });
   }
   if (offSupportJoins) warnings.push({ severity: 'info', key: 'layout.joinOffSupport' });
+  // a breaker hard up to the edge or to another breaker leaves no board between; a little way off it leaves a
+  // sliver that is hard to fix down: say so, so the breaker can be moved
+  {
+    let n = 0;
+    let shortest = Infinity;
+    for (const row of boards) for (const run of row.runs) {
+      if (run.length >= 100) continue;
+      const x0 = Math.min(run.seg.a.x, run.seg.b.x);
+      const x1 = Math.max(run.seg.a.x, run.seg.b.x);
+      const yc = run.seg.a.y;
+      const abuts = breakerRuns.some((b) => yc >= b.y0 - 0.5 && yc <= b.y1 + 0.5 && (Math.abs(x1 - (b.xc - strip / 2)) < 1 || Math.abs(x0 - (b.xc + strip / 2)) < 1));
+      if (!abuts) continue;
+      n++;
+      shortest = Math.min(shortest, run.length);
+    }
+    if (n) warnings.push({ severity: 'warn', key: 'layout.breakerShortPiece', params: { n, len: Math.round(shortest) } });
+  }
   // hand-placed breakers that leave a run longer than one board: those rows need joins
   if (manualItems && boardJoins > 0) warnings.push({ severity: 'warn', key: 'layout.breakerJoins', params: { n: boardJoins } });
   const ripMap = new Map<string, RipInfo>();
@@ -1146,7 +1173,6 @@ export function computeLayout(
   let breakerScrews = 0;
   for (const b of breakerRuns) {
     const length = b.y1 - b.y0;
-    if (length < 100) continue;
     const parts = Math.max(1, Math.ceil(length / maxBoard));
     const pieces = Array.from({ length: parts }, () => length / parts + rules.boardEndAllowance);
     const screws = (Math.floor(length / 450) + 1) * rules.screwsPerCrossing;

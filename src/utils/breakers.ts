@@ -1,5 +1,5 @@
-import { clipHorizontal, clipVertical } from '../engine/geometry';
-import type { BoardRow, BoardRun, LayoutResult } from '../engine/layout';
+import { clipHorizontal, clipVertical, normalizePolygon } from '../engine/geometry';
+import { resolveBoardAxis, type BoardRow, type BoardRun, type LayoutResult } from '../engine/layout';
 import type { Axis, BreakerLayout, ManualBreaker, Project, Pt } from '../model/types';
 
 /*
@@ -17,6 +17,17 @@ export const clipAcross = (poly: Pt[], axis: Axis, a: number): [number, number][
 const intersect = (p: [number, number][], q: [number, number][]): [number, number][] => {
   const out: [number, number][] = [];
   for (const [a, b] of p) for (const [c, d] of q) if (Math.min(b, d) - Math.max(a, c) > 1) out.push([Math.max(a, c), Math.min(b, d)]);
+  return out;
+};
+const subtract = (p: [number, number][], [c, d]: [number, number]): [number, number][] => {
+  const out: [number, number][] = [];
+  for (const [a, b] of p) {
+    if (d <= a || c >= b) out.push([a, b]);
+    else {
+      if (c - a > 1) out.push([a, c]);
+      if (b - d > 1) out.push([d, b]);
+    }
+  }
   return out;
 };
 
@@ -46,13 +57,34 @@ export function stripClip(lay: LayoutResult, pos: number): [number, number][] {
   return intersect(clipAcross(lay.fieldPoly, lay.boardAxis, pos - s), clipAcross(lay.fieldPoly, lay.boardAxis, pos + s));
 }
 
+/*
+ * An end stored as null ("to the edge") runs to the end of the breaker's line: the engine lays such a breaker
+ * over every stretch of its line in that direction. So null is only ever written for an end at the very first
+ * (from) or very last (to) edge of the line; an end at the edge of an inner stretch (a leg of a U, past a notch)
+ * is stored as its number, or the breaker would also be laid across the other legs.
+ */
+const firstEdge = (clips: [number, number][]): number | null => (clips.length ? clips[0][0] : null);
+const lastEdge = (clips: [number, number][]): number | null => (clips.length ? clips[clips.length - 1][1] : null);
+const atEdge = (v: number, edge: number | null): boolean => edge !== null && Math.abs(v - edge) < 1;
+
+/**
+ * Where a breaker at `pos` may run across the boards: inside the field and clear of the other breakers (two
+ * breaker boards side by side, one gap apart, are fine; closer they would lie on top of each other).
+ */
+export function freeClip(lay: LayoutResult, pos: number, id: string): [number, number][] {
+  let out = stripClip(lay, pos);
+  const near = lay.boardWidth + lay.boardGap - 1;
+  for (const o of breakerSpans(lay)) if (o.id !== id && Math.abs(o.pos - pos) < near) out = subtract(out, [o.c0, o.c1]);
+  return out;
+}
+
 /** Hand-placed breakers that reproduce the breakers on the plan (ends at the field edge become "to the edge"). */
 export function freezeBreakers(lay: LayoutResult): BreakerLayout {
   const items: ManualBreaker[] = [];
   for (const b of breakerSpans(lay)) {
-    const iv = stripClip(lay, b.pos).find(([a, c]) => b.c0 >= a - 1 && b.c1 <= c + 1);
-    const from = iv && Math.abs(b.c0 - iv[0]) < 1 ? null : b.c0;
-    const to = iv && Math.abs(b.c1 - iv[1]) < 1 ? null : b.c1;
+    const clips = stripClip(lay, b.pos);
+    const from = atEdge(b.c0, firstEdge(clips)) ? null : b.c0;
+    const to = atEdge(b.c1, lastEdge(clips)) ? null : b.c1;
     const same = items.find((it) => it.id === b.id);
     if (same) {
       // one breaker that comes back as two runs (split by a notch): keep one item covering both
@@ -80,10 +112,25 @@ export function updateBreaker(bl: BreakerLayout, id: string, patch: Partial<Omit
 export function movedBreaker(lay: LayoutResult, item: ManualBreaker, span: BreakerSpan, pos: number): Partial<Omit<ManualBreaker, 'id'>> {
   const mid = (span.c0 + span.c1) / 2;
   const clips = stripClip(lay, pos);
-  const iv = clips.find(([a, b]) => mid >= a && mid <= b) ?? null;
-  const from = item.from === null && (!iv || Math.abs(iv[0] - span.c0) > 1) ? span.c0 : item.from;
-  const to = item.to === null && (!iv || Math.abs(iv[1] - span.c1) > 1) ? span.c1 : item.to;
+  const k = clips.findIndex(([a, b]) => mid >= a && mid <= b);
+  // still "to the edge" only where that edge is the end of the line at the new place, and where it was
+  const keepFrom = k === 0 && atEdge(span.c0, clips[0][0]);
+  const keepTo = k >= 0 && k === clips.length - 1 && atEdge(span.c1, clips[k][1]);
+  const from = item.from === null && !keepFrom ? span.c0 : item.from;
+  const to = item.to === null && !keepTo ? span.c1 : item.to;
   return { pos, from, to };
+}
+
+/**
+ * "Run to the edges": the breaker runs over the whole stretch of its line that holds it, up to the field
+ * edges or the next breaker in the way.
+ */
+export function extendedBreaker(lay: LayoutResult, span: BreakerSpan): Partial<Omit<ManualBreaker, 'id'>> {
+  const clips = stripClip(lay, span.pos);
+  const mid = (span.c0 + span.c1) / 2;
+  const iv = freeClip(lay, span.pos, span.id).find(([a, b]) => mid >= a - 1 && mid <= b + 1);
+  if (!iv) return { from: span.c0, to: span.c1 };
+  return { from: atEdge(iv[0], firstEdge(clips)) ? null : iv[0], to: atEdge(iv[1], lastEdge(clips)) ? null : iv[1] };
 }
 
 export function removeBreaker(bl: BreakerLayout, id: string): BreakerLayout {
@@ -182,11 +229,13 @@ export function mainBay(bands: BayBand[]): BayBand | null {
 
 /**
  * Snap a dragged breaker end to the edge of a board row (a start to a row's near edge, an end to
- * its far edge) or to the edge of the field, which is stored as null ("to the edge board").
+ * its far edge) or to the edge of the field, which is stored as null ("to the edge board") at the
+ * ends of the breaker's line. With `id` the end also stops short of the other breakers.
  */
-export function snapBreakerEnd(lay: LayoutResult, pos: number, value: number, end: 'from' | 'to', other: number): number | null {
+export function snapBreakerEnd(lay: LayoutResult, pos: number, value: number, end: 'from' | 'to', other: number, id?: string): number | null {
   const clips = stripClip(lay, pos);
-  const iv = clips.find(([a, b]) => other >= a - 1 && other <= b + 1) ?? clips[0];
+  const free = id === undefined ? clips : freeClip(lay, pos, id);
+  const iv = free.find(([a, b]) => other >= a - 1 && other <= b + 1) ?? free[0];
   if (!iv) return null;
   const cands = [end === 'from' ? iv[0] : iv[1]];
   for (const r of lay.boards) {
@@ -197,30 +246,42 @@ export function snapBreakerEnd(lay: LayoutResult, pos: number, value: number, en
   const ok = cands.filter((v) => (end === 'from' ? v <= other - minLen : v >= other + minLen));
   const pool = ok.length ? ok : cands;
   const best = pool.reduce((p, q) => (Math.abs(q - value) < Math.abs(p - value) ? q : p));
-  const atEdge = end === 'from' ? Math.abs(best - iv[0]) < 1 : Math.abs(best - iv[1]) < 1;
-  return atEdge ? null : best;
+  return atEdge(best, end === 'from' ? firstEdge(clips) : lastEdge(clips)) ? null : best;
 }
 
 /**
  * Where a new breaker goes: across the middle of the longest board run, over the rows that share
- * that run's stretch of field (one band of the deck).
+ * that run's stretch of field (one band of the deck) and whose boards still pass that place.
  */
 export function suggestBreaker(lay: LayoutResult): Omit<ManualBreaker, 'id'> | null {
   const ax = lay.boardAxis;
+  const span = (run: BoardRun): [number, number] => {
+    const a = alongOf(ax, run.seg.a);
+    const b = alongOf(ax, run.seg.b);
+    return [Math.min(a, b), Math.max(a, b)];
+  };
+  // whole-width boards only: a strip ripped where a row meets a notch is not a row of its own
+  const whole = (row: BoardRow, run: BoardRun) => run.width >= row.width - 1;
   let best: { row: BoardRow; run: BoardRun } | null = null;
-  for (const row of lay.boards) for (const run of row.runs) if (!best || run.length > best.run.length) best = { row, run };
+  for (const row of lay.boards) for (const run of row.runs) if (whole(row, run) && (!best || run.length > best.run.length)) best = { row, run };
   if (!best) return null;
-  const a0 = Math.min(alongOf(ax, best.run.seg.a), alongOf(ax, best.run.seg.b));
-  const a1 = Math.max(alongOf(ax, best.run.seg.a), alongOf(ax, best.run.seg.b));
+  const [a0, a1] = span(best.run);
   const pos = Math.round((a0 + a1) / 2 / 10) * 10;
+  const half = stripWidth(lay) / 2;
   const ivAt = (c: number) => clipAlong(lay.fieldPoly, ax, c).find(([a, b]) => pos >= a && pos <= b) ?? null;
   const ref = ivAt(best.row.pos);
   if (!ref) return null;
   const rows = [...lay.boards].sort((p, q) => p.pos - q.pos);
   const k = rows.indexOf(best.row);
+  // a row belongs to the band when its field there is the same stretch and its boards still run through the
+  // breaker's place (no breaker there yet)
   const same = (r: BoardRow) => {
     const iv = ivAt(r.pos);
-    return !!iv && Math.abs(iv[0] - ref[0]) < 1 && Math.abs(iv[1] - ref[1]) < 1;
+    if (!iv || Math.abs(iv[0] - ref[0]) >= 1 || Math.abs(iv[1] - ref[1]) >= 1) return false;
+    return r.runs.some((u) => {
+      const [u0, u1] = span(u);
+      return whole(r, u) && u0 <= pos - half + 1 && u1 >= pos + half - 1;
+    });
   };
   let i0 = k;
   let i1 = k;
@@ -228,8 +289,19 @@ export function suggestBreaker(lay: LayoutResult): Omit<ManualBreaker, 'id'> | n
   while (i1 < rows.length - 1 && same(rows[i1 + 1])) i1++;
   const c0 = rows[i0].pos - rows[i0].width / 2;
   const c1 = rows[i1].pos + rows[i1].width / 2;
-  const iv = stripClip(lay, pos).find(([a, b]) => (c0 + c1) / 2 >= a && (c0 + c1) / 2 <= b);
-  return { pos, from: iv && c0 <= iv[0] + 1 ? null : c0, to: iv && c1 >= iv[1] - 1 ? null : c1 };
+  const clips = stripClip(lay, pos);
+  const first = firstEdge(clips);
+  const last = lastEdge(clips);
+  return { pos, from: first !== null && c0 <= first + 1 ? null : c0, to: last !== null && c1 >= last - 1 ? null : c1 };
+}
+
+/**
+ * The hand-placed breakers to keep when the board direction setting changes: all of them while the boards
+ * still run the same way (picking the direction they already run in), none when the frame is laid out again.
+ */
+export function breakersForAxis(p: Project, pref: 'auto' | Axis): BreakerLayout | null {
+  if (!p.breakers) return null;
+  return resolveBoardAxis(normalizePolygon(p.deck), p.houseEdges, pref) === p.breakers.axis ? p.breakers : null;
 }
 
 /** Breakers of a project mirrored left to right with the deck (mx maps an x to its mirror). */

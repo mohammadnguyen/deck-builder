@@ -65,6 +65,8 @@ export interface DesignResult {
   /** joists set out at exact centres (fixed spacing, or composite by the company rule), short space last */
   joistSetout: boolean;
   joistSetoutSpacing: number;
+  /** breaker boards are on for this decking (automatic for composite, or switched on); hand-placed ones apply only then */
+  breakersOn: boolean;
   bom: BomResult;
   warnings: WarningItem[];
   pathway: Pathway;
@@ -99,13 +101,22 @@ export function computeDesign(project: Project): DesignResult {
   };
   const emptyBom: BomResult = { lines: [], removed: [], cutlists: [], linesTotal: 0, discount: 0, delivery: 0, subtotal: 0, exGst: 0, gst: 0, total: 0, pricesIncludeGst: params.pricesIncludeGst };
 
+  const maxTreadSpan = rules.deckingMaxJoistSpacing[decking.id] ?? decking.maxJoistSpacing ?? 450;
+  const joistSpacingCap = Math.min(params.joistSpacingMax || 500, maxTreadSpan || 500);
+  const joistSpacingTarget = Math.min(joistSpacingCap, rules.joistSpacingTarget || joistSpacingCap);
+  // fixed spacing is set out from one end of each bay (never wider than the decking allows); composite follows
+  // the company rule (set out at its cap)
+  const joistSetout = params.joistSpacingMode === 'fixed' || (decking.family === 'composite' && rules.compositeJoistSetout !== false);
+  const joistSetoutSpacing = params.joistSpacingMode === 'fixed' ? Math.min(params.joistSpacing, joistSpacingCap) : joistSpacingCap;
+  const breakersOn = params.breakerBoards === 'on' || (params.breakerBoards === 'auto' && decking.family === 'composite');
+
   if (!valid.ok) {
     return {
       ok: false, problem: valid.problem, poly, edges: [], areaM2: 0, perimeterM: 0, bb: bbox(poly), datum: { x: 0, y: 0 },
       layout: null, levels, postProductId: 'post-90x90-h4', postLength: 0, stairs: [], balustrade: emptyBal,
       braces: { count: 0, length: 0 }, footings: { count: 0, type: params.footingType, depth: params.footingDepth, diameter: params.footingDiameter, padSize: params.padSize, padDepth: params.padDepth, concreteM3: 0, bags: 0 },
       fascia: [], fasciaProductId: decking.fasciaProductId ?? decking.id, edgeBoardProductId: decking.edgeBoardProductId ?? decking.id,
-      joistSpacingText: String(params.joistSpacing), joistSpacingCap: params.joistSpacingMax, joistSpacingTarget: params.joistSpacing, joistSetout: params.joistSpacingMode === 'fixed', joistSetoutSpacing: params.joistSpacing, bom: emptyBom,
+      joistSpacingText: String(Math.round(joistSetout ? joistSetoutSpacing : joistSpacingTarget)), joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, breakersOn, bom: emptyBom,
       warnings: [{ severity: 'error', key: `polygon.${valid.problem}` }], pathway: 'approvalRequired', method: [],
     };
   }
@@ -121,12 +132,6 @@ export function computeDesign(project: Project): DesignResult {
     params.edgeBoardProductId !== 'auto' && PRODUCT_MAP[resolveProductId(params.edgeBoardProductId)]
       ? resolveProductId(params.edgeBoardProductId)
       : decking.edgeBoardProductId && PRODUCT_MAP[decking.edgeBoardProductId] ? decking.edgeBoardProductId : decking.id;
-  const maxTreadSpan = rules.deckingMaxJoistSpacing[decking.id] ?? decking.maxJoistSpacing ?? 450;
-  const joistSpacingCap = Math.min(params.joistSpacingMax || 500, maxTreadSpan || 500);
-  const joistSpacingTarget = Math.min(joistSpacingCap, rules.joistSpacingTarget || joistSpacingCap);
-  // fixed spacing is set out from one end of each bay; composite follows the company rule (set out at its cap)
-  const joistSetout = params.joistSpacingMode === 'fixed' || (decking.family === 'composite' && rules.compositeJoistSetout !== false);
-  const joistSetoutSpacing = params.joistSpacingMode === 'fixed' ? params.joistSpacing : joistSpacingCap;
 
   // the stump the bearers sit on (sized by height when automatic): a bearer end sits fully on it
   let postProductId = params.postProductId;
@@ -143,7 +148,7 @@ export function computeDesign(project: Project): DesignResult {
     flush,
     edgeBoard: params.edgeBoard,
     edgeBoardWidth: PRODUCT_MAP[edgeBoardProductId]?.width ?? decking.width ?? 86,
-    breakerBoards: params.breakerBoards === 'on' || (params.breakerBoards === 'auto' && decking.family === 'composite'),
+    breakerBoards: breakersOn,
     manualBreakers: project.breakers ?? null,
     joistSetout,
     joistSetoutSpacing,
@@ -352,7 +357,7 @@ export function computeDesign(project: Project): DesignResult {
 
   return {
     ok: true, poly, edges: E, areaM2, perimeterM, bb, datum: { x: bb.minX, y: bb.minY }, layout, levels, postProductId, postLength,
-    stairs, balustrade, braces: { count: braceCount, length: braceLength }, footings, fascia, fasciaProductId, edgeBoardProductId, joistSpacingText, joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, bom,
+    stairs, balustrade, braces: { count: braceCount, length: braceLength }, footings, fascia, fasciaProductId, edgeBoardProductId, joistSpacingText, joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, breakersOn, bom,
     warnings: compliance.warnings, pathway: compliance.pathway, method,
   };
 }

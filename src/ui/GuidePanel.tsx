@@ -4,7 +4,7 @@ import { DECKING_PRODUCTS, PRODUCT_MAP } from '../model/catalog';
 import type { Project } from '../model/types';
 import { useApp } from '../state';
 import { money } from '../utils/format';
-import { currentBreakers, nextBreakerId, suggestBreaker } from '../utils/breakers';
+import { breakersForAxis, currentBreakers, nextBreakerId, suggestBreaker } from '../utils/breakers';
 import { addStairOnLongestEdge, detectShape, housePolylineFor, makeShape, mirrorProject, shapeDims, topEdgeIndex, type ShapeKind } from '../utils/shapes';
 import { Chk, Num, Seg } from './fields';
 import { SidePanel } from './SidePanel';
@@ -105,11 +105,13 @@ export function GuidePanel() {
     return `${money(price)}${t(`unit.${prod.unit}`)}`;
   };
 
-  // board direction: the whole frame is laid out again, so hand-placed breakers start over
+  // board direction: the whole frame is laid out again, so hand-placed breakers start over (unless the boards
+  // already run that way)
   const setBoardAxis = (v: 'auto' | 'x' | 'y') => {
     if (v === p.boardAxis) return;
-    updateProject((pr) => ({ ...pr, params: { ...pr.params, boardAxis: v }, breakers: null }), 'h.boardAxis');
-    if (ui.selection?.type === 'breaker') setUi({ selection: null });
+    const kept = breakersForAxis(project, v);
+    updateProject((pr) => ({ ...pr, params: { ...pr.params, boardAxis: v }, breakers: breakersForAxis(pr, v) }), 'h.boardAxis');
+    if (!kept && ui.selection?.type === 'breaker') setUi({ selection: null });
   };
   const lay = design.ok ? design.layout : null;
   const addBreaker = () => {
@@ -254,7 +256,7 @@ export function GuidePanel() {
         {lay && <p className="hint">{design.joistSetout ? t('g.joistSetoutNote', { spacing: Math.round(design.joistSetoutSpacing) }) : t('g.joistSpacingNote', { cap: design.joistSpacingCap, spacing: design.joistSpacingText })}</p>}
         <Chk label={t('g.edgeBoard')} checked={p.edgeBoard} onChange={(v) => setParam('edgeBoard', v)} />
         {p.edgeBoard && design.ok && <p className="hint">{t('g.edgeBoardNote', { product: productName(design.edgeBoardProductId, lang) })}</p>}
-        {lay && p.breakerBoards !== 'off' && (
+        {lay && design.breakersOn && (
           <>
             <div className="brk-row">
               <span>{t('g.breakers', { n: lay.breakers.length, mode: t(lay.breakerMode === 'manual' ? 'g.breakers.manual' : 'g.breakers.auto') })}</span>

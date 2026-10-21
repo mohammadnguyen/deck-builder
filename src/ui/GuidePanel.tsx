@@ -4,6 +4,7 @@ import { DECKING_PRODUCTS, PRODUCT_MAP } from '../model/catalog';
 import type { Project } from '../model/types';
 import { useApp } from '../state';
 import { money } from '../utils/format';
+import { currentBreakers, nextBreakerId, suggestBreaker } from '../utils/breakers';
 import { addStairOnLongestEdge, detectShape, housePolylineFor, makeShape, mirrorProject, shapeDims, topEdgeIndex, type ShapeKind } from '../utils/shapes';
 import { Chk, Num, Seg } from './fields';
 import { SidePanel } from './SidePanel';
@@ -63,6 +64,7 @@ export function GuidePanel() {
         houseEdges,
         house: wallKind === 'none' ? [] : [housePolylineFor(deck, 0)],
         stairs: [],
+        breakers: null,
         params: { ...pr.params, balustrade: { ...pr.params.balustrade, edgeOverride: {} } },
       };
       for (let i = 0; i < pr.stairs.length; i++) next = addStairOnLongestEdge(next);
@@ -101,6 +103,23 @@ export function GuidePanel() {
     const price = project.prices[id] ?? prod.defaultPrice;
     if (prod.unit === 'm' && prod.stockLengths && prod.stockLengths.length === 1) return `${money(price * (prod.stockLengths[0] / 1000))}${t('g.perBoard')}`;
     return `${money(price)}${t(`unit.${prod.unit}`)}`;
+  };
+
+  // board direction: the whole frame is laid out again, so hand-placed breakers start over
+  const setBoardAxis = (v: 'auto' | 'x' | 'y') => {
+    if (v === p.boardAxis) return;
+    updateProject((pr) => ({ ...pr, params: { ...pr.params, boardAxis: v }, breakers: null }), 'h.boardAxis');
+    if (ui.selection?.type === 'breaker') setUi({ selection: null });
+  };
+  const lay = design.ok ? design.layout : null;
+  const addBreaker = () => {
+    if (!lay) return;
+    const s = suggestBreaker(lay);
+    if (!s) return;
+    const base = currentBreakers(project, lay);
+    const id = nextBreakerId(base);
+    updateProject((pr) => ({ ...pr, breakers: { ...base, items: [...base.items, { id, ...s }] } }), 'h.addBreaker');
+    setUi({ selection: { type: 'breaker', id } });
   };
 
   const exposedEdges = project.deck.length >= 4 ? polyEdges(project.deck).filter((e) => !project.houseEdges.includes(e.index)) : [];
@@ -218,9 +237,50 @@ export function GuidePanel() {
             </button>
           ))}
         </div>
+        <div className="dir-row">
+          <span className="lbl">{t('g.boardDir')}</span>
+          <Seg<'auto' | 'x' | 'y'>
+            label={t('g.boardDir')}
+            value={p.boardAxis}
+            options={[
+              { value: 'auto', label: t('g.boardDir.auto') },
+              { value: 'x', label: t('g.boardDir.x') },
+              { value: 'y', label: t('g.boardDir.y') },
+            ]}
+            onChange={setBoardAxis}
+          />
+        </div>
+        {lay && <p className="hint">{t('g.boardDirHint', { now: t(`g.boardDir.now.${lay.boardAxis}`) })}</p>}
+        {lay && <p className="hint">{t('g.joistSpacingNote', { cap: design.joistSpacingCap, spacing: design.joistSpacingText })}</p>}
         <Chk label={t('g.edgeBoard')} checked={p.edgeBoard} onChange={(v) => setParam('edgeBoard', v)} />
         {p.edgeBoard && design.ok && <p className="hint">{t('g.edgeBoardNote', { product: productName(design.edgeBoardProductId, lang) })}</p>}
-        {design.ok && design.layout && design.layout.breakers.length > 0 && <p className="hint">{t('g.breakerNote')}</p>}
+        {lay && p.breakerBoards !== 'off' && (
+          <>
+            <div className="brk-row">
+              <span>{t('g.breakers', { n: lay.breakers.length, mode: t(lay.breakerMode === 'manual' ? 'g.breakers.manual' : 'g.breakers.auto') })}</span>
+              <button type="button" className="btn ghost small" onClick={addBreaker} disabled={!lay.boards.length}>
+                {t('g.breakerAdd')}
+              </button>
+              {lay.breakerMode === 'manual' && (
+                <button
+                  type="button"
+                  className="btn ghost small"
+                  onClick={() => {
+                    updateProject((pr) => ({ ...pr, breakers: null }), 'h.breakerAuto');
+                    if (ui.selection?.type === 'breaker') setUi({ selection: null });
+                  }}
+                >
+                  {t('canvas.autoBreakers')}
+                </button>
+              )}
+            </div>
+            {lay.breakerMode === 'manual' && lay.totals.boardJoins > 0 && <p className="hint warn">{t('layout.breakerJoins', { n: lay.totals.boardJoins })}</p>}
+            <p className="hint">
+              {lay.breakers.length > 0 && lay.breakerMode === 'auto' ? `${t('g.breakerNote')} ` : ''}
+              {t('g.breakerEditHint')}
+            </p>
+          </>
+        )}
       </section>
 
       <section className="gstep">

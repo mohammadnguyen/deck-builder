@@ -1,5 +1,6 @@
 import type { Project, Pt, Stair } from '../model/types';
 import { bbox, edges, moveVertex, normalizePolygon, polygonAreaMm2, validatePolygon, type Edge } from '../engine/geometry';
+import { mirrorBreakers } from './breakers';
 
 export type ShapeKind = 'rect' | 'L' | 'U' | 'custom';
 
@@ -363,5 +364,5 @@ export function mirrorProject(p: Project): Project {
     return e && e.axis === 'x' ? { ...s, offset: Math.max(0, e.length - s.offset - s.width) } : s;
   });
   const house = p.house.map((pl) => pl.map((q) => ({ x: mx(q.x), y: q.y })));
-  return { ...p, deck, stairs, house };
+  return { ...p, deck, stairs, house, breakers: mirrorBreakers(p.breakers, mx) };
 }

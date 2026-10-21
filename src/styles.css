@@ -41,7 +41,7 @@ button, input, select, textarea { font: inherit; }
 
 main.design { display: flex; flex: 1; min-height: 0; }
 .canvas-wrap { flex: 1; position: relative; min-width: 0; background: #fff; display: flex; flex-direction: column; }
-.canvas { flex: 1; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; }
+.canvas { flex: 1; width: 100%; height: 100%; display: block; touch-action: none; cursor: crosshair; user-select: none; -webkit-user-select: none; }
 .canvas.tool-select { cursor: default; }
 .canvas.tool-pan { cursor: grab; }
 .toolbar {
@@ -354,4 +354,21 @@ ol.steps ul { margin: 6px 0 0 30px; padding: 0 0 0 14px; color: #374151; font-si
   .toolbar .phone-hide { display: none; }
   .canvas-wrap .len-float { position: static; order: -1; transform: none; margin: 6px 8px; }
   .canvas-wrap .len-float input { flex: 1; min-width: 0; width: auto; }
+}
+
+/* step 4: board direction and breakers */
+.dir-row { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+.dir-row .lbl { font-size: 13px; font-weight: 600; white-space: nowrap; }
+.dir-row .seg { flex: 1; margin-bottom: 0; }
+.dir-row .seg button { padding: 7px 4px; font-size: 13px; }
+.brk-row { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; margin-top: 10px; font-size: 13px; font-weight: 600; }
+.brk-row .btn.small { padding: 4px 10px; font-size: 12.5px; font-weight: 500; }
+.edgebar .inline input[type=number] { width: 72px; }
+.guide .hint.warn { color: #b45309; font-weight: 600; }
+
+/* phones: the selection bar spans the drawing; the zoom buttons step aside while it is open (pinch still zooms) */
+@media (max-width: 960px) {
+  .edgebar { left: 8px; right: 8px; bottom: 8px; transform: none; max-width: none; border-radius: 12px; padding: 8px 10px; z-index: 6; }
+  .edgebar > span:first-child { flex-basis: 100%; text-align: center; font-weight: 600; }
+  .canvas-wrap:has(.edgebar) .zoomctl { display: none; }
 }

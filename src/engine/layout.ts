@@ -1,4 +1,4 @@
-import type { Axis, DeckParams, Pt, RuleSet, Seg } from '../model/types';
+import type { Axis, BreakerLayout, DeckParams, Pt, RuleSet, Seg } from '../model/types';
 import { bbox, clipHorizontal, clipVertical, edges, pointInPolygon, swapPoly, swapPt, validatePolygon, type Edge } from './geometry';
 import { splitRun } from './cutlist';
 import type { WarningItem } from './warnings';
@@ -116,6 +116,9 @@ export interface BreakerRun {
   screws: number;
   /** true when it continues an edge board line at an inside corner */
   aligned: boolean;
+  /** stable id: the hand-placed breaker it comes from, or B1, B2... in layout order when automatic */
+  id: string;
+  manual: boolean;
 }
 
 export interface PostInfo {
@@ -151,6 +154,11 @@ export interface LayoutResult {
   boards: BoardRow[];
   /** true when row 1 of the boards is laid from a house wall (else from the far edge board) */
   startsAtHouse: boolean;
+  /** breakers laid out automatically, or placed by hand */
+  breakerMode: 'auto' | 'manual';
+  /** field board width and gap, so the editor can work out row edges and breaker strips */
+  boardWidth: number;
+  boardGap: number;
   /** boards that have to be ripped to width (last row, or rows meeting a notch), grouped by row and width */
   rips: RipInfo[];
   edgeBoards: EdgeBoardRun[];
@@ -198,6 +206,8 @@ export interface LayoutContext {
   edgeBoardWidth: number;
   /** divide runs longer than one board with breaker boards instead of staggered joins */
   breakerBoards: boolean;
+  /** breakers placed by hand (used when they were laid out for the current board direction) */
+  manualBreakers?: BreakerLayout | null;
   kerf: number;
   /** the decking's own joist spacing limit */
   deckingMaxJoistSpacing: number;
@@ -337,10 +347,28 @@ export function computeLayout(
   //      across it (stopping at the edge boards), instead of staggered butt joins ----
   const maxBoard = ctx.deckingMaxStock - rules.boardEndAllowance;
   const strip = bw + 2 * gap;
-  interface BandBreaker { xc: number; y0: number; y1: number; aligned: boolean }
+  interface BandBreaker { xc: number; y0: number; y1: number; aligned: boolean; id: string; manual: boolean }
   const bandBreakers: BandBreaker[] = [];
   const breakerSaving: { n: number; saving: number }[] = [];
-  if (ctx.breakerBoards) {
+  const manualItems = ctx.manualBreakers && ctx.manualBreakers.axis === boardAxis && params.breakerBoards !== 'off' ? ctx.manualBreakers.items : null;
+  if (manualItems) {
+    // hand-placed: each breaker runs where its whole width lies inside the field, within its own extent
+    const inter = (p: [number, number][], q: [number, number][]): [number, number][] => {
+      const out: [number, number][] = [];
+      for (const [a, b] of p) for (const [c, d] of q) if (Math.min(b, d) - Math.max(a, c) > 1) out.push([Math.max(a, c), Math.min(b, d)]);
+      return out;
+    };
+    for (const m of manualItems) {
+      if (!Number.isFinite(m.pos)) continue;
+      const lo = m.from === null ? -Infinity : Math.min(m.from, m.to ?? Infinity);
+      const hi = m.to === null ? Infinity : Math.max(m.to, m.from ?? -Infinity);
+      for (const [a, b] of inter(clipVertical(fieldPoly, m.pos - strip / 2 + 1), clipVertical(fieldPoly, m.pos + strip / 2 - 1))) {
+        const y0 = Math.max(a, lo);
+        const y1 = Math.min(b, hi);
+        if (y1 - y0 >= 50) bandBreakers.push({ xc: m.pos, y0, y1, aligned: false, id: m.id, manual: true });
+      }
+    }
+  } else if (ctx.breakerBoards) {
     const fE = edges(fieldPoly);
     const ys = [...new Set(fieldPoly.map((p) => Math.round(p.y * 10) / 10))].sort((p, q) => p - q);
     for (let bi = 0; bi + 1 < ys.length; bi++) {
@@ -386,12 +414,12 @@ export function computeLayout(
           }
         }
         if (aligned !== null) {
-          bandBreakers.push({ xc: aligned, y0, y1, aligned: true });
+          bandBreakers.push({ xc: aligned, y0, y1, aligned: true, id: '', manual: false });
           continue;
         }
         const n = nWanted;
         const bay = (len - n * strip) / (n + 1);
-        for (let k = 1; k <= n; k++) bandBreakers.push({ xc: x0 + k * bay + (k - 1) * strip + strip / 2, y0, y1, aligned: false });
+        for (let k = 1; k <= n; k++) bandBreakers.push({ xc: x0 + k * bay + (k - 1) * strip + strip / 2, y0, y1, aligned: false, id: '', manual: false });
       }
     }
   }
@@ -405,13 +433,16 @@ export function computeLayout(
   const breakerRuns: BandBreaker[] = [];
   for (const b of bandBreakers) {
     const last = breakerRuns[breakerRuns.length - 1];
-    if (last && Math.abs(last.xc - b.xc) < 1 && Math.abs(last.y1 - b.y0) < 1) {
+    if (last && last.id === b.id && Math.abs(last.xc - b.xc) < 1 && Math.abs(last.y1 - b.y0) < 1) {
       last.y1 = b.y1;
       last.aligned = last.aligned || b.aligned;
       continue;
     }
     breakerRuns.push({ ...b });
   }
+  breakerRuns.forEach((b, i) => {
+    if (!b.manual) b.id = `B${i + 1}`;
+  });
 
   const houseX = houseEdges.filter((i) => E[i] && E[i].axis === 'x');
   const houseY = houseEdges.filter((i) => E[i] && E[i].axis === 'y');
@@ -731,8 +762,10 @@ export function computeLayout(
   const houseAtBottom = houseX.length > 0 && Math.abs(E[houseX[0]].a.y - bb.maxY) < 1;
   // row 1 starts at the house wall when the boards are laid from it, else at the far edge board
   const startsAtHouse = houseAtBottom || houseX.some((i) => Math.abs(E[i].a.y - bb.minY) < 1);
-  // a breaker that ends part-way through a board row runs on to that row's boundary (when the field is
-  // there and no other breaker is), so the row's boards stop at it instead of overlapping or leaving a hole
+  // a breaker that ends part-way through a board row is moved to a row boundary, so the row's boards stop at
+  // it instead of overlapping it or leaving a hole: where the field goes on past the end, an automatic breaker
+  // runs on through the row only when that row's board would otherwise be longer than a board, and otherwise
+  // stops at the row (the row's board passes its end); a hand-placed end goes to the nearest boundary
   const rowBounds = (y: number): [number, number] | null => {
     let top: number;
     let bot: number;
@@ -747,12 +780,37 @@ export function computeLayout(
   };
   const fieldHas = (x0: number, x1: number, y: number): boolean => clipHorizontal(fieldPoly, y).some(([a, c]) => a <= x0 + 0.5 && c >= x1 - 0.5);
   const clearOfOthers = (b: BandBreaker, y0: number, y1: number): boolean => breakerRuns.every((o) => o === b || Math.abs(o.xc - b.xc) >= strip || o.y1 <= y0 + 0.5 || o.y0 >= y1 - 0.5);
+  const fullRunLength = (r: [number, number], xc: number): number => {
+    const t0 = clipHorizontal(fieldPoly, r[0] + 0.5);
+    const b0 = clipHorizontal(fieldPoly, r[1] - 0.5);
+    for (const [a, b] of t0) for (const [c, d] of b0) {
+      const lo = Math.max(a, c);
+      const hi = Math.min(b, d);
+      if (hi - lo > 1 && xc >= lo && xc <= hi) return hi - lo;
+    }
+    return 0;
+  };
   for (const b of breakerRuns) {
-    const r0 = rowBounds(b.y0);
-    if (r0 && fieldHas(b.xc - strip / 2, b.xc + strip / 2, (r0[0] + b.y0) / 2) && clearOfOthers(b, r0[0], b.y0)) b.y0 = r0[0];
-    const r1 = rowBounds(b.y1);
-    if (r1 && fieldHas(b.xc - strip / 2, b.xc + strip / 2, (b.y1 + r1[1]) / 2) && clearOfOthers(b, b.y1, r1[1])) b.y1 = r1[1];
+    for (const end of ['y0', 'y1'] as const) {
+      const y = b[end];
+      const r = rowBounds(y);
+      if (!r) continue;
+      const beyond = end === 'y0' ? (r[0] + y) / 2 : (y + r[1]) / 2;
+      // the field stops at this end (an edge board): the breaker stops there too
+      if (!fieldHas(b.xc - strip / 2, b.xc + strip / 2, beyond)) continue;
+      const outward = end === 'y0' ? r[0] : r[1];
+      const inward = end === 'y0' ? r[1] : r[0];
+      let target: number;
+      if (b.manual) target = Math.abs(y - r[0]) <= Math.abs(r[1] - y) ? r[0] : r[1];
+      else {
+        const through = fullRunLength(r, b.xc) > maxBoard && clearOfOthers(b, Math.min(y, outward), Math.max(y, outward));
+        target = through ? outward : inward;
+      }
+      b[end] = target;
+    }
   }
+  // a run that came to nothing (a hand-placed breaker shorter than a row) is dropped
+  for (let i = breakerRuns.length - 1; i >= 0; i--) if (breakerRuns[i].y1 - breakerRuns[i].y0 < 50) breakerRuns.splice(i, 1);
   const boards: BoardRow[] = [];
   let boardLm = 0;
   let boardJoins = 0;
@@ -871,6 +929,8 @@ export function computeLayout(
     boards.push({ index: k, pos: yc, width: visible, ripped: rowRipped, runs });
   }
   if (offSupportJoins) warnings.push({ severity: 'info', key: 'layout.joinOffSupport' });
+  // hand-placed breakers that leave a run longer than one board: those rows need joins
+  if (manualItems && boardJoins > 0) warnings.push({ severity: 'warn', key: 'layout.breakerJoins', params: { n: boardJoins } });
   const ripMap = new Map<string, RipInfo>();
   for (const row of boards) for (const run of row.runs) {
     if (!run.ripped) continue;
@@ -968,7 +1028,7 @@ export function computeLayout(
     breakerLm += length;
     breakerPieces += parts;
     breakerScrews += screws;
-    breakers.push({ seg: { a: { x: b.xc, y: b.y0 }, b: { x: b.xc, y: b.y1 } }, width: bw, length, pieces, screws, aligned: b.aligned });
+    breakers.push({ seg: { a: { x: b.xc, y: b.y0 }, b: { x: b.xc, y: b.y1 } }, width: bw, length, pieces, screws, aligned: b.aligned, id: b.id, manual: b.manual });
   }
 
   // ---- posts (numbered by line then position) ----
@@ -992,6 +1052,9 @@ export function computeLayout(
     joistSpacingMin,
     boards: boards.map((r) => ({ ...r, runs: r.runs.map(fix) })),
     startsAtHouse,
+    breakerMode: manualItems ? 'manual' : 'auto',
+    boardWidth: bw,
+    boardGap: gap,
     rips,
     edgeBoards: edgeBoards.map((eb) => ({ ...fix(eb), joinPts: swapped ? eb.joinPts.map(swapPt) : eb.joinPts })),
     breakers: breakers.map(fix),

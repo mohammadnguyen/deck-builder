@@ -102,10 +102,11 @@ describe('design', () => {
     // perimeter bearers sit at the deck edge (25 mm to centre), joist ends flush
     const last = lay.supports[lay.supports.length - 1];
     expect(Math.abs(last.pos - (4200 - 25))).toBeLessThan(1);
-    // auto joist spacing: even per bay, between 400 and the 500 cap
-    expect(lay.joistSpacingUsed).toBeLessThanOrEqual(500);
-    expect(lay.joistSpacingMin).toBeGreaterThanOrEqual(400);
-    expect(d.joistSpacingText).toMatch(/^\d+(-\d+)?$/);
+    // composite is framed at no more than 400 centres, evened out per bay: 3265 / 9 and 2210 / 6
+    expect(d.joistSpacingCap).toBe(400);
+    expect(lay.joistSpacingUsed).toBeLessThanOrEqual(400);
+    expect(lay.joistBays.every((b) => b.spacing <= 400 + 1e-9)).toBe(true);
+    expect(d.joistSpacingText).toBe('363-368');
     // picture frame: one edge board per exposed edge, four mitred corners, field inset by board + gap
     expect(lay.edgeBoards.length).toBe(5);
     expect(lay.totals.mitres).toBe(4);

@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { computeDesign, type DesignResult } from './engine';
 import { LangContext, translate } from './i18n';
 import { defaultParams, defaultRules, newProject } from './model/defaults';
-import { PRODUCT_MAP, resolveProductId } from './model/catalog';
+import { PRODUCT_MAP, resolveProductId, CATALOG } from './model/catalog';
 import type { DeckParams, Lang, Project, RuleSet } from './model/types';
 import { canRedo as hCanRedo, canUndo as hCanUndo, currentState, initHistory, jumpHistory, pushHistory, redoHistory, undoHistory, type History } from './utils/history';
 
@@ -11,6 +11,7 @@ export type Selection =
   | { type: 'edge'; index: number }
   | { type: 'vertex'; index: number }
   | { type: 'stair'; id: string }
+  | { type: 'breaker'; id: string }
   | null;
 export interface Layers {
   frame: boolean;
@@ -80,11 +81,15 @@ export function migrateProject(p: Partial<Project>): Project {
   for (const [key, oldJson] of Object.entries(superseded)) {
     if (JSON.stringify(rules.bearerSpan[key]) === oldJson) rules.bearerSpan[key] = dr.bearerSpan[key];
   }
-  // decking spacing caps that still hold the old 400 default follow the company practice (500)
   rules.deckingMaxJoistSpacing = { ...dr.deckingMaxJoistSpacing, ...(rules.deckingMaxJoistSpacing ?? {}) };
-  for (const id of ['modelo-140x23', 'ntw-terrace-us49']) {
-    if (rules.deckingMaxJoistSpacing[id] === 400) rules.deckingMaxJoistSpacing[id] = dr.deckingMaxJoistSpacing[id];
+  // version 2: composite decking is framed at 400 centres; rule sets still on the old 500 default follow
+  // once (a value set after the upgrade is kept, as the version is stored with the rules)
+  if ((p.rules?.rulesVersion ?? 1) < 2) {
+    for (const prod of CATALOG) {
+      if (prod.isDecking && prod.family === 'composite' && rules.deckingMaxJoistSpacing[prod.id] === 500) rules.deckingMaxJoistSpacing[prod.id] = dr.deckingMaxJoistSpacing[prod.id];
+    }
   }
+  rules.rulesVersion = Math.max(p.rules?.rulesVersion ?? 1, dr.rulesVersion ?? 1);
   const params: DeckParams = {
     ...dp,
     ...(p.params ?? {}),
@@ -115,6 +120,7 @@ export function migrateProject(p: Partial<Project>): Project {
     rules,
     params,
     progress: p.progress ?? {},
+    breakers: p.breakers && Array.isArray(p.breakers.items) ? p.breakers : null,
   } as Project;
 }
 
@@ -170,6 +176,7 @@ const historyFor = (store: Store, p: Project): History<Project> => store.histori
 const DISCRETE = new Set([
   'h.shape', 'h.wall', 'h.decking', 'h.edgeBoard', 'h.draw', 'h.house', 'h.moveEdge', 'h.moveVertex', 'h.moveStair',
   'h.addStair', 'h.deleteStair', 'h.edgeLength', 'h.notch', 'h.removeNotch', 'h.mirror', 'h.clear',
+  'h.moveBreaker', 'h.breakerLength', 'h.addBreaker', 'h.deleteBreaker', 'h.breakerAuto', 'h.boardAxis',
 ]);
 
 export function AppProvider({ children }: { children: ReactNode }) {

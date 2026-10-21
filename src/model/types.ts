@@ -112,6 +112,8 @@ export interface StairRules {
 }
 
 export interface RuleSet {
+  /** version of the default rules the set was last brought up to (for one-off upgrades) */
+  rulesVersion?: number;
   /** joist product id -> joist spacing (as string key) -> max span, deck floor below 1 m */
   joistSpan: Record<string, Record<string, number>>;
   /** multiplier applied to joist and bearer spans when the deck is 1 m or higher */
@@ -210,6 +212,24 @@ export interface Product {
   isPost?: boolean;
 }
 
+/**
+ * A breaker board placed by hand. Coordinates are world millimetres: `pos` is the centreline
+ * position along the boards (x when the boards run along x, else y); `from` / `to` are the
+ * extent across the boards, null meaning "to the edge of the field" (the edge board).
+ */
+export interface ManualBreaker {
+  id: string;
+  pos: number;
+  from: number | null;
+  to: number | null;
+}
+
+/** Hand-placed breakers, valid for the board direction they were laid out for. */
+export interface BreakerLayout {
+  axis: Axis;
+  items: ManualBreaker[];
+}
+
 export interface Project {
   id: string;
   name: string;
@@ -227,4 +247,6 @@ export interface Project {
   prices: Record<string, number>;
   /** method step key -> ticked off on site */
   progress: Record<string, boolean>;
+  /** breaker boards placed by hand; null / absent = laid out automatically */
+  breakers?: BreakerLayout | null;
 }

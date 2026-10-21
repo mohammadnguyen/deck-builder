@@ -102,6 +102,12 @@ export function migrateProject(p: Partial<Project>): Project {
   } as DeckParams;
   // company practice: 200 mm auger holes; projects still on the old 300 default follow
   if (params.footingDiameter === 300) params.footingDiameter = 200;
+  // frame sizes: a project still on the old default sizes is sized automatically (the standard frame unless
+  // another is clearly cheaper); sizes someone picked stay as they are
+  if (p.params && p.params.frameSizing === undefined) {
+    const stock = params.joistProductId === 'tp-90x45' && params.bearerProductId === 'tp-140x45' && params.bearerLaminations === 1;
+    params.frameSizing = stock ? 'auto' : 'fixed';
+  }
   if ((params.attachment as string) === 'ledger') {
     params.attachment = 'wall';
     params.wallFixing = 'bolt';

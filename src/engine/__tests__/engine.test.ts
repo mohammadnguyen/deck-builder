@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { defaultRules, newProject } from '../../model/defaults';
+import type { Project } from '../../model/types';
 import { packPieces, splitRun } from '../cutlist';
 import { bayLabel, joistMaxSpan, joistSpaces } from '../layout';
 import { clipHorizontal, clipVertical, detectHouseEdges, edges, normalizePolygon, polygonAreaMm2, validatePolygon } from '../geometry';
@@ -338,10 +339,13 @@ describe('design', () => {
     expect(d.problem).toBe('notOrthogonal');
   });
   it('anchors the house-side bearer to the wall and drops its posts', () => {
+    // the same frame on both, so only the wall makes the difference
     const wall = newProject('wall', true);
     wall.params.attachment = 'wall';
+    wall.params.frameSizing = 'fixed';
     const free = newProject('free', true);
     free.params.attachment = 'freestanding';
+    free.params.frameSizing = 'fixed';
     const dw = computeDesign(wall);
     const df = computeDesign(free);
     expect(dw.layout!.attachment).toBe('wall');
@@ -488,6 +492,74 @@ describe('design', () => {
     const joists = d.bom.lines.find((l) => l.productId === 'tp-90x45')!;
     expect(joists.stockBreakdown!.length).toBe(1);
     expect(joists.stockBreakdown![0].length % 300).toBe(0);
+  });
+});
+
+describe('the most practical frame', () => {
+  const shop = (): Project => {
+    const p = newProject('shop', true);
+    p.deck = [{ x: 0, y: 0 }, { x: 11300, y: 0 }, { x: 11300, y: 7800 }, { x: 6500, y: 7800 }, { x: 6500, y: 2350 }, { x: 0, y: 2350 }];
+    p.houseEdges = [0];
+    p.house = [[{ x: -1500, y: 0 }, { x: 12800, y: 0 }]];
+    p.stairs = [];
+    return p;
+  };
+  const fixedOf = (p: Project): Project => ({ ...p, params: { ...p.params, frameSizing: 'fixed' } });
+
+  it('keeps the standard frame where nothing else is clearly cheaper', () => {
+    const d = computeDesign(newProject('sample', true));
+    expect(d.frame).toMatchObject({ auto: true, standard: true, joistProductId: 'tp-90x45', bearerProductId: 'tp-140x45', bearerLaminations: 1 });
+    expect(d.layout!.posts.length).toBe(computeDesign(fixedOf(newProject('sample', true))).layout!.posts.length);
+  });
+
+  it('uses deeper joists on a big deck when the stumps they save pay for them, and says how much', () => {
+    const p = shop();
+    const d = computeDesign(p);
+    const std = computeDesign(fixedOf(p));
+    expect(d.frame.standard).toBe(false);
+    expect(d.frame.joistProductId).toBe('tp-140x45');
+    expect(d.layout!.posts.length).toBeLessThan(std.layout!.posts.length);
+    expect(d.frame.standardStumps).toBe(std.layout!.posts.length);
+    // the saving is real: materials plus stump labour, more than the margin
+    const labour = p.rules.stumpLabour ?? 40;
+    const saving = std.bom.total + labour * std.layout!.posts.length - (d.bom.total + labour * d.layout!.posts.length);
+    expect(d.frame.saving).toBeCloseTo(saving, 6);
+    expect(saving).toBeGreaterThan(p.rules.frameSwitchMargin ?? 100);
+    // the frame used is the one drawn, listed and ordered
+    expect(d.bom.lines.some((l) => l.productId === 'tp-140x45' && l.tags.includes('joist'))).toBe(true);
+    expect(d.method.length).toBeGreaterThan(0);
+    // with no labour counted the timber alone decides, and the standard frame is cheaper
+    const noLabour = computeDesign({ ...p, rules: { ...p.rules, stumpLabour: 0 } });
+    expect(noLabour.frame.standard).toBe(true);
+  });
+
+  it('only uses the sizes on the list, and only frames that fit under the deck', () => {
+    const p = shop();
+    p.params.deckHeight = 2000;
+    p.rules.frameSizes = ['tp-90x45', 'tp-140x45'];
+    const used = (d: ReturnType<typeof computeDesign>) => [d.frame.joistProductId, d.frame.bearerProductId];
+    for (const id of used(computeDesign(p))) expect(['tp-90x45', 'tp-140x45']).toContain(id);
+    // a low deck: no stocked frame leaves 100 mm under the bearers, so the standard one is drawn and flagged
+    const low = shop();
+    low.params.deckHeight = 300;
+    const dl = computeDesign(low);
+    expect(dl.frame.noFit).toBe(true);
+    expect(dl.frame.standard).toBe(true);
+  });
+
+  it('uses the sizes set by hand when the frame is fixed', () => {
+    const p = shop();
+    p.params = { ...p.params, frameSizing: 'fixed', joistProductId: 'tp-190x45', bearerProductId: 'tp-190x45', bearerLaminations: 2 };
+    const d = computeDesign(p);
+    expect(d.frame).toMatchObject({ auto: false, joistProductId: 'tp-190x45', bearerProductId: 'tp-190x45', bearerLaminations: 2 });
+  });
+
+  it('chooses the same frame whatever was edited by hand in the order list', () => {
+    const p = shop();
+    const plain = computeDesign(p).frame;
+    const edited = computeDesign({ ...p, order: { lines: { 'tp-90x45': { qty: 3 } }, added: [] } }).frame;
+    expect(edited.joistProductId).toBe(plain.joistProductId);
+    expect(edited.saving).toBeCloseTo(plain.saving ?? 0, 6);
   });
 });
 

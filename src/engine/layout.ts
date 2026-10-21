@@ -327,13 +327,37 @@ export function cornerShape(poly: Pt[], i: number): 'convex' | 'concave' {
   return inside >= 3 ? 'concave' : 'convex';
 }
 
-export function computeLayout(
+/** What a frame needs, worked out without laying the boards: enough to price one frame against another. */
+export interface FramePlan {
+  /** stumps */
+  posts: number;
+  /** bearer length along its lines (one ply), wall bearers included */
+  bearerLm: number;
+  /** braces as the bracing counts them: half the bays along each bearer, plus one per line after the first */
+  braceUnits: number;
+  maxBearerSpanUsed: number;
+  /** joist length, and joists crossing (or hung from) bearers */
+  joistLm: number;
+  crossings: number;
+}
+
+export function computeLayout(polyIn: Pt[], houseEdges: number[], params: DeckParams, rules: RuleSet, ctx: LayoutContext): LayoutResult {
+  return layoutImpl(polyIn, houseEdges, params, rules, ctx, false) as LayoutResult;
+}
+
+/** The frame of a layout (bearer lines, bearers and stumps) without the boards: fast, for choosing a frame. */
+export function planFrame(polyIn: Pt[], houseEdges: number[], params: DeckParams, rules: RuleSet, ctx: LayoutContext): FramePlan {
+  return layoutImpl(polyIn, houseEdges, params, rules, ctx, true) as FramePlan;
+}
+
+function layoutImpl(
   polyIn: Pt[],
   houseEdges: number[],
   params: DeckParams,
   rules: RuleSet,
   ctx: LayoutContext,
-): LayoutResult {
+  planOnly: boolean,
+): LayoutResult | FramePlan {
   const warnings: WarningItem[] = [];
   const boardAxis = resolveBoardAxis(polyIn, houseEdges, params.boardAxis);
   const swapped = boardAxis === 'y';
@@ -780,6 +804,57 @@ export function computeLayout(
       });
     }
   });
+  // ---- stumps on one grid: a bearer takes the stump positions already set out on the longer bearers wherever
+  //      that needs no more stumps, so one string line serves every bearer it crosses ----
+  {
+    const grid: number[] = [];
+    const order = bearers
+      .map((_, i) => i)
+      .filter((i) => !bearers[i].onWall)
+      .sort((a, b) => bearers[b].length - bearers[a].length);
+    for (const i of order) {
+      const b = bearers[i];
+      const even = b.posts.map((q) => q.x);
+      if (even.length > 2) {
+        const p0 = even[0];
+        const p1 = even[even.length - 1];
+        // grid lines clear of this bearer's end stumps
+        const cands = grid.filter((g) => g > p0 + 300 && g < p1 - 300).sort((u, v) => u - v);
+        const aligned = [p0];
+        let cur = p0;
+        while (p1 - cur > b.maxSpan + 0.5) {
+          const next = cands.filter((g) => g > cur + 1 && g <= cur + b.maxSpan + 0.5).pop();
+          if (next === undefined) break;
+          aligned.push(next);
+          cur = next;
+        }
+        if (p1 - cur <= b.maxSpan + 0.5 && aligned.length + 1 <= even.length) {
+          aligned.push(p1);
+          b.posts = aligned.map((x) => ({ x, y: b.seg.a.y }));
+          b.postSpacing = Math.max(...aligned.slice(1).map((x, k) => x - aligned[k]));
+          const job = bearerJobs.find((j) => j.index === i);
+          if (job) job.postXs = aligned;
+        }
+      }
+      for (const q of b.posts) if (!grid.some((g) => Math.abs(g - q.x) < 1)) grid.push(q.x);
+    }
+    maxBearerSpanUsed = bearers.reduce((m, b) => Math.max(m, b.postSpacing), 0);
+  }
+  if (planOnly) {
+    let joistLm = 0;
+    for (const c of joistXs) for (const [a, b] of clipVertical(poly, c.x)) joistLm += b - a;
+    let crossings = 0;
+    for (const b of bearers) crossings += joistXs.filter((c) => c.x >= Math.min(b.seg.a.x, b.seg.b.x) - 1 && c.x <= Math.max(b.seg.a.x, b.seg.b.x) + 1).length;
+    const lineCount = new Set(bearers.map((b) => b.lineIndex)).size;
+    return {
+      posts: bearers.reduce((n, b) => n + b.posts.length, 0),
+      bearerLm: bearers.reduce((n, b) => n + b.length, 0),
+      braceUnits: bearers.reduce((n, b) => n + Math.max(0, Math.ceil((b.posts.length - 1) / 2)), 0) + Math.max(0, lineCount - 1),
+      maxBearerSpanUsed,
+      joistLm,
+      crossings,
+    };
+  }
 
   // ---- bearer pieces: a join only over a stump, the two pieces half each; the two laminations join over
   //      different stumps; all cut from the one stock length that buys the least timber ----

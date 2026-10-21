@@ -52,6 +52,11 @@ export interface DeckParams {
   joistSpacingMax: number;
   boardGap: number;
   boardAxis: 'auto' | Axis;
+  /**
+   * auto: the joist and bearer sizes (and single or double bearers) are chosen for the cheapest frame that
+   * meets the spans, counting stump labour; fixed: the three sizes below are used as they are
+   */
+  frameSizing?: 'auto' | 'fixed';
   joistProductId: string;
   bearerProductId: string;
   bearerLaminations: 1 | 2;
@@ -162,6 +167,20 @@ export interface RuleSet {
   stirrupLift: number;
   concreteBagYield: number;
   joistTapeRoll: number;
+  /** automatic frame sizing: the company's standard frame, kept unless another frame saves more than the margin */
+  standardFrame?: FrameSizes;
+  /** labour to dig, concrete and set one stump ($), weighed against timber when the frame is sized */
+  stumpLabour?: number;
+  /** another frame replaces the standard one only when it saves more than this ($) */
+  frameSwitchMargin?: number;
+  /** timber sizes the automatic frame may use (what the supplier stocks) */
+  frameSizes?: string[];
+}
+
+export interface FrameSizes {
+  joist: string;
+  bearer: string;
+  laminations: 1 | 2;
 }
 
 export type Unit = 'm' | 'ea' | 'm2' | 'm3' | 'L' | 'bag' | 'roll';

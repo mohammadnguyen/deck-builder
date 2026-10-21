@@ -1,11 +1,11 @@
 import { PRODUCT_MAP, POST_PRODUCTS, hangerFor, product, resolveProductId } from '../model/catalog';
-import type { Project, Pt } from '../model/types';
+import type { FrameSizes, Project, Pt, RuleSet } from '../model/types';
 import { designBalustrade, type BalustradeDesign } from './balustrade';
 import { buildBom, type BomResult, type CountItem, type Piece } from './bom';
 import { assessCompliance, type Pathway } from './compliance';
 import { splitRun } from './cutlist';
 import { bbox, edges, normalizePolygon, perimeter, polygonAreaMm2, validatePolygon, type BBox, type Edge, type PolygonProblem } from './geometry';
-import { computeLayout, type LayoutResult } from './layout';
+import { computeLayout, planFrame, type LayoutContext, type LayoutResult } from './layout';
 import { buildMethod, type MethodStep } from './method';
 import { designStair, type StairDesign } from './stairs';
 import type { WarningItem } from './warnings';
@@ -67,6 +67,8 @@ export interface DesignResult {
   joistSetoutSpacing: number;
   /** breaker boards are on for this decking (automatic for composite, or switched on); hand-placed ones apply only then */
   breakersOn: boolean;
+  /** the frame used (sized automatically, or as set) */
+  frame: FrameInfo;
   bom: BomResult;
   warnings: WarningItem[];
   pathway: Pathway;
@@ -75,7 +77,125 @@ export interface DesignResult {
 
 const maxStock = (id: string): number => Math.max(...(product(id).stockLengths ?? [6000]));
 
+export interface FrameInfo {
+  joistProductId: string;
+  bearerProductId: string;
+  bearerLaminations: 1 | 2;
+  /** sized automatically (else as set in the settings) */
+  auto: boolean;
+  /** the company's standard frame */
+  standard: boolean;
+  /** another frame replaced the standard one: stumps with each, and what it saves (materials and stump labour) */
+  standardStumps?: number;
+  stumps?: number;
+  saving?: number;
+  /** none of the sizes to choose from fits under the deck: the standard frame is drawn anyway */
+  noFit?: boolean;
+}
+
+/**
+ * The deck's design. With automatic frame sizing the joists and bearers are chosen first: the most practical
+ * frame is the cheapest one that meets the spans, counting the labour of every stump, and the company's
+ * standard frame is kept unless another one saves more than the margin.
+ */
 export function computeDesign(project: Project): DesignResult {
+  if (project.params.frameSizing === 'auto') return autoFrame(project);
+  const p = project.params;
+  return designWith(project, { joistProductId: p.joistProductId, bearerProductId: p.bearerProductId, bearerLaminations: p.bearerLaminations, auto: false, standard: false });
+}
+
+export function standardFrame(rules: RuleSet): FrameSizes {
+  const f = rules.standardFrame;
+  return f && PRODUCT_MAP[f.joist] && PRODUCT_MAP[f.bearer] ? f : { joist: 'tp-90x45', bearer: 'tp-140x45', laminations: 1 };
+}
+const sameFrame = (a: FrameSizes, b: FrameSizes): boolean => a.joist === b.joist && a.bearer === b.bearer && a.laminations === b.laminations;
+
+/** every frame the sizes to choose from allow (joist and bearer sizes with span tables, single or double bearers) */
+export function frameCandidates(rules: RuleSet): FrameSizes[] {
+  const std = standardFrame(rules);
+  const sizes = (rules.frameSizes?.length ? rules.frameSizes : [std.joist, std.bearer]).filter((id) => PRODUCT_MAP[id]);
+  const out: FrameSizes[] = [std];
+  for (const joist of sizes) {
+    if (!rules.joistSpan[joist]) continue;
+    for (const bearer of sizes) for (const laminations of [1, 2] as const) {
+      if (!rules.bearerSpan[`${bearer}|${laminations}`]) continue;
+      const f = { joist, bearer, laminations };
+      if (!out.some((g) => sameFrame(g, f))) out.push(f);
+    }
+  }
+  return out;
+}
+
+function autoFrame(project: Project): DesignResult {
+  const { rules } = project;
+  const std = standardFrame(rules);
+  const labour = rules.stumpLabour ?? 40;
+  const sized = (f: FrameSizes, order = project.order): Project => ({ ...project, order, params: { ...project.params, joistProductId: f.joist, bearerProductId: f.bearer, bearerLaminations: f.laminations } });
+  const info = (f: FrameSizes, extra: Partial<FrameInfo> = {}): FrameInfo => ({ joistProductId: f.joist, bearerProductId: f.bearer, bearerLaminations: f.laminations, auto: true, standard: sameFrame(f, std), ...extra });
+  if (!validatePolygon(normalizePolygon(project.deck)).ok) return designWith(sized(std), info(std));
+  // price every frame from a quick plan of its bearers and stumps
+  let best: { f: FrameSizes; cost: number } | null = null;
+  let stdFits = false;
+  for (const f of frameCandidates(rules)) {
+    const cost = estimateFrame(sized(f), labour);
+    if (cost === null) continue;
+    if (sameFrame(f, std)) stdFits = true;
+    if (!best || cost < best.cost - 0.01) best = { f, cost };
+  }
+  if (!best) return designWith(sized(std), info(std, { noFit: true }));
+  if (sameFrame(best.f, std)) return designWith(sized(std), info(std));
+  // the full designs settle it (without hand edits to the order list, which belong to one frame)
+  const total = (d: DesignResult) => d.bom.total + labour * (d.layout?.posts.length ?? 0);
+  const other = designWith(sized(best.f, null), info(best.f));
+  if (stdFits) {
+    const standard = designWith(sized(std, null), info(std));
+    const saving = total(standard) - total(other);
+    if (!(saving > (rules.frameSwitchMargin ?? 100))) return project.order ? designWith(sized(std), info(std)) : standard;
+    const frame = info(best.f, { standardStumps: standard.layout?.posts.length ?? 0, stumps: other.layout?.posts.length ?? 0, saving });
+    return project.order ? designWith(sized(best.f), frame) : { ...other, frame };
+  }
+  // the standard frame does not fit under the deck: the cheapest one that does
+  const frame = info(best.f, { stumps: other.layout?.posts.length ?? 0 });
+  return project.order ? designWith(sized(best.f), frame) : { ...other, frame };
+}
+
+/** What a frame costs, from a plan of its bearers and stumps: timber, stumps with their concrete, hardware and
+ *  labour, braces and joist fixings. null when the frame does not fit under the deck. */
+function estimateFrame(project: Project, labour: number): number | null {
+  const s = setup(project);
+  if (!s.valid.ok || s.levels.groundClearance < s.rules.minGroundClearance) return null;
+  const { params, rules } = s;
+  const E = edges(s.poly);
+  const houseEdges = project.houseEdges.filter((i) => i >= 0 && i < E.length);
+  const plan = planFrame(s.poly, houseEdges, params, rules, s.ctx);
+  const price = (id: string): number => {
+    const v = project.prices[id];
+    return typeof v === 'number' && Number.isFinite(v) ? v : PRODUCT_MAP[id]?.defaultPrice ?? 0;
+  };
+  const waste = 1 + params.wasteFramingPct / 100;
+  let perStump = (s.postLength / 1000) * price(s.postProductId) + labour;
+  if (params.footingType === 'stump') {
+    const hole = Math.PI * (params.footingDiameter / 2) ** 2 * params.footingDepth;
+    perStump += ((Math.max(0, hole - s.postW * s.postW * params.footingDepth) / 1e9) / rules.concreteBagYield) * price(s.concreteId);
+  } else if (params.footingType === 'stirrup') {
+    perStump += ((params.padSize * params.padSize * params.padDepth) / 1e9 / rules.concreteBagYield) * price(s.concreteId) + price('stirrup-hdg');
+  }
+  if (params.bearerToPost === 'bolted') perStump += rules.boltsPerPost * price('bolt-m12-hdg');
+  else if (params.bearerToPost === 'screwed' || params.bearerToPost === 'checked') perStump += rules.battenScrewsPerPost * price('screw-batten-14gx100');
+  else perStump += price('post-cap-hdg');
+  let cost = (plan.joistLm / 1000) * price(s.joist.id) * waste + ((plan.bearerLm * params.bearerLaminations) / 1000) * price(s.bearer.id) * waste + plan.posts * perStump;
+  if (s.levels.postTop > rules.braceHeight) {
+    const bay = plan.maxBearerSpanUsed > 0 ? Math.min(1800, plan.maxBearerSpanUsed) : 1800;
+    cost += plan.braceUnits * (((Math.hypot(bay, s.levels.postTop) + 200) / 1000) * price('tp-90x45') * waste + 2 * price('bolt-m12-hdg'));
+  }
+  if (s.flush) cost += plan.crossings * 2 * (price(hangerFor(s.joist.id)) + rules.hangerNails * price('nail-75x3.05'));
+  else if (params.joistFixing === 'tripleGrip') cost += plan.crossings * (price('triple-grip') + 6 * price('nail-30x2.8-galv'));
+  else cost += plan.crossings * rules.skewNailsPerCrossing * price('nail-75x3.05');
+  return cost;
+}
+
+/** what every design and every frame plan share: levels, spacing, the stump, and the layout settings */
+function setup(project: Project) {
   const { params, rules } = project;
   const poly = normalizePolygon(project.deck);
   const valid = validatePolygon(poly);
@@ -94,13 +214,6 @@ export function computeDesign(project: Project): DesignResult {
   const levels: Levels = { boardT, joistD, bearerD, joistTop, bearerTop, postTop, groundClearance };
   const bearerWidth = params.bearerLaminations * (bearer.width ?? 45);
   const concreteId = resolveProductId(params.concreteProductId || 'concrete-mix-20kg');
-
-  const emptyBal: BalustradeDesign = {
-    enabled: false, edges: [], segments: [], posts: [], totalLength: 0, railPieces: [], railCount: 2,
-    slatCount: 0, slatLength: 0, wireLength: 0, wireKits: 0, postLength: 0,
-  };
-  const emptyBom: BomResult = { lines: [], removed: [], cutlists: [], linesTotal: 0, discount: 0, delivery: 0, subtotal: 0, exGst: 0, gst: 0, total: 0, pricesIncludeGst: params.pricesIncludeGst };
-
   const maxTreadSpan = rules.deckingMaxJoistSpacing[decking.id] ?? decking.maxJoistSpacing ?? 450;
   const joistSpacingCap = Math.min(params.joistSpacingMax || 500, maxTreadSpan || 500);
   const joistSpacingTarget = Math.min(joistSpacingCap, rules.joistSpacingTarget || joistSpacingCap);
@@ -109,38 +222,23 @@ export function computeDesign(project: Project): DesignResult {
   const joistSetout = params.joistSpacingMode === 'fixed' || (decking.family === 'composite' && rules.compositeJoistSetout !== false);
   const joistSetoutSpacing = params.joistSpacingMode === 'fixed' ? Math.min(params.joistSpacing, joistSpacingCap) : joistSpacingCap;
   const breakersOn = params.breakerBoards === 'on' || (params.breakerBoards === 'auto' && decking.family === 'composite');
-
-  if (!valid.ok) {
-    return {
-      ok: false, problem: valid.problem, poly, edges: [], areaM2: 0, perimeterM: 0, bb: bbox(poly), datum: { x: 0, y: 0 },
-      layout: null, levels, postProductId: 'post-90x90-h4', postLength: 0, stairs: [], balustrade: emptyBal,
-      braces: { count: 0, length: 0 }, footings: { count: 0, type: params.footingType, depth: params.footingDepth, diameter: params.footingDiameter, padSize: params.padSize, padDepth: params.padDepth, concreteM3: 0, bags: 0 },
-      fascia: [], fasciaProductId: decking.fasciaProductId ?? decking.id, edgeBoardProductId: decking.edgeBoardProductId ?? decking.id,
-      joistSpacingText: String(Math.round(joistSetout ? joistSetoutSpacing : joistSpacingTarget)), joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, breakersOn, bom: emptyBom,
-      warnings: [{ severity: 'error', key: `polygon.${valid.problem}` }], pathway: 'approvalRequired', method: [],
-    };
-  }
-
-  const E = edges(poly);
-  const bb = bbox(poly);
-  const areaM2 = polygonAreaMm2(poly) / 1e6;
-  const perimeterM = perimeter(poly) / 1000;
-  const houseEdges = project.houseEdges.filter((i) => i >= 0 && i < E.length);
-
   // ---- edge board product: the decking's solid-edge board, or the decking itself ----
   const edgeBoardProductId =
     params.edgeBoardProductId !== 'auto' && PRODUCT_MAP[resolveProductId(params.edgeBoardProductId)]
       ? resolveProductId(params.edgeBoardProductId)
       : decking.edgeBoardProductId && PRODUCT_MAP[decking.edgeBoardProductId] ? decking.edgeBoardProductId : decking.id;
-
   // the stump the bearers sit on (sized by height when automatic): a bearer end sits fully on it
   let postProductId = params.postProductId;
   if (postProductId === 'auto' || !PRODUCT_MAP[postProductId]) {
     const fit = POST_PRODUCTS.find((p) => (rules.postMaxHeight[p.id] ?? 0) >= postTop);
     postProductId = (fit ?? POST_PRODUCTS[POST_PRODUCTS.length - 1]).id;
   }
-
-  const layout = computeLayout(poly, houseEdges, params, rules, {
+  const postW = product(postProductId).width ?? 90;
+  const postLength =
+    params.footingType === 'stump' ? Math.max(100, postTop + params.footingDepth)
+    : params.footingType === 'stirrup' ? Math.max(100, postTop - rules.stirrupLift)
+    : Math.max(50, postTop);
+  const ctx: LayoutContext = {
     boardWidth: decking.width ?? 86,
     boardGap: params.boardGap,
     joistThickness: joist.width ?? 45,
@@ -160,19 +258,50 @@ export function computeDesign(project: Project): DesignResult {
     bearerMaxStock: maxStock(bearer.id),
     joistStockLengths: joist.stockLengths,
     bearerStockLengths: bearer.stockLengths,
-    postWidth: PRODUCT_MAP[postProductId]?.width ?? 90,
-  });
+    postWidth: postW,
+  };
+  return {
+    params, rules, poly, valid, decking, joist, bearer, flush, boardT, joistD, bearerD, levels, concreteId,
+    maxTreadSpan, joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, breakersOn, edgeBoardProductId,
+    postProductId, postW, postLength, ctx,
+  };
+}
+
+function designWith(project: Project, frame: FrameInfo): DesignResult {
+  const {
+    params, rules, poly, valid, decking, joist, bearer, flush, boardT, joistD, bearerD, levels, concreteId,
+    maxTreadSpan, joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, breakersOn, edgeBoardProductId,
+    postProductId, postW, postLength, ctx,
+  } = setup(project);
+  const { postTop, groundClearance } = levels;
+
+  const emptyBal: BalustradeDesign = {
+    enabled: false, edges: [], segments: [], posts: [], totalLength: 0, railPieces: [], railCount: 2,
+    slatCount: 0, slatLength: 0, wireLength: 0, wireKits: 0, postLength: 0,
+  };
+  const emptyBom: BomResult = { lines: [], removed: [], cutlists: [], linesTotal: 0, discount: 0, delivery: 0, subtotal: 0, exGst: 0, gst: 0, total: 0, pricesIncludeGst: params.pricesIncludeGst };
+
+  if (!valid.ok) {
+    return {
+      ok: false, problem: valid.problem, poly, edges: [], areaM2: 0, perimeterM: 0, bb: bbox(poly), datum: { x: 0, y: 0 },
+      layout: null, levels, postProductId: 'post-90x90-h4', postLength: 0, stairs: [], balustrade: emptyBal,
+      braces: { count: 0, length: 0 }, footings: { count: 0, type: params.footingType, depth: params.footingDepth, diameter: params.footingDiameter, padSize: params.padSize, padDepth: params.padDepth, concreteM3: 0, bags: 0 },
+      fascia: [], fasciaProductId: decking.fasciaProductId ?? decking.id, edgeBoardProductId: decking.edgeBoardProductId ?? decking.id,
+      joistSpacingText: String(Math.round(joistSetout ? joistSetoutSpacing : joistSpacingTarget)), joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, breakersOn, frame, bom: emptyBom,
+      warnings: [{ severity: 'error', key: `polygon.${valid.problem}` }], pathway: 'approvalRequired', method: [],
+    };
+  }
+
+  const E = edges(poly);
+  const bb = bbox(poly);
+  const areaM2 = polygonAreaMm2(poly) / 1e6;
+  const perimeterM = perimeter(poly) / 1000;
+  const houseEdges = project.houseEdges.filter((i) => i >= 0 && i < E.length);
+
+  const layout = computeLayout(poly, houseEdges, params, rules, ctx);
   const spMin = Math.round(layout.joistSpacingMin);
   const spMax = Math.round(layout.joistSpacingUsed);
   const joistSpacingText = joistSetout ? `${Math.round(joistSetoutSpacing)}` : spMin === spMax ? `${spMax}` : `${spMin}-${spMax}`;
-
-  // ---- posts ----
-  const postProd = product(postProductId);
-  const postW = postProd.width ?? 90;
-  const postLength =
-    params.footingType === 'stump' ? Math.max(100, postTop + params.footingDepth)
-    : params.footingType === 'stirrup' ? Math.max(100, postTop - rules.stirrupLift)
-    : Math.max(50, postTop);
 
   // ---- stairs ----
   const clampedStairs = project.stairs
@@ -357,7 +486,7 @@ export function computeDesign(project: Project): DesignResult {
 
   return {
     ok: true, poly, edges: E, areaM2, perimeterM, bb, datum: { x: bb.minX, y: bb.minY }, layout, levels, postProductId, postLength,
-    stairs, balustrade, braces: { count: braceCount, length: braceLength }, footings, fascia, fasciaProductId, edgeBoardProductId, joistSpacingText, joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, breakersOn, bom,
+    stairs, balustrade, braces: { count: braceCount, length: braceLength }, footings, fascia, fasciaProductId, edgeBoardProductId, joistSpacingText, joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, breakersOn, frame, bom,
     warnings: compliance.warnings, pathway: compliance.pathway, method,
   };
 }

@@ -5,8 +5,10 @@ import { CATALOG, CONCRETE_PRODUCTS, DECKING_PRODUCTS, FRAMING_PRODUCTS, POST_PR
 import { defaultRules } from '../model/defaults';
 import type { DeckParams, Pt, RuleSet } from '../model/types';
 import { useApp, type PanelTab } from '../state';
+import { standardFrame } from '../engine';
 import { breakersForAxis } from '../utils/breakers';
 import { money } from '../utils/format';
+import { frameSummary } from '../utils/frame';
 import { Chk, Group, Num, Sel } from './fields';
 
 export function SidePanel() {
@@ -162,17 +164,37 @@ function ParamsPanel() {
         <Chk label={t('p.oil')} checked={p.oil} onChange={(v) => set('oil', v)} />
       </Group>
       <Group title={t('p.group.frame')}>
-        <Sel label={t('p.joist')} value={p.joistProductId} options={framingOpts} onChange={(v) => set('joistProductId', v)} />
-        <Sel label={t('p.bearer')} value={p.bearerProductId} options={framingOpts} onChange={(v) => set('bearerProductId', v)} />
         <Sel
-          label={t('p.bearerLam')}
-          value={String(p.bearerLaminations)}
+          label={t('p.frameSizing')}
+          value={p.frameSizing ?? 'fixed'}
           options={[
-            { value: '1', label: t('p.lam1') },
-            { value: '2', label: t('p.lam2') },
+            { value: 'auto', label: t('p.frameSizing.auto') },
+            { value: 'fixed', label: t('p.frameSizing.fixed') },
           ]}
-          onChange={(v) => set('bearerLaminations', Number(v) as 1 | 2)}
+          onChange={(v) => {
+            // fixing the sizes keeps the frame that is drawn now
+            const f = design.frame;
+            const sizes = v === 'fixed' ? { joistProductId: f.joistProductId, bearerProductId: f.bearerProductId, bearerLaminations: f.bearerLaminations } : {};
+            updateProject((pr) => ({ ...pr, params: { ...pr.params, frameSizing: v as 'auto' | 'fixed', ...sizes } }), 'h.params');
+          }}
         />
+        {p.frameSizing === 'auto' ? (
+          <p className="hint">{frameSummary(design, project.rules, t)}</p>
+        ) : (
+          <>
+            <Sel label={t('p.joist')} value={p.joistProductId} options={framingOpts} onChange={(v) => set('joistProductId', v)} />
+            <Sel label={t('p.bearer')} value={p.bearerProductId} options={framingOpts} onChange={(v) => set('bearerProductId', v)} />
+            <Sel
+              label={t('p.bearerLam')}
+              value={String(p.bearerLaminations)}
+              options={[
+                { value: '1', label: t('p.lam1') },
+                { value: '2', label: t('p.lam2') },
+              ]}
+              onChange={(v) => set('bearerLaminations', Number(v) as 1 | 2)}
+            />
+          </>
+        )}
         <Sel
           label={t('p.joistConnection')}
           value={p.joistConnection}
@@ -472,6 +494,11 @@ function RulesPanel() {
     'hangerNails', 'skewNailsPerCrossing', 'joistSpacingTarget',
   ];
   const stairKeys = ['minRiser', 'maxRiser', 'targetRiser', 'minGoing', 'maxGoing', 'min2RG', 'max2RG', 'maxRisers', 'stringerSpacing', 'nosing'] as const;
+  const framingOpts = FRAMING_PRODUCTS.map((d) => ({ value: d.id, label: productName(d, lang) }));
+  // sizes with a span table can be offered to the automatic frame
+  const sizeChoices = FRAMING_PRODUCTS.filter((d) => r.joistSpan[d.id] || Object.keys(r.bearerSpan).some((k) => k.startsWith(`${d.id}|`)));
+  const std = standardFrame(r);
+  const setStd = (patch: Partial<typeof std>) => setRules((rr) => ({ ...rr, standardFrame: { ...standardFrame(rr), ...patch } }));
   return (
     <div>
       <p className="muted">{t('r.intro')}</p>
@@ -491,6 +518,31 @@ function RulesPanel() {
         </button>
       </div>
       {saved && <small className="ok">{t('r.saved')}</small>}
+      <Group title={t('r.frame')}>
+        <p className="hint">{t('r.frameIntro')}</p>
+        <Sel label={`${t('r.standardFrame')} · ${t('p.joist')}`} value={std.joist} options={framingOpts} onChange={(v) => setStd({ joist: v })} />
+        <Sel label={`${t('r.standardFrame')} · ${t('p.bearer')}`} value={std.bearer} options={framingOpts} onChange={(v) => setStd({ bearer: v })} />
+        <Sel
+          label={`${t('r.standardFrame')} · ${t('p.bearerLam')}`}
+          value={String(std.laminations)}
+          options={[
+            { value: '1', label: t('p.lam1') },
+            { value: '2', label: t('p.lam2') },
+          ]}
+          onChange={(v) => setStd({ laminations: Number(v) as 1 | 2 })}
+        />
+        <Num label={t('r.stumpLabour')} value={r.stumpLabour ?? 40} step={5} min={0} onChange={(v) => setRules((rr) => ({ ...rr, stumpLabour: v }))} />
+        <Num label={t('r.frameSwitchMargin')} value={r.frameSwitchMargin ?? 100} step={10} min={0} onChange={(v) => setRules((rr) => ({ ...rr, frameSwitchMargin: v }))} />
+        <p className="hint">{t('r.frameSizes')}</p>
+        {sizeChoices.map((d) => (
+          <Chk
+            key={d.id}
+            label={productName(d, lang)}
+            checked={(r.frameSizes ?? []).includes(d.id)}
+            onChange={(v) => setRules((rr) => ({ ...rr, frameSizes: v ? [...new Set([...(rr.frameSizes ?? []), d.id])] : (rr.frameSizes ?? []).filter((x) => x !== d.id) }))}
+          />
+        ))}
+      </Group>
       <Group title={t('r.joistSpan')}>
         <table className="rules">
           <thead>

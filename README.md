@@ -43,11 +43,15 @@ Ctrl+scroll or pinch zooms.
 材料库和默认做法按 Green Forest Timber 2026 年 5 到 10 月的发票校准：90x45 和 140x45 H3 treated pine F7/MGP10、
 100x100 H4 柱、Modelo 和 NewTechWood 复合板、Camo / Cobra 隐藏扣、JS9045 joist support、14g batten 螺丝、rapid set 混凝土。
 价格为含 GST 单价，默认 5% 供应商折扣和 $180 送货，均可在参数和价格面板修改。单层 140x45 bearer 的柱距按公司习惯取 1500。标注"估价"的产品不在发票里。
+框架默认自动选型：在供应商常备的尺寸里，选满足跨度表、把每个桩的人工也算进去后最省的框架；别的框架省得不够多时保持公司标准框架（90x45 joist、单层 140x45 bearer）。同一排的桩尽量对齐，放线更快。
 
 The catalog and default build method are calibrated to Green Forest Timber invoices from May to October 2026:
 90x45 and 140x45 H3 treated pine F7/MGP10, 100x100 H4 posts, Modelo and NewTechWood composite boards, Camo / Cobra
 hidden clips, JS9045 joist supports, 14g batten screws and rapid set concrete. Prices are GST inclusive with a default
 5% supplier discount and $180 delivery, all editable. Single 140x45 bearers use the company grid of posts at 1500 centres. Products marked "estimate" were not on the invoices.
+The frame is sized automatically by default: from the sizes the supplier stocks, the cheapest frame that meets the span tables
+once the labour of every stump is counted; the company's standard frame (90x45 joists on single 140x45 bearers) is kept unless
+another saves enough. Stumps line up across the bearers wherever that adds none, so one string line sets out a row.
 
 ## 规则与免责 / Rules and disclaimer
 

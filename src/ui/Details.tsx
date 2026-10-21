@@ -43,8 +43,10 @@ function Frame({ title, children }: { title: string; children: React.ReactNode }
 export function DetailsGrid({ project, design }: { project: Project; design: DesignResult }) {
   const { t } = useT();
   const p = project.params;
-  const joist = PRODUCT_MAP[p.joistProductId];
-  const bearer = PRODUCT_MAP[p.bearerProductId];
+  // the frame as designed (sized automatically, or as set)
+  const fr = design.frame;
+  const joist = PRODUCT_MAP[fr.joistProductId];
+  const bearer = PRODUCT_MAP[fr.bearerProductId];
   const decking = PRODUCT_MAP[p.deckingProductId];
   const post = PRODUCT_MAP[design.postProductId];
   const sizeOf = (prod?: { id: string }) => (prod ? sizeLabel(prod.id) : '');
@@ -98,7 +100,7 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
                 <line x1={138} y1={78} x2={166} y2={80} stroke={INK} strokeWidth={1} />
                 <line x1={138} y1={92} x2={166} y2={94} stroke={INK} strokeWidth={1} />
               </>
-            ) : bolted && p.bearerLaminations === 1 ? (
+            ) : bolted && fr.bearerLaminations === 1 ? (
               <>
                 <rect x={158} y={70} width={16} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
                 {screwed ? (
@@ -173,7 +175,7 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
         <Leader from={[244, 64]} to={[250, 74]} />
         <Lbl x={294} y={77} anchor="end">{`${t('d.joist')} ${sizeOf(joist)} @ ${design.joistSpacingText}`}</Lbl>
         <Leader from={[flush ? 164 : bolted ? 174 : 180, flush ? 84 : 90]} to={[205, 100]} />
-        <Lbl x={294} y={103} anchor="end">{`${t('d.bearer')} ${p.bearerLaminations}/${sizeOf(bearer)}`}</Lbl>
+        <Lbl x={294} y={103} anchor="end">{`${t('d.bearer')} ${fr.bearerLaminations}/${sizeOf(bearer)}`}</Lbl>
         {(screwed || checked) && <Lbl x={294} y={113} anchor="end">{`${project.rules.battenScrewsPerPost} x 14g x 100`}</Lbl>}
         {checked && <Lbl x={88} y={110} anchor="end" size={7}>{t('d.checked')}</Lbl>}
         {!screwed && !checked && bolted && <Lbl x={294} y={113} anchor="end">{t('d.bolts')}</Lbl>}
@@ -333,7 +335,7 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
           {p.wallFixing === 'bolt' && <polyline points="40,48 70,48 70,58 76,62" fill="none" stroke={INK} strokeWidth={1.2} />}
           <Lbl x={110} y={124}>{p.wallFixing === 'dynabolt' ? t('d.masonry') : t('d.house')}</Lbl>
           <Leader from={[108, 121]} to={[60, 115]} />
-          <Lbl x={110} y={140}>{`${t('d.wallBearer')} ${p.bearerLaminations}/${sizeOf(bearer)}`}</Lbl>
+          <Lbl x={110} y={140}>{`${t('d.wallBearer')} ${fr.bearerLaminations}/${sizeOf(bearer)}`}</Lbl>
           <Leader from={[108, 137]} to={[72, 100]} />
           <Lbl x={110} y={152}>{p.wallFixing === 'dynabolt' ? t('d.anchors', { spacing: project.rules.ledgerBoltSpacing }) : `M12 @ ${project.rules.ledgerBoltSpacing}`}</Lbl>
           {p.wallFixing === 'bolt' && (

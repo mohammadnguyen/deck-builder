@@ -225,7 +225,7 @@ export function SheetsView() {
                   <tr key={b.id}>
                     <td>{b.id}</td>
                     <td>
-                      {p.bearerLaminations}/{sizeLabel(p.bearerProductId)}
+                      {design.frame.bearerLaminations}/{sizeLabel(design.frame.bearerProductId)}
                     </td>
                     <td>{Math.round(b.length)}</td>
                     <td>{b.onWall ? t('legend.wall') : b.posts.length}</td>
@@ -234,7 +234,7 @@ export function SheetsView() {
                 ))}
                 <tr>
                   <td>J1-J{lay.joists.length}</td>
-                  <td>{sizeLabel(p.joistProductId)}</td>
+                  <td>{sizeLabel(design.frame.joistProductId)}</td>
                   <td colSpan={3}>{joistSummary}</td>
                 </tr>
                 <tr>
@@ -247,14 +247,14 @@ export function SheetsView() {
                 {lay.totals.frameJoists > 0 && (
                   <tr>
                     <td>{t('legend.frameJoist')}</td>
-                    <td>{sizeLabel(p.joistProductId)}</td>
+                    <td>{sizeLabel(design.frame.joistProductId)}</td>
                     <td colSpan={3}>{lay.totals.frameJoists}</td>
                   </tr>
                 )}
                 {lay.ledgers.map((l, i) => (
                   <tr key={`L${i}`}>
                     <td>{t('legend.wall')}</td>
-                    <td>{sizeLabel(p.bearerProductId)}</td>
+                    <td>{sizeLabel(design.frame.bearerProductId)}</td>
                     <td>{Math.round(l.length)}</td>
                     <td colSpan={2}>
                       {p.wallFixing === 'dynabolt' ? 'Dynabolt M12x100' : 'M12'} x {l.bolts}
@@ -289,7 +289,7 @@ export function SheetsView() {
               </tbody>
             </table>
             <h3>{t('sheet.notes')}</h3>
-            <p>{t('sheet.framingNote1', { lam: p.bearerLaminations, bearer: sizeLabel(p.bearerProductId), joist: sizeLabel(p.joistProductId), spacing: design.joistSpacingText, mode: spacingMode })}</p>
+            <p>{t('sheet.framingNote1', { lam: design.frame.bearerLaminations, bearer: sizeLabel(design.frame.bearerProductId), joist: sizeLabel(design.frame.joistProductId), spacing: design.joistSpacingText, mode: spacingMode })}</p>
             <p>{t('sheet.framingNote2', { post: sizeLabel(design.postProductId), footing: footingText })}</p>
             <p>{t(joistsToWall ? 'sheet.framingNote3' : 'sheet.framingNote3.free')}</p>
             {lay.totals.frameJoists > 0 && <p>{t('sheet.framingNote4')}</p>}

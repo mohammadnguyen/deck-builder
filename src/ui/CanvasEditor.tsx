@@ -106,7 +106,13 @@ export function CanvasEditor() {
   const [liveStair, setLiveStair] = useState<{ id: string; offset: number } | null>(null);
   // breakers being dragged: the whole layout is recomputed live (a design takes a few ms)
   const [liveBreakers, setLiveBreakers] = useState<BreakerLayout | null>(null);
-  const preview = useMemo(() => (liveBreakers ? computeDesign({ ...project, breakers: liveBreakers }) : null), [liveBreakers, project]);
+  // the live preview of a breaker drag keeps the frame already chosen (it is chosen again when the edit lands)
+  const preview = useMemo(() => {
+    if (!liveBreakers) return null;
+    const f = design.frame;
+    const params = { ...project.params, frameSizing: 'fixed' as const, joistProductId: f.joistProductId, bearerProductId: f.bearerProductId, bearerLaminations: f.bearerLaminations };
+    return computeDesign({ ...project, params, breakers: liveBreakers });
+  }, [liveBreakers, project, design.frame]);
   const shownDesign = preview && preview.ok ? preview : design;
   const [guides, setGuides] = useState<{ x?: number; y?: number }>({});
   const [hover, setHover] = useState<Hover>(null);

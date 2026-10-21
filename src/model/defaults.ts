@@ -89,6 +89,11 @@ export function defaultRules(): RuleSet {
     stirrupLift: 75,
     concreteBagYield: 0.01,
     joistTapeRoll: 20000,
+    // automatic frame sizing: the company frame, the labour that a stump costs, and the sizes on hand
+    standardFrame: { joist: 'tp-90x45', bearer: 'tp-140x45', laminations: 1 },
+    stumpLabour: 40,
+    frameSwitchMargin: 100,
+    frameSizes: ['tp-90x45', 'tp-140x45'],
   };
 }
 
@@ -101,6 +106,7 @@ export function defaultParams(): DeckParams {
     joistSpacingMax: 500,
     boardGap: 5,
     boardAxis: 'auto',
+    frameSizing: 'auto',
     joistProductId: 'tp-90x45',
     bearerProductId: 'tp-140x45',
     bearerLaminations: 1,

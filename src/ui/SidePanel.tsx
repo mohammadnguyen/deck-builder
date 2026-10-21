@@ -110,7 +110,7 @@ function ParamsPanel() {
           label={t('p.joistSpacingMode')}
           value={p.joistSpacingMode}
           options={[
-            { value: 'auto', label: t('p.joistSpacingMode.auto', { target: design.joistSpacingTarget }) },
+            { value: 'auto', label: p.joistSpacingMode === 'auto' && design.joistSetout ? t('p.joistSpacingMode.autoSetout', { spacing: Math.round(design.joistSetoutSpacing) }) : t('p.joistSpacingMode.auto', { target: design.joistSpacingTarget }) },
             { value: 'fixed', label: t('p.joistSpacingMode.fixed') },
           ]}
           onChange={(v) => set('joistSpacingMode', v as DeckParams['joistSpacingMode'])}
@@ -576,6 +576,7 @@ function RulesPanel() {
       </Group>
       <Group title={t('r.misc')}>
         <Chk label={t('r.frameJoist')} checked={r.frameJoist} onChange={(v) => setRules((rr) => ({ ...rr, frameJoist: v }))} />
+        <Chk label={t('r.compositeJoistSetout')} checked={r.compositeJoistSetout !== false} onChange={(v) => setRules((rr) => ({ ...rr, compositeJoistSetout: v }))} />
         {miscKeys.map((k) => (
           <Num key={k} label={t(`r.${k}`)} value={r[k] as number} step={k === 'elevatedFactor' || k === 'concreteBagYield' ? 0.01 : 1} onChange={(v) => setRules((rr) => ({ ...rr, [k]: v }))} />
         ))}

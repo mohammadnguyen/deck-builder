@@ -1,3 +1,4 @@
+import { bayLabel } from '../engine/layout';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { DesignResult } from '../engine';
 import { productName, useT } from '../i18n';
@@ -134,8 +135,8 @@ export function SheetsView() {
   const joistGroups = new Map<number, number>();
   for (const j of lay.joists) joistGroups.set(Math.round(j.length), (joistGroups.get(Math.round(j.length)) ?? 0) + 1);
   const joistSummary = [...joistGroups.entries()].sort((a, b) => b[0] - a[0]).map(([len, n]) => `${n} x ${len}`).join(', ');
-  const spacingMode = p.joistSpacingMode === 'auto' ? t('sheet.spacingAuto', { max: design.joistSpacingCap }) : t('sheet.spacingFixed');
-  const baySummary = lay.joistBays.map((b) => `${b.count} x @${Math.round(b.spacing)}`).join(', ');
+  const spacingMode = design.joistSetout ? t('sheet.spacingSetout', { spacing: Math.round(design.joistSetoutSpacing) }) : t('sheet.spacingAuto', { max: design.joistSpacingCap });
+  const baySummary = lay.joistBays.map((b) => bayLabel(b)).join(', ');
   const edgeBoardLine = design.bom.lines.find((l) => l.tags.includes('edgeBoard'));
   const lastRow = lay.boards[lay.boards.length - 1];
   const houseSide = lay.startsAtHouse;

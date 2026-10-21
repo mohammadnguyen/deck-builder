@@ -114,6 +114,8 @@ export interface StairRules {
 export interface RuleSet {
   /** version of the default rules the set was last brought up to (for one-off upgrades) */
   rulesVersion?: number;
+  /** composite decking: joists set out at the decking's spacing from one end of each bay, short space last */
+  compositeJoistSetout?: boolean;
   /** joist product id -> joist spacing (as string key) -> max span, deck floor below 1 m */
   joistSpan: Record<string, Record<string, number>>;
   /** multiplier applied to joist and bearer spans when the deck is 1 m or higher */

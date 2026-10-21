@@ -40,6 +40,9 @@ export interface MethodInput {
   houseSide: boolean;
   /** largest joist spacing allowed */
   joistSpacingCap: number;
+  /** joists set out at exact centres, short space last */
+  joistSetout: boolean;
+  joistSetoutSpacing: number;
 }
 
 export function buildMethod(m: MethodInput): MethodStep[] {
@@ -111,7 +114,11 @@ export function buildMethod(m: MethodInput): MethodStep[] {
     },
     notes: [
       { key: flush ? 'm.joists.flush.n1' : nails ? 'm.joists.n1.nails' : 'm.joists.n1', params: { n: m.rules.skewNailsPerCrossing } },
-      ...(p.joistSpacingMode === 'auto' ? [{ key: 'm.joists.auto', params: { max: Math.round(m.joistSpacingCap), spacing: m.joistSpacingText } }] : []),
+      ...(m.joistSetout
+        ? [{ key: 'm.joists.setout', params: { spacing: Math.round(m.joistSetoutSpacing) } }]
+        : p.joistSpacingMode === 'auto'
+          ? [{ key: 'm.joists.auto', params: { max: Math.round(m.joistSpacingCap), spacing: m.joistSpacingText } }]
+          : []),
       ...(m.layout.totals.frameJoists > 0 ? [{ key: 'm.joists.frame', params: { n: m.layout.totals.frameJoists, pairs: Math.ceil(m.layout.totals.frameJoists / 2), inset: Math.round(m.layout.edgeBoards[0]?.width ?? 0) + p.boardGap } }] : []),
       ...(p.joistTape ? [{ key: 'm.joists.n2' }] : []),
       ...(m.layout.totals.boardJoins > 0 ? [{ key: 'm.joists.n3', params: { joins: m.layout.totals.boardJoins } }] : []),

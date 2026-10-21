@@ -2,6 +2,7 @@ import { useId } from 'react';
 import type { DesignResult } from '../engine';
 import { edges as polyEdges, type Edge } from '../engine/geometry';
 import type { CornerKind, EdgeBoardRun } from '../engine/layout';
+import { bayLabel } from '../engine/layout';
 import { useT } from '../i18n';
 import type { Project, Pt, Seg } from '../model/types';
 import { PRODUCT_MAP, sizeLabel } from '../model/catalog';
@@ -369,7 +370,7 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
             )}
             {lay.joistBays.map((b, i) => {
               const c = (b.from + b.to) / 2;
-              const label = `${b.count} x @${Math.round(b.spacing)}`;
+              const label = bayLabel(b);
               return lay.boardAxis === 'x' ? (
                 <text key={`bay${i}`} x={c} y={lineY + fs * 2} fontSize={fs * 0.85} fill={COLORS.frameJoist} textAnchor="middle" fontWeight={600}>
                   {label}

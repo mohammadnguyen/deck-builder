@@ -5,7 +5,8 @@ import type { LayoutResult } from '../engine/layout';
 import { useT } from '../i18n';
 import type { BreakerLayout, Pt } from '../model/types';
 import { useApp, type Selection as UISelection, type Tool } from '../state';
-import { acrossOf, alongOf, breakerBays, breakerRoom, breakerSpans, currentBreakers, mainBay, removeBreaker, snapBreakerEnd, stripWidth, updateBreaker, type BreakerSpan } from '../utils/breakers';
+import { acrossOf, alongOf, breakerBays, breakerRoom, breakerSpans, currentBreakers, mainBay, movedBreaker, removeBreaker, snapBreakerEnd, stripWidth, updateBreaker, type BreakerSpan } from '../utils/breakers';
+import type { ManualBreaker } from '../model/types';
 import { applyDeckMove, carryEdgeData, housePolylineFor, insertNotch, isJogEdge, mirrorProject, moveEdgeTo, moveVertexTo, nextStairId, removeJog, samePoly, setEdgeLengthAnchored } from '../utils/shapes';
 import { NumInline } from './fields';
 import { COLORS, DesignLayers } from './PlanLayers';
@@ -21,7 +22,7 @@ type Drag =
   | { type: 'edge'; index: number; grab: number; orig: Pt[]; last: Pt[]; sx: number; sy: number; moved: boolean }
   | { type: 'vertex'; index: number; orig: Pt[]; last: Pt[]; sx: number; sy: number; moved: boolean }
   | { type: 'stair'; id: string; grab: number; offset: number; orig: number }
-  | { type: 'breaker'; id: string; grab: number; base: BreakerLayout; room: [number, number]; centre: number | null; orig: number; last: number; sx: number; sy: number; moved: boolean }
+  | { type: 'breaker'; id: string; grab: number; base: BreakerLayout; item: ManualBreaker; span: BreakerSpan; room: [number, number]; centre: number | null; orig: number; last: number; sx: number; sy: number; moved: boolean }
   | { type: 'breakerEnd'; id: string; end: 'from' | 'to'; base: BreakerLayout; pos: number; other: number; orig: number | null; last: number | null; sx: number; sy: number; moved: boolean }
   | { type: 'pinch'; d0: number; scale0: number; mid0: { x: number; y: number }; ox0: number; oy0: number };
 
@@ -459,6 +460,8 @@ export function CanvasEditor() {
         id: hit.id,
         grab: item.pos - alongOf(lay.boardAxis, w),
         base,
+        item,
+        span,
         room: breakerRoom(lay, hit.id, span.pos, span.c0, span.c1),
         centre: band ? (band.before[0] + band.after[1]) / 2 : null,
         orig: item.pos,
@@ -518,12 +521,16 @@ export function CanvasEditor() {
     if (d.type === 'breaker' && design.layout) {
       const raw = alongOf(design.layout.boardAxis, w) + d.grab;
       let pos = shiftRef.current ? Math.round(raw) : snapTo(raw, 10);
-      // the middle of the run is magnetic, so the two board lengths come out equal
-      if (!shiftRef.current && d.centre !== null && Math.abs(raw - d.centre) < 12 / viewRef.current.scale) pos = Math.round(d.centre);
+      // the middle of the run is magnetic, so the two board lengths come out equal; so are the ends of the
+      // room (hard against the next breaker or the edge), so no sliver of board is left between
+      const pull = 12 / viewRef.current.scale;
+      if (!shiftRef.current && d.centre !== null && Math.abs(raw - d.centre) < pull) pos = Math.round(d.centre);
+      if (!shiftRef.current && Math.abs(raw - d.room[0]) < Math.max(pull, 60)) pos = d.room[0];
+      if (!shiftRef.current && Math.abs(raw - d.room[1]) < Math.max(pull, 60)) pos = d.room[1];
       pos = Math.max(d.room[0], Math.min(d.room[1], pos));
       if (pos !== d.last) {
         d.last = pos;
-        setLiveBreakers(updateBreaker(d.base, d.id, { pos }));
+        setLiveBreakers(updateBreaker(d.base, d.id, movedBreaker(design.layout, d.item, d.span, pos)));
       }
       return;
     }
@@ -619,7 +626,12 @@ export function CanvasEditor() {
     }
     if (d?.type === 'breaker' || d?.type === 'breakerEnd') {
       if (d.moved && d.last !== d.orig) {
-        const next = d.type === 'breaker' ? updateBreaker(d.base, d.id, { pos: d.last }) : updateBreaker(d.base, d.id, d.end === 'from' ? { from: d.last } : { to: d.last });
+        const next =
+          d.type === 'breaker'
+            ? design.layout
+              ? updateBreaker(d.base, d.id, movedBreaker(design.layout, d.item, d.span, d.last))
+              : d.base
+            : updateBreaker(d.base, d.id, d.end === 'from' ? { from: d.last } : { to: d.last });
         updateProject((p) => ({ ...p, breakers: next }), d.type === 'breaker' ? 'h.moveBreaker' : 'h.breakerLength');
       }
       setLiveBreakers(null);
@@ -661,7 +673,12 @@ export function CanvasEditor() {
         if (!step || !span) return false;
         const room = breakerRoom(lay, sel.id, span.pos, span.c0, span.c1);
         const pos = Math.max(room[0], Math.min(room[1], span.pos + step / 5));
-        if (pos !== span.pos) updateProject((p) => ({ ...p, breakers: updateBreaker(currentBreakers(p, lay), sel.id, { pos }) }), 'h.moveBreaker');
+        if (pos !== span.pos)
+          updateProject((p) => {
+            const base = currentBreakers(p, lay);
+            const item = base.items.find((it) => it.id === sel.id);
+            return item ? { ...p, breakers: updateBreaker(base, sel.id, movedBreaker(lay, item, span, pos)) } : p;
+          }, 'h.moveBreaker');
         return true;
       }
       return false;
@@ -1266,7 +1283,12 @@ export function CanvasEditor() {
         const commitPos = (target: number) => {
           const room = breakerRoom(lay, id, selBrk.pos, selBrk.c0, selBrk.c1);
           const pos = Math.round(Math.max(room[0], Math.min(room[1], target)));
-          if (pos !== Math.round(selBrk.pos)) updateProject((p) => ({ ...p, breakers: updateBreaker(currentBreakers(p, lay), id, { pos }) }), 'h.moveBreaker');
+          if (pos !== Math.round(selBrk.pos))
+            updateProject((p) => {
+              const base = currentBreakers(p, lay);
+              const it = base.items.find((x) => x.id === id);
+              return it ? { ...p, breakers: updateBreaker(base, id, movedBreaker(lay, it, selBrk, pos)) } : p;
+            }, 'h.moveBreaker');
           else if (Math.round(target) !== pos) showToast(t('canvas.breakerNoRoom'));
         };
         const vertical = lay.boardAxis === 'x';
@@ -1277,11 +1299,11 @@ export function CanvasEditor() {
               <>
                 <label className="inline">
                   {t(vertical ? 'canvas.bayLeft' : 'canvas.bayUp')}
-                  <NumInline value={Math.round(selMain.before[1] - selMain.before[0])} step={10} min={0} onCommit={(v) => commitPos(selMain.before[0] + v + half)} />
+                  <NumInline value={Math.max(0, Math.round(selMain.before[1] - selMain.before[0]))} step={10} min={0} onCommit={(v) => commitPos(selMain.before[0] + v + half)} />
                 </label>
                 <label className="inline">
                   {t(vertical ? 'canvas.bayRight' : 'canvas.bayDown')}
-                  <NumInline value={Math.round(selMain.after[1] - selMain.after[0])} step={10} min={0} onCommit={(v) => commitPos(selMain.after[1] - v - half)} />
+                  <NumInline value={Math.max(0, Math.round(selMain.after[1] - selMain.after[0]))} step={10} min={0} onCommit={(v) => commitPos(selMain.after[1] - v - half)} />
                 </label>
                 <button className="tool" onClick={() => commitPos((selMain.before[0] + selMain.after[1]) / 2)}>
                   {t('canvas.center')}

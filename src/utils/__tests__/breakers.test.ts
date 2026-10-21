@@ -3,7 +3,7 @@ import { computeDesign } from '../../engine';
 import type { LayoutResult } from '../../engine/layout';
 import { newProject } from '../../model/defaults';
 import type { Project } from '../../model/types';
-import { breakerBays, breakerRoom, breakerSpans, currentBreakers, freezeBreakers, mainBay, nextBreakerId, removeBreaker, snapBreakerEnd, suggestBreaker, updateBreaker } from '../breakers';
+import { breakerBays, breakerRoom, breakerSpans, currentBreakers, freezeBreakers, mainBay, movedBreaker, nextBreakerId, removeBreaker, snapBreakerEnd, suggestBreaker, updateBreaker } from '../breakers';
 import { mirrorProject } from '../shapes';
 
 /** the deck from the shop: 11.3 m along the house, a 4.8 m leg running 7.8 m out on the right */
@@ -60,6 +60,19 @@ describe('breakers placed by hand', () => {
     expect(frames.some((x) => Math.abs(x - (3000 + 72.5)) < 1)).toBe(true);
     // the rows of the top band stop either side of it
     expect(runsAt(l, 1000)).toEqual([[145, 2925], [3075, 7435], [7585, 11155]]);
+  });
+
+  it('keeps a breaker its length when it is moved over the leg', () => {
+    const p = shopDeck();
+    const l = lay(p);
+    const base = freezeBreakers(l);
+    const b1 = breakerSpans(l)[0];
+    // B1 runs the depth of the top band; moved to x 9000 it must not grow down the leg
+    const bl = updateBreaker(base, 'B1', movedBreaker(l, base.items[0], b1, 9000));
+    expect(bl.items[0]).toEqual({ id: 'B1', pos: 9000, from: null, to: 2205 });
+    expect(spans({ ...p, breakers: bl }).find((s) => s[0] === 'B1')).toEqual(['B1', 9000, 0, 2175]);
+    // moved within the top band it keeps running to the edge boards
+    expect(updateBreaker(base, 'B1', movedBreaker(l, base.items[0], b1, 3000)).items[0]).toEqual({ id: 'B1', pos: 3000, from: null, to: null });
   });
 
   it('runs a breaker to the edges, through the leg to the bottom edge board', () => {
@@ -136,14 +149,19 @@ describe('breakers placed by hand', () => {
     expect(sug.to).toBeNull();
   });
 
-  it('keeps a dragged breaker inside the field and clear of its neighbours', () => {
+  it('lets a breaker go anywhere inside the field, up to the next breaker but not onto it', () => {
     const p = shopDeck();
     const l = lay(p);
     const [b1, b2] = breakerSpans(l);
     const [lo, hi] = breakerRoom(l, b1.id, b1.pos, b1.c0, b1.c1);
-    // 145 field edge + 75 half strip + 300 board on the left; the neighbour's strip + 300 on the right
-    expect(lo).toBe(145 + 75 + 300);
-    expect(hi).toBe(b2.pos - 75 - 75 - 300);
+    // the field edge at 145 plus half a strip (board 140 + a 5 gap each side); the neighbour's board one gap away
+    expect(lo).toBe(145 + 75);
+    expect(hi).toBe(b2.pos - 140 - 5);
+    // side by side: the shared joint gets one joist, and no board is left between them
+    const bl = updateBreaker(freezeBreakers(l), 'B1', { pos: hi });
+    const l2 = lay({ ...p, breakers: bl });
+    expect(breakerSpans(l2).map((b) => b.pos)).toEqual([hi, b2.pos]);
+    expect(runsAt(l2, 1000)).toEqual([[145, Math.round(hi - 75)], [Math.round(b2.pos + 75), 11155]]);
     const bands = breakerBays(l, b1.id, b1.pos, b1.c0, b1.c1);
     expect(bands.length).toBe(1);
     const main = mainBay(bands)!;

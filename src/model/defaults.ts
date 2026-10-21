@@ -39,6 +39,7 @@ export function defaultRules(): RuleSet {
     ),
     joistSpacingTarget: 450,
     rulesVersion: RULES_VERSION,
+    compositeJoistSetout: true,
     frameJoist: true,
     // perimeter bearer sits at the deck edge; joist ends finish flush with its outer face
     bearerEdgeInset: 25,

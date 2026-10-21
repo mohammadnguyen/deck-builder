@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { defaultRules, newProject } from '../../model/defaults';
 import { packPieces, splitRun } from '../cutlist';
-import { joistMaxSpan, joistSpaces } from '../layout';
+import { bayLabel, joistMaxSpan, joistSpaces } from '../layout';
 import { clipHorizontal, clipVertical, detectHouseEdges, edges, normalizePolygon, polygonAreaMm2, validatePolygon } from '../geometry';
 import { computeDesign } from '../index';
 
@@ -102,11 +102,12 @@ describe('design', () => {
     // perimeter bearers sit at the deck edge (25 mm to centre), joist ends flush
     const last = lay.supports[lay.supports.length - 1];
     expect(Math.abs(last.pos - (4200 - 25))).toBeLessThan(1);
-    // composite is framed at no more than 400 centres, evened out per bay: 3265 / 9 and 2210 / 6
-    expect(d.joistSpacingCap).toBe(400);
+    // composite is set out at 400 centres from the start of each bay, the short space last
+    expect(d.joistSetout).toBe(true);
+    expect(d.joistSpacingText).toBe('400');
     expect(lay.joistSpacingUsed).toBeLessThanOrEqual(400);
-    expect(lay.joistBays.every((b) => b.spacing <= 400 + 1e-9)).toBe(true);
-    expect(d.joistSpacingText).toBe('363-368');
+    expect(lay.joistBays.map((b) => bayLabel(b))).toEqual(['8 x @400 + 65', '5 x @400 + 210']);
+    expect(d.method.some((s) => s.notes.some((n) => n.key === 'm.joists.setout'))).toBe(true);
     // picture frame: one edge board per exposed edge, four mitred corners, field inset by board + gap
     expect(lay.edgeBoards.length).toBe(5);
     expect(lay.totals.mitres).toBe(4);
@@ -199,13 +200,45 @@ describe('design', () => {
     expect(joistSpaces(3310, auto, rules, 500)).toBe(7); // 472.9
     expect(joistSpaces(1050, auto, rules, 500)).toBe(3); // 525 would break the cap
     expect(joistSpaces(900, auto, rules, 500)).toBe(2); // 450
-    const fixed = { ...auto, joistSpacingMode: 'fixed' as const, joistSpacing: 450 };
-    expect(joistSpaces(3310, fixed, rules, 500)).toBe(8); // 413.75 <= 450
     expect(joistMaxSpan(rules, 'tp-90x45', 400).span).toBe(1500);
     expect(joistMaxSpan(rules, 'tp-90x45', 425).span).toBe(1450);
     expect(joistMaxSpan(rules, 'tp-90x45', 500).span).toBe(1330);
     expect(joistMaxSpan(rules, 'tp-90x45', 350).span).toBe(1500);
     expect(joistMaxSpan(rules, 'tp-90x45', 900).extrapolated).toBe(true);
+  });
+  it('sets fixed spacing out from the start of each bay, with the short space last', () => {
+    // hardwood, fixed 450: 7 x 450 + 223 and 5 x 450 + 59 in the sample bays
+    const p = newProject('hw', true);
+    p.params.deckingProductId = 'hw-86x19';
+    p.params.boardGap = 4;
+    p.params.joistSpacingMode = 'fixed';
+    p.params.joistSpacing = 450;
+    const d = computeDesign(p);
+    expect(d.joistSetout).toBe(true);
+    expect(d.joistSpacingText).toBe('450');
+    for (const b of d.layout!.joistBays) {
+      expect(b.spaces.slice(0, -1).every((s) => Math.abs(s - 450) < 1e-6)).toBe(true);
+      expect(b.spaces[b.spaces.length - 1]).toBeLessThanOrEqual(450 + 1e-6);
+    }
+    // composite can be evened out instead with the company rule switched off
+    const even = newProject('even', true);
+    even.rules.compositeJoistSetout = false;
+    const de = computeDesign(even);
+    expect(de.joistSetout).toBe(false);
+    expect(de.layout!.joistBays.map((b) => bayLabel(b))).toEqual(['9 x @363', '6 x @368']);
+  });
+  it('puts the last set-out joist hard against a fixed joist it would land on', () => {
+    // 2055 wide, no edge boards: edge joists at 22.5 and 2032.5, a 2010 bay; the 5th mark at 2022.5 sits on the edge joist
+    const p = newProject('t', true);
+    p.deck = [{ x: 0, y: 0 }, { x: 2055, y: 0 }, { x: 2055, y: 2000 }, { x: 0, y: 2000 }];
+    p.houseEdges = [0];
+    p.stairs = [];
+    p.params.edgeBoard = false;
+    p.params.breakerBoards = 'off';
+    const lay = computeDesign(p).layout!;
+    expect(lay.joistBays.map((b) => bayLabel(b))).toEqual(['4 x @400 + 365 + 45']);
+    const xs = [...lay.joistPositions].sort((a, b) => a - b);
+    for (let i = 1; i < xs.length; i++) expect(xs[i] - xs[i - 1]).toBeGreaterThanOrEqual(45 - 1e-6);
   });
   it('keeps fixed spacing and respects the decking cap', () => {
     const p = newProject('fixed', true);

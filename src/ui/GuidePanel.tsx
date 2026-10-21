@@ -251,7 +251,7 @@ export function GuidePanel() {
           />
         </div>
         {lay && <p className="hint">{t('g.boardDirHint', { now: t(`g.boardDir.now.${lay.boardAxis}`) })}</p>}
-        {lay && <p className="hint">{t('g.joistSpacingNote', { cap: design.joistSpacingCap, spacing: design.joistSpacingText })}</p>}
+        {lay && <p className="hint">{design.joistSetout ? t('g.joistSetoutNote', { spacing: Math.round(design.joistSetoutSpacing) }) : t('g.joistSpacingNote', { cap: design.joistSpacingCap, spacing: design.joistSpacingText })}</p>}
         <Chk label={t('g.edgeBoard')} checked={p.edgeBoard} onChange={(v) => setParam('edgeBoard', v)} />
         {p.edgeBoard && design.ok && <p className="hint">{t('g.edgeBoardNote', { product: productName(design.edgeBoardProductId, lang) })}</p>}
         {lay && p.breakerBoards !== 'off' && (

@@ -73,6 +73,19 @@ export function updateBreaker(bl: BreakerLayout, id: string, patch: Partial<Omit
   return { ...bl, items: bl.items.map((it) => (it.id === id ? { ...it, ...patch } : it)) };
 }
 
+/**
+ * Move a breaker along the boards and keep its length: an end that runs "to the edge" stays so only
+ * where the field ends at the same place at the new position; otherwise it is pinned where it was.
+ */
+export function movedBreaker(lay: LayoutResult, item: ManualBreaker, span: BreakerSpan, pos: number): Partial<Omit<ManualBreaker, 'id'>> {
+  const mid = (span.c0 + span.c1) / 2;
+  const clips = stripClip(lay, pos);
+  const iv = clips.find(([a, b]) => mid >= a && mid <= b) ?? null;
+  const from = item.from === null && (!iv || Math.abs(iv[0] - span.c0) > 1) ? span.c0 : item.from;
+  const to = item.to === null && (!iv || Math.abs(iv[1] - span.c1) > 1) ? span.c1 : item.to;
+  return { pos, from, to };
+}
+
 export function removeBreaker(bl: BreakerLayout, id: string): BreakerLayout {
   return { ...bl, items: bl.items.filter((it) => it.id !== id) };
 }
@@ -105,19 +118,26 @@ function freeAt(lay: LayoutResult, others: BreakerSpan[], pos: number, c: number
 }
 
 /**
- * How far a breaker may move along the boards: it keeps its whole width inside the field over its
- * length, `margin` of board on each side, and stays clear of the other breakers.
+ * How far a breaker may move along the boards: its whole width stays inside the field over its length,
+ * and it may go right up to another breaker (the two boards one gap apart) but not onto it. There is no
+ * other limit on the distance between breakers.
  */
-export function breakerRoom(lay: LayoutResult, id: string, pos: number, c0: number, c1: number, margin = 300): [number, number] {
+export function breakerRoom(lay: LayoutResult, id: string, pos: number, c0: number, c1: number): [number, number] {
   const others = breakerSpans(lay).filter((b) => b.id !== id);
   const half = stripWidth(lay) / 2;
+  const side = lay.boardWidth + lay.boardGap;
   let lo = -Infinity;
   let hi = Infinity;
   for (const c of samplesAcross(lay, c0, c1)) {
-    const f = freeAt(lay, others, pos, c);
-    if (!f) continue;
-    lo = Math.max(lo, f[0] + half + margin);
-    hi = Math.min(hi, f[1] - half - margin);
+    const iv = clipAlong(lay.fieldPoly, lay.boardAxis, c).find(([a, b]) => pos >= a - 1 && pos <= b + 1);
+    if (!iv) continue;
+    lo = Math.max(lo, iv[0] + half);
+    hi = Math.min(hi, iv[1] - half);
+    for (const o of others) {
+      if (c < o.c0 || c > o.c1) continue;
+      if (o.pos < pos) lo = Math.max(lo, o.pos + side);
+      else hi = Math.min(hi, o.pos - side);
+    }
   }
   if (!Number.isFinite(lo) || !Number.isFinite(hi)) return [pos, pos];
   return [Math.min(lo, pos), Math.max(hi, pos)];

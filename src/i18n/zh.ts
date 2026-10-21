@@ -496,7 +496,7 @@ export const zh: Record<string, string> = {
   'common.cancel': '取消',
 
   'p.joistSpacingMode': 'Joist 间距方式',
-  'p.joistSpacingMode.fixed': '固定间距',
+  'p.joistSpacingMode.fixed': '固定间距放线（末档留短）',
   'p.joistSpacingMax': '间距上限 (mm)',
   'p.edgeBoardProduct': 'Edge board 材料',
   'r.joistSpacingTarget': '自动均分的目标间距 (mm)',
@@ -756,7 +756,7 @@ export const zh: Record<string, string> = {
   'canvas.center': '居中',
   'canvas.extend': '拉通到边',
   'canvas.autoBreakers': '恢复自动',
-  'canvas.breakerNoRoom': '那里放不下：breaker 两边至少要留 300 mm 板，也不能压到别的 breaker。',
+  'canvas.breakerNoRoom': '那里放不下：breaker 要在 deck 里面，也不能压到别的 breaker 上。',
   'status.hintBreaker': 'Breaker：拖中间左右移动（中点会吸住），拖两端的圆点改长短，蓝色数字是两边板长，可以直接改。Delete 删除。',
   'sc.breaker': 'Breaker：拖动换位置，拖两端圆点改长短，方向键微调 10 mm，Delete 删除',
   'g.boardDir': '面板走向',
@@ -775,4 +775,9 @@ export const zh: Record<string, string> = {
   'm.decking.breaker.manual': '按图上位置放 {n} 条 breaker board（共 {lm} m），面板两端顶到 breaker。Breaker 停在 edge board 内侧，edge board 整条不断。',
   'sheet.deckingNote6.joins': 'Breaker board {n} 条（共 {lm} m），面板在 breaker 两侧断开；breaker 之间超过一块板长的行要错缝接头（红线），接头落在 joist 上。',
   'g.joistSpacingNote': 'Joist 中到中不超过 {cap} mm，每跨自动均分（现在 @{spacing}）。按面板定的上限在「更多设置 → 规则」里改。',
+  'm.joists.setout': 'Joist 从每一跨的起点按 {spacing} mm 中到中放线，最后一档留短；最后一根如果落在固定 joist 上，就贴着它放。',
+  'sheet.spacingSetout': '按 {spacing} 中到中放线，末档留短',
+  'p.joistSpacingMode.autoSetout': '公司做法：{spacing} 中到中放线，末档留短',
+  'r.compositeJoistSetout': '复合板 joist 按上限固定放线（每跨最后一档留短），不打勾就每跨均分',
+  'g.joistSetoutNote': 'Joist 按 {spacing} mm 中到中放线，每跨最后一档留短。复合板的做法在「更多设置 → 规则」里改。',
 };

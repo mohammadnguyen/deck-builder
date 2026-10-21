@@ -53,7 +53,22 @@ export interface JoistBay {
   to: number;
   /** number of spaces */
   count: number;
+  /** the largest space (all spaces when the bay is evened out) */
   spacing: number;
+  /** every space in order along the boards: even, or set out with the short one last */
+  spaces: number[];
+}
+
+/** "9 x @363", or for a set-out bay "8 x @400 + 65" */
+export function bayLabel(b: JoistBay): string {
+  const groups: { v: number; n: number }[] = [];
+  for (const s of b.spaces) {
+    const v = Math.round(s);
+    const last = groups[groups.length - 1];
+    if (last && last.v === v) last.n++;
+    else groups.push({ v, n: 1 });
+  }
+  return groups.map((g) => (g.n > 1 ? `${g.n} x @${g.v}` : `${g.v}`)).join(' + ');
 }
 
 export interface BoardRun {
@@ -208,6 +223,9 @@ export interface LayoutContext {
   breakerBoards: boolean;
   /** breakers placed by hand (used when they were laid out for the current board direction) */
   manualBreakers?: BreakerLayout | null;
+  /** joists set out at exact centres from the start of each bay, the short space last (else evened out) */
+  joistSetout?: boolean;
+  joistSetoutSpacing?: number;
   kerf: number;
   /** the decking's own joist spacing limit */
   deckingMaxJoistSpacing: number;
@@ -267,10 +285,6 @@ export function resolveBoardAxis(poly: Pt[], houseEdges: number[], pref: 'auto' 
  */
 export function joistSpaces(w: number, params: DeckParams, rules: RuleSet, cap: number): number {
   if (w <= 1) return 1;
-  if (params.joistSpacingMode === 'fixed') {
-    const s = Math.max(100, params.joistSpacing);
-    return Math.max(1, Math.ceil(w / s - 1e-9));
-  }
   const limit = Math.max(100, cap);
   const target = Math.min(limit, Math.max(100, rules.joistSpacingTarget || limit));
   return Math.max(1, Math.ceil(w / limit - 1e-9), Math.round(w / target));
@@ -514,14 +528,30 @@ export function computeLayout(
   const spacingCap = Math.min(params.joistSpacingMax || 500, ctx.deckingMaxJoistSpacing || 500);
   const joistXs: { x: number; kind: JoistKind }[] = [];
   const joistBays: JoistBay[] = [];
+  const setoutSpacing = Math.max(100, ctx.joistSetoutSpacing || params.joistSpacing || 400);
   for (let i = 0; i < fixedSorted.length; i++) {
     joistXs.push(fixedSorted[i]);
     if (i + 1 < fixedSorted.length) {
-      const w = fixedSorted[i + 1].x - fixedSorted[i].x;
-      const n = joistSpaces(w, params, rules, spacingCap);
-      for (let k = 1; k < n; k++) joistXs.push({ x: fixedSorted[i].x + (w * k) / n, kind: 'field' });
+      const x0 = fixedSorted[i].x;
+      const x1 = fixedSorted[i + 1].x;
+      const w = x1 - x0;
+      const xs: number[] = [];
+      if (ctx.joistSetout) {
+        // set out at exact centres from the start of the bay; whatever is left over is the last space
+        for (let x = x0 + setoutSpacing; x < x1 - 0.5; x += setoutSpacing) xs.push(x);
+        // a mark that lands on the next joist cannot take a joist of its own: that one goes hard against it
+        if (xs.length && x1 - xs[xs.length - 1] < jt) xs[xs.length - 1] = x1 - jt;
+      } else {
+        const n = joistSpaces(w, params, rules, spacingCap);
+        for (let k = 1; k < n; k++) xs.push(x0 + (w * k) / n);
+      }
+      for (const x of xs) joistXs.push({ x, kind: 'field' });
       // the edge-to-frame double is structural, not a spacing bay
-      if (w > 200) joistBays.push({ from: fixedSorted[i].x, to: fixedSorted[i + 1].x, count: n, spacing: w / n });
+      if (w > 200) {
+        const pts = [x0, ...xs, x1];
+        const spaces = pts.slice(1).map((x, k) => x - pts[k]);
+        joistBays.push({ from: x0, to: x1, count: spaces.length, spacing: Math.max(...spaces), spaces });
+      }
     }
   }
   const realBays = joistBays.filter((b) => b.count >= 1);

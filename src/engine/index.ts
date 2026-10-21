@@ -62,6 +62,9 @@ export interface DesignResult {
   /** largest joist spacing allowed (the decking's limit and the project cap) and the auto target */
   joistSpacingCap: number;
   joistSpacingTarget: number;
+  /** joists set out at exact centres (fixed spacing, or composite by the company rule), short space last */
+  joistSetout: boolean;
+  joistSetoutSpacing: number;
   bom: BomResult;
   warnings: WarningItem[];
   pathway: Pathway;
@@ -102,7 +105,7 @@ export function computeDesign(project: Project): DesignResult {
       layout: null, levels, postProductId: 'post-90x90-h4', postLength: 0, stairs: [], balustrade: emptyBal,
       braces: { count: 0, length: 0 }, footings: { count: 0, type: params.footingType, depth: params.footingDepth, diameter: params.footingDiameter, padSize: params.padSize, padDepth: params.padDepth, concreteM3: 0, bags: 0 },
       fascia: [], fasciaProductId: decking.fasciaProductId ?? decking.id, edgeBoardProductId: decking.edgeBoardProductId ?? decking.id,
-      joistSpacingText: String(params.joistSpacing), joistSpacingCap: params.joistSpacingMax, joistSpacingTarget: params.joistSpacing, bom: emptyBom,
+      joistSpacingText: String(params.joistSpacing), joistSpacingCap: params.joistSpacingMax, joistSpacingTarget: params.joistSpacing, joistSetout: params.joistSpacingMode === 'fixed', joistSetoutSpacing: params.joistSpacing, bom: emptyBom,
       warnings: [{ severity: 'error', key: `polygon.${valid.problem}` }], pathway: 'approvalRequired', method: [],
     };
   }
@@ -121,6 +124,9 @@ export function computeDesign(project: Project): DesignResult {
   const maxTreadSpan = rules.deckingMaxJoistSpacing[decking.id] ?? decking.maxJoistSpacing ?? 450;
   const joistSpacingCap = Math.min(params.joistSpacingMax || 500, maxTreadSpan || 500);
   const joistSpacingTarget = Math.min(joistSpacingCap, rules.joistSpacingTarget || joistSpacingCap);
+  // fixed spacing is set out from one end of each bay; composite follows the company rule (set out at its cap)
+  const joistSetout = params.joistSpacingMode === 'fixed' || (decking.family === 'composite' && rules.compositeJoistSetout !== false);
+  const joistSetoutSpacing = params.joistSpacingMode === 'fixed' ? params.joistSpacing : joistSpacingCap;
 
   const layout = computeLayout(poly, houseEdges, params, rules, {
     boardWidth: decking.width ?? 86,
@@ -132,6 +138,8 @@ export function computeDesign(project: Project): DesignResult {
     edgeBoardWidth: PRODUCT_MAP[edgeBoardProductId]?.width ?? decking.width ?? 86,
     breakerBoards: params.breakerBoards === 'on' || (params.breakerBoards === 'auto' && decking.family === 'composite'),
     manualBreakers: project.breakers ?? null,
+    joistSetout,
+    joistSetoutSpacing,
     kerf: rules.kerf,
     deckingMaxJoistSpacing: maxTreadSpan,
     deckingMaxStock: maxStock(decking.id),
@@ -141,7 +149,7 @@ export function computeDesign(project: Project): DesignResult {
   });
   const spMin = Math.round(layout.joistSpacingMin);
   const spMax = Math.round(layout.joistSpacingUsed);
-  const joistSpacingText = params.joistSpacingMode === 'fixed' && spMax <= params.joistSpacing ? (spMin === spMax ? `${spMax}` : `${spMin}-${spMax}`) : spMin === spMax ? `${spMax}` : `${spMin}-${spMax}`;
+  const joistSpacingText = joistSetout ? `${Math.round(joistSetoutSpacing)}` : spMin === spMax ? `${spMax}` : `${spMin}-${spMax}`;
 
   // ---- posts ----
   let postProductId = params.postProductId;
@@ -333,12 +341,12 @@ export function computeDesign(project: Project): DesignResult {
     bearerName: bearer.id, joistName: joist.id, deckingName: decking.id, boardThickness: boardT, joistDepth: joistD,
     bearerDepth: bearerD, balustrade, stairs, braceCount, pathway: compliance.pathway,
     clips: clipId ? clipCount : undefined, composite: decking.family === 'composite',
-    joistSpacingText, joistSpacingCap, edgeBoardName: edgeBoardProductId, houseSide: layout.startsAtHouse,
+    joistSpacingText, joistSpacingCap, joistSetout, joistSetoutSpacing, edgeBoardName: edgeBoardProductId, houseSide: layout.startsAtHouse,
   });
 
   return {
     ok: true, poly, edges: E, areaM2, perimeterM, bb, datum: { x: bb.minX, y: bb.minY }, layout, levels, postProductId, postLength,
-    stairs, balustrade, braces: { count: braceCount, length: braceLength }, footings, fascia, fasciaProductId, edgeBoardProductId, joistSpacingText, joistSpacingCap, joistSpacingTarget, bom,
+    stairs, balustrade, braces: { count: braceCount, length: braceLength }, footings, fascia, fasciaProductId, edgeBoardProductId, joistSpacingText, joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, bom,
     warnings: compliance.warnings, pathway: compliance.pathway, method,
   };
 }

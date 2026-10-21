@@ -496,7 +496,7 @@ export const en: Record<string, string> = {
   'common.cancel': 'Cancel',
 
   'p.joistSpacingMode': 'Joist spacing',
-  'p.joistSpacingMode.fixed': 'Fixed centres',
+  'p.joistSpacingMode.fixed': 'Fixed centres (short space last)',
   'p.joistSpacingMax': 'Spacing cap (mm)',
   'p.edgeBoardProduct': 'Edge board product',
   'r.joistSpacingTarget': 'Target spacing for auto mode (mm)',
@@ -756,7 +756,7 @@ export const en: Record<string, string> = {
   'canvas.center': 'Centre',
   'canvas.extend': 'Run to the edges',
   'canvas.autoBreakers': 'Back to auto',
-  'canvas.breakerNoRoom': 'No room there: a breaker keeps at least 300 mm of board each side and stays clear of the other breakers.',
+  'canvas.breakerNoRoom': 'No room there: a breaker stays inside the deck and cannot sit on another breaker.',
   'status.hintBreaker': 'Breaker: drag the middle to move it (the centre snaps), drag the end dots to lengthen or shorten, the blue numbers are the board lengths either side and can be typed. Delete removes it.',
   'sc.breaker': 'Breakers: drag to move, drag the end dots to resize, arrow keys nudge 10 mm, Delete removes',
   'g.boardDir': 'Board direction',
@@ -775,4 +775,9 @@ export const en: Record<string, string> = {
   'm.decking.breaker.manual': 'Lay {n} breaker boards where the plan shows them ({lm} m in total); field boards butt up to them. Breakers stop at the edge board, which runs unbroken.',
   'sheet.deckingNote6.joins': '{n} breaker boards ({lm} m): field boards stop either side; rows longer than one board between breakers get staggered joins (red), each over a joist.',
   'g.joistSpacingNote': 'Joists at no more than {cap} mm centres, evened out per bay (now @{spacing}). The limit per decking is in More settings → Rules.',
+  'm.joists.setout': 'Set the joists out at {spacing} mm centres from the start of each bay, with the short space last; a last mark that lands on a fixed joist goes hard against it.',
+  'sheet.spacingSetout': 'set out at {spacing} centres, short space last',
+  'p.joistSpacingMode.autoSetout': 'Company practice: {spacing} centres, short space last',
+  'r.compositeJoistSetout': 'Composite: set joists out at the cap from one end of each bay (short space last); untick to even them out',
+  'g.joistSetoutNote': 'Joists set out at {spacing} mm centres, with the short space last in each bay. The composite rule is in More settings → Rules.',
 };

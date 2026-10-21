@@ -3,8 +3,8 @@ import { computeDesign } from '../../engine';
 import type { LayoutResult } from '../../engine/layout';
 import { newProject } from '../../model/defaults';
 import type { Project } from '../../model/types';
-import { breakerBays, breakerRoom, breakerSpans, currentBreakers, freezeBreakers, mainBay, movedBreaker, nextBreakerId, removeBreaker, snapBreakerEnd, suggestBreaker, updateBreaker } from '../breakers';
-import { mirrorProject } from '../shapes';
+import { breakerBays, breakerRoom, breakerSpans, breakersForAxis, currentBreakers, extendedBreaker, freezeBreakers, mainBay, movedBreaker, nextBreakerId, removeBreaker, snapBreakerEnd, suggestBreaker, updateBreaker } from '../breakers';
+import { housePolylineFor, makeShape, mirrorProject } from '../shapes';
 
 /** the deck from the shop: 11.3 m along the house, a 4.8 m leg running 7.8 m out on the right */
 function shopDeck(): Project {
@@ -189,5 +189,249 @@ describe('breakers placed by hand', () => {
     expect(breakerSpans(l2)).toEqual([{ id: 'B1', pos: 4000, c0: 6645, c1: 11155 }]);
     const m = mirrorProject({ ...p, breakers: bl });
     expect(m.breakers!.items[0]).toEqual({ id: 'B1', pos: 4000, from: null, to: null });
+  });
+});
+
+
+/**
+ * Every row is covered once: at each row centre the field is boards or breaker strips, with no stretch over
+ * 12 mm left bare (shorter bits are taken up by the gaps) and no board lying under a breaker.
+ */
+function coverage(l: LayoutResult): { holes: string[]; overlaps: string[] } {
+  const P = (q: { x: number; y: number }) => (l.boardAxis === 'x' ? q : { x: q.y, y: q.x });
+  const field = l.fieldPoly.map(P);
+  const bw = l.boardWidth;
+  const strip = bw + 2 * l.boardGap;
+  const runs = l.boards.flatMap((r) =>
+    r.runs.map((u) => {
+      const a = P(u.seg.a);
+      const b = P(u.seg.b);
+      return { x0: Math.min(a.x, b.x), x1: Math.max(a.x, b.x), yc: a.y, w: u.width };
+    }),
+  );
+  const brk = l.breakers.map((b) => {
+    const a = P(b.seg.a);
+    const c = P(b.seg.b);
+    return { id: b.id, xc: a.x, y0: Math.min(a.y, c.y), y1: Math.max(a.y, c.y) };
+  });
+  const ov = (a0: number, a1: number, b0: number, b1: number) => Math.min(a1, b1) - Math.max(a0, b0);
+  const overlaps: string[] = [];
+  for (const r of runs) for (const b of brk) if (ov(r.x0, r.x1, b.xc - bw / 2, b.xc + bw / 2) > 1 && ov(r.yc - r.w / 2, r.yc + r.w / 2, b.y0, b.y1) > 1) overlaps.push(`board y${Math.round(r.yc)} under ${b.id}`);
+  for (let i = 0; i < brk.length; i++) for (let j = i + 1; j < brk.length; j++) {
+    const a = brk[i];
+    const b = brk[j];
+    if (ov(a.xc - bw / 2, a.xc + bw / 2, b.xc - bw / 2, b.xc + bw / 2) > 1 && ov(a.y0, a.y1, b.y0, b.y1) > 1) overlaps.push(`${a.id} on ${b.id}`);
+  }
+  const holes: string[] = [];
+  const clipX = (y: number): [number, number][] => {
+    const xs: number[] = [];
+    for (let i = 0; i < field.length; i++) {
+      const a = field[i];
+      const b = field[(i + 1) % field.length];
+      if ((a.y <= y && b.y > y) || (b.y <= y && a.y > y)) xs.push(a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x));
+    }
+    xs.sort((p, q) => p - q);
+    const out: [number, number][] = [];
+    for (let i = 0; i + 1 < xs.length; i += 2) out.push([xs[i], xs[i + 1]]);
+    return out;
+  };
+  for (const y of new Set(runs.map((r) => r.yc))) {
+    const cov = [
+      ...runs.filter((r) => y >= r.yc - r.w / 2 - 0.01 && y <= r.yc + r.w / 2 + 0.01).map((r) => [r.x0, r.x1]),
+      ...brk.filter((b) => y >= b.y0 - 0.5 && y <= b.y1 + 0.5).map((b) => [b.xc - strip / 2, b.xc + strip / 2]),
+    ].sort((p, q) => p[0] - q[0]);
+    for (const [a, c] of clipX(y)) {
+      let cur = a;
+      for (const [m0, m1] of cov) {
+        if (m1 <= cur) continue;
+        if (m0 >= c) break;
+        if (m0 - cur > 12) holes.push(`y${Math.round(y)} x${Math.round(cur)}-${Math.round(m0)}`);
+        cur = Math.max(cur, m1);
+      }
+      if (c - cur > 12) holes.push(`y${Math.round(y)} x${Math.round(cur)}-${Math.round(c)}`);
+    }
+  }
+  return { holes, overlaps };
+}
+const clean = (l: LayoutResult) => expect(coverage(l)).toEqual({ holes: [], overlaps: [] });
+
+/** a U deck whose boards run along its legs: each leg gets its own breaker on the same line */
+function uDeck(): Project {
+  const p = newProject('u', true);
+  p.deck = makeShape('U', { w: 10800, d: 6000, nw: 3000, nd: 3000 });
+  p.houseEdges = [0];
+  p.house = [housePolylineFor(p.deck, 0)];
+  p.stairs = [];
+  p.params = { ...p.params, boardAxis: 'y' };
+  return p;
+}
+
+describe('breakers on decks with legs, and at notches', () => {
+  it('freezes the breakers of a U deck leg by leg, so editing one leaves the other alone', () => {
+    const p = uDeck();
+    const l = lay(p);
+    const auto = breakerSpans(l);
+    expect(auto.length).toBe(2);
+    expect(auto[0].pos).toBe(auto[1].pos);
+    clean(l);
+    const frozen = freezeBreakers(l);
+    // the outer end of each leg runs to the edge; the inner end is a number, or it would reach into the other leg
+    expect(frozen.items.map((it) => [it.from === null, it.to === null])).toEqual([[true, false], [false, true]]);
+    const lf = lay({ ...p, breakers: frozen });
+    expect(breakerSpans(lf)).toEqual(auto);
+    expect(lf.totals.breakerLm).toBeCloseTo(l.totals.breakerLm, 6);
+    // delete one: the other leg keeps its breaker, this leg has none
+    const del = lay({ ...p, breakers: removeBreaker(frozen, 'B1') });
+    expect(breakerSpans(del)).toEqual([auto[1]]);
+    // nudge one: only that one moves
+    const moved = updateBreaker(frozen, 'B1', movedBreaker(l, frozen.items[0], auto[0], auto[0].pos + 10));
+    const lm = lay({ ...p, breakers: moved });
+    expect(breakerSpans(lm).sort((a, b) => a.id.localeCompare(b.id))).toEqual([{ ...auto[0], pos: auto[0].pos + 10 }, auto[1]]);
+    clean(lm);
+  });
+
+  it('keeps end drags, "Run to the edges" and "+ Add one" inside their own leg', () => {
+    const p = uDeck();
+    const l = lay(p);
+    const [b1] = breakerSpans(l);
+    const frozen = freezeBreakers(l);
+    // dragging B1's inner end back to the leg's edge gives a number, not "to the edge"
+    const to = snapBreakerEnd(l, b1.pos, b1.c1 + 500, 'to', b1.c0, 'B1');
+    expect(to).toBeCloseTo(b1.c1, 6);
+    // "Run to the edges" runs to the ends of its own leg
+    const ext = extendedBreaker(l, b1);
+    expect(ext).toEqual({ from: null, to: b1.c1 });
+    expect(breakerSpans(lay({ ...p, breakers: updateBreaker(frozen, 'B1', ext) }))).toEqual(breakerSpans(l));
+    // with both deleted, "+ Add one" puts one breaker in one leg
+    const none = { ...p, breakers: { axis: frozen.axis, items: [] } };
+    const s = suggestBreaker(lay(none))!;
+    const added = lay({ ...none, breakers: { axis: frozen.axis, items: [{ id: 'B1', ...s }] } });
+    expect(breakerSpans(added).length).toBe(1);
+    clean(added);
+  });
+
+  it('stops "Run to the edges" at a breaker in the way', () => {
+    const p = shopDeck();
+    const bl = { axis: 'x' as const, items: [{ id: 'B1', pos: 3790, from: null, to: 1010 }, { id: 'B2', pos: 3800, from: 1160, to: null }] };
+    const l = lay({ ...p, breakers: bl });
+    const b1 = breakerSpans(l).find((b) => b.id === 'B1')!;
+    const ext = extendedBreaker(l, b1);
+    expect(ext).toEqual({ from: null, to: 1160 });
+    const l2 = lay({ ...p, breakers: updateBreaker(bl, 'B1', ext) });
+    expect(coverage(l2).overlaps).toEqual([]);
+    // and an end dragged towards it stops short of it
+    expect(snapBreakerEnd(l, 3790, 2000, 'to', 0, 'B1')).toBeLessThanOrEqual(1160);
+  });
+
+  it('adds a breaker over a board run, never on top of a breaker or over a ripped strip', () => {
+    // B1 shortened to about 1 m: "+ Add one" covers the rows below it, not the ones B1 already cuts
+    const p = shopDeck();
+    const l0 = lay(p);
+    const to = snapBreakerEnd(l0, 3790, 1000, 'to', 0, 'B1');
+    const bl = updateBreaker(freezeBreakers(l0), 'B1', { to });
+    const l1 = lay({ ...p, breakers: bl });
+    const s = suggestBreaker(l1)!;
+    const l2 = lay({ ...p, breakers: { ...bl, items: [...bl.items, { id: nextBreakerId(bl), ...s }] } });
+    expect(l2.breakers.length).toBe(3);
+    clean(l2);
+    // the leg moved over so a ripped strip at the notch line is as long as the leg's rows: still a real breaker
+    const q = shopDeck();
+    q.deck = [{ x: 0, y: 0 }, { x: 11300, y: 0 }, { x: 11300, y: 7800 }, { x: 6600, y: 7800 }, { x: 6600, y: 2350 }, { x: 0, y: 2350 }];
+    q.params = { ...q.params, boardAxis: 'y' };
+    const lq = lay(q);
+    const sq = suggestBreaker(lq);
+    expect(sq).not.toBeNull();
+    const base = currentBreakers(q, lq);
+    const lq2 = lay({ ...q, breakers: { ...base, items: [...base.items, { id: nextBreakerId(base), ...sq! }] } });
+    expect(lq2.breakers.length).toBe(lq.breakers.length + 1);
+    clean(lq2);
+  });
+
+  it('never leaves a hole or a board under a breaker that ends at a notch', () => {
+    // the sample L: its breaker continues the inside-corner edge board; moved a little either way
+    const p = newProject('l', true);
+    const l = lay(p);
+    clean(l);
+    const [b1] = breakerSpans(l);
+    const base = freezeBreakers(l);
+    for (const dx of [-140, -70, -10, 10, 40, 70]) {
+      const lm = lay({ ...p, breakers: updateBreaker(base, b1.id, movedBreaker(l, base.items[0], b1, b1.pos + dx)) });
+      expect(coverage(lm)).toEqual({ holes: [], overlaps: [] });
+    }
+    // an end left a little short of the notch line (as a mirror can leave it) runs to the line
+    const short = lay({ ...p, breakers: { axis: base.axis, items: [{ ...base.items[0], to: b1.c1 - 15 }] } });
+    expect(breakerSpans(short)[0].c1).toBeCloseTo(b1.c1, 6);
+  });
+
+  it('lays and lists a breaker one row long, and gives none to a breaker that comes to nothing', () => {
+    const p = newProject('hw', true);
+    p.deck = makeShape('rect', { w: 8000, d: 3000, nw: 0, nd: 0 });
+    p.houseEdges = [0];
+    p.house = [housePolylineFor(p.deck, 0)];
+    p.stairs = [];
+    p.params = { ...p.params, deckingProductId: 'hw-86x19', boardGap: 4, breakerBoards: 'on' };
+    const one = lay({ ...p, breakers: { axis: 'x', items: [{ id: 'B1', pos: 4000, from: null, to: 86 }] } });
+    expect(breakerSpans(one)).toEqual([{ id: 'B1', pos: 4000, c0: 0, c1: 86 }]);
+    expect(one.totals.breakerPieces).toBe(1);
+    clean(one);
+    const nothing = lay({ ...p, breakers: { axis: 'x', items: [{ id: 'B1', pos: 4000, from: 0, to: 30 }] } });
+    expect(nothing.breakers).toEqual([]);
+    expect(nothing.joists.some((j) => j.kind === 'frame' && Math.abs(j.pos - 4000) < 100)).toBe(false);
+  });
+
+  it('lays a short board piece next to a breaker instead of leaving a hole, and says so', () => {
+    const p = newProject('rect', true);
+    p.deck = makeShape('rect', { w: 4800, d: 3600, nw: 0, nd: 0 });
+    p.houseEdges = [0];
+    p.house = [housePolylineFor(p.deck, 0)];
+    p.stairs = [];
+    // field from 145; a breaker strip 150 wide starting 50 mm in
+    const d = computeDesign({ ...p, breakers: { axis: 'x', items: [{ id: 'B1', pos: 145 + 50 + 75, from: null, to: null }] } });
+    clean(d.layout!);
+    expect(runsAt(d.layout!, 1000)[0]).toEqual([145, 195]);
+    expect(d.warnings.find((w) => w.key === 'layout.breakerShortPiece')?.params).toEqual({ n: 24, len: 50 });
+  });
+
+  it('applies hand-placed breakers only where breakers are on for the decking, and keeps them for later', () => {
+    const p = newProject('l', true);
+    const l = lay(p);
+    const [b1] = breakerSpans(l);
+    const base = freezeBreakers(l);
+    const bl = updateBreaker(base, b1.id, movedBreaker(l, base.items[0], b1, b1.pos - 300));
+    const hw = computeDesign({ ...p, breakers: bl, params: { ...p.params, deckingProductId: 'hw-86x19', boardGap: 4 } });
+    expect(hw.breakersOn).toBe(false);
+    expect(hw.layout!.breakers).toEqual([]);
+    expect(hw.layout!.breakerMode).toBe('auto');
+    const back = lay({ ...p, breakers: bl });
+    expect(back.breakerMode).toBe('manual');
+    expect(breakerSpans(back)[0].pos).toBe(b1.pos - 300);
+  });
+
+  it('keeps hand-placed breakers when the direction picked is the one the boards already run', () => {
+    const p = shopDeck();
+    const bl = freezeBreakers(lay(p));
+    const q = { ...p, breakers: bl };
+    expect(breakersForAxis(q, 'x')).toBe(bl);
+    expect(breakersForAxis(q, 'auto')).toBe(bl);
+    expect(breakersForAxis(q, 'y')).toBeNull();
+  });
+});
+
+describe('composite joist spacing', () => {
+  it('never sets fixed joist centres wider than the decking allows', () => {
+    const p = newProject('l', true);
+    p.params = { ...p.params, joistSpacingMode: 'fixed', joistSpacing: 450 };
+    const d = computeDesign(p);
+    expect(d.joistSpacingCap).toBe(400);
+    expect(d.joistSetoutSpacing).toBe(400);
+    expect(d.layout!.joistSpacingUsed).toBeLessThanOrEqual(400.5);
+  });
+
+  it('reports the decking limit before a deck is drawn', () => {
+    const p = newProject('blank');
+    const d = computeDesign(p);
+    expect(d.ok).toBe(false);
+    expect(d.joistSpacingCap).toBe(400);
+    expect(d.joistSpacingTarget).toBe(400);
   });
 });

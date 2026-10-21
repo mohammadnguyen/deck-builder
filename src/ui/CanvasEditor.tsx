@@ -5,7 +5,7 @@ import type { LayoutResult } from '../engine/layout';
 import { useT } from '../i18n';
 import type { BreakerLayout, Pt } from '../model/types';
 import { useApp, type Selection as UISelection, type Tool } from '../state';
-import { acrossOf, alongOf, breakerBays, breakerRoom, breakerSpans, currentBreakers, mainBay, movedBreaker, removeBreaker, snapBreakerEnd, stripWidth, updateBreaker, type BreakerSpan } from '../utils/breakers';
+import { acrossOf, alongOf, breakerBays, breakerRoom, breakerSpans, currentBreakers, extendedBreaker, mainBay, movedBreaker, removeBreaker, snapBreakerEnd, stripWidth, updateBreaker, type BreakerSpan } from '../utils/breakers';
 import type { ManualBreaker } from '../model/types';
 import { applyDeckMove, carryEdgeData, housePolylineFor, insertNotch, isJogEdge, mirrorProject, moveEdgeTo, moveVertexTo, nextStairId, removeJog, samePoly, setEdgeLengthAnchored } from '../utils/shapes';
 import { NumInline } from './fields';
@@ -23,10 +23,10 @@ type Drag =
   | { type: 'vertex'; index: number; orig: Pt[]; last: Pt[]; sx: number; sy: number; moved: boolean }
   | { type: 'stair'; id: string; grab: number; offset: number; orig: number }
   | { type: 'breaker'; id: string; grab: number; base: BreakerLayout; item: ManualBreaker; span: BreakerSpan; room: [number, number]; centre: number | null; orig: number; last: number; sx: number; sy: number; moved: boolean }
-  | { type: 'breakerEnd'; id: string; end: 'from' | 'to'; base: BreakerLayout; pos: number; other: number; orig: number | null; last: number | null; sx: number; sy: number; moved: boolean }
+  | { type: 'breakerEnd'; id: string; end: 'from' | 'to'; base: BreakerLayout; pos: number; other: number; at: number; orig: number | null; last: number | null; sx: number; sy: number; moved: boolean }
   | { type: 'pinch'; d0: number; scale0: number; mid0: { x: number; y: number }; ox0: number; oy0: number };
 
-type Hover = { type: 'edge'; index: number } | { type: 'vertex'; index: number } | { type: 'stair'; id: string } | { type: 'breaker'; id: string; end?: 'from' | 'to' } | null;
+type Hover = { type: 'edge'; index: number } | { type: 'vertex'; index: number } | { type: 'stair'; id: string } | { type: 'breaker'; id: string; end?: 'from' | 'to'; c0?: number } | null;
 type Dir = 'auto' | 'E' | 'W' | 'N' | 'S';
 
 const MIN_SCALE = 0.004;
@@ -326,25 +326,33 @@ export function CanvasEditor() {
     (w: Pt): Hover => {
       const tol = (touchRef.current ? 20 : 9) / viewRef.current.scale;
       const poly = project.deck;
-      for (let i = 0; i < poly.length; i++) if (dist(poly[i], w) < tol * 1.3) return { type: 'vertex', index: i };
-      for (const s of design.stairs) if (pointInPolygon(w, s.outline)) return { type: 'stair', id: s.id };
-      // breakers lie inside the deck: one under the pointer wins over a nearby edge
-      const lay = design.ok && ui.layers.boards ? design.layout : undefined;
-      if (lay) {
-        const ax = lay.boardAxis;
-        const wa = alongOf(ax, w);
-        const wc = acrossOf(ax, w);
-        const half = stripWidth(lay) / 2;
-        const selId = ui.selection?.type === 'breaker' ? ui.selection.id : null;
-        for (const b of breakerSpans(lay)) {
-          if (Math.abs(wa - b.pos) > half + tol * 0.4 || wc < b.c0 - tol * 0.4 || wc > b.c1 + tol * 0.4) continue;
-          // the ends of the selected breaker are its length handles
-          const endTol = Math.min(tol * 1.6, (b.c1 - b.c0) / 3);
-          if (b.id === selId && Math.abs(wc - b.c0) <= endTol) return { type: 'breaker', id: b.id, end: 'from' };
-          if (b.id === selId && Math.abs(wc - b.c1) <= endTol) return { type: 'breaker', id: b.id, end: 'to' };
-          return { type: 'breaker', id: b.id };
-        }
+      let vertex: { index: number; d: number } | null = null;
+      for (let i = 0; i < poly.length; i++) {
+        const dd = dist(poly[i], w);
+        if (dd < tol * 1.3 && (!vertex || dd < vertex.d)) vertex = { index: i, d: dd };
       }
+      const lay = design.ok && ui.layers.boards ? design.layout : undefined;
+      const ax = lay?.boardAxis ?? 'x';
+      const wa = alongOf(ax, w);
+      const wc = acrossOf(ax, w);
+      const half = lay ? stripWidth(lay) / 2 : 0;
+      const within = (b: BreakerSpan) => Math.abs(wa - b.pos) <= half + tol * 0.4 && wc >= b.c0 - tol * 0.4 && wc <= b.c1 + tol * 0.4;
+      // the ends of the selected breaker (where its dots are drawn) are its length handles; at an inside corner a
+      // dot sits next to a deck corner, and whichever of the two is nearer the pointer wins
+      let endHit: { hover: Hover; d: number } | null = null;
+      const selId = ui.selection?.type === 'breaker' ? ui.selection.id : null;
+      const sb = lay && selId ? breakerSpans(lay).find((b) => b.id === selId) : undefined;
+      if (sb && within(sb)) {
+        const endTol = Math.min(tol * 1.6, (sb.c1 - sb.c0) / 3);
+        const at = (c: number): Pt => (ax === 'x' ? { x: sb.pos, y: c } : { x: c, y: sb.pos });
+        if (Math.abs(wc - sb.c0) <= endTol) endHit = { hover: { type: 'breaker', id: sb.id, end: 'from', c0: sb.c0 }, d: dist(at(sb.c0), w) };
+        else if (Math.abs(wc - sb.c1) <= endTol) endHit = { hover: { type: 'breaker', id: sb.id, end: 'to', c0: sb.c0 }, d: dist(at(sb.c1), w) };
+      }
+      if (vertex && (!endHit || vertex.d <= endHit.d)) return { type: 'vertex', index: vertex.index };
+      for (const s of design.stairs) if (pointInPolygon(w, s.outline)) return { type: 'stair', id: s.id };
+      if (endHit) return endHit.hover;
+      // breakers lie inside the deck: one under the pointer wins over a nearby edge
+      if (lay) for (const b of breakerSpans(lay)) if (within(b)) return { type: 'breaker', id: b.id, c0: b.c0 };
       if (poly.length >= 4) {
         const E = polyEdges(poly);
         let best: { index: number; d: number } | null = null;
@@ -358,6 +366,15 @@ export function CanvasEditor() {
     },
     [design.ok, design.layout, design.stairs, project.deck, ui.layers.boards, ui.selection],
   );
+
+  // a breaker selection whose breaker is gone (another decking, another direction, breakers off) is dropped,
+  // so Delete and the arrow keys never act on a breaker that is not on the plan
+  const selBreakerId = ui.selection?.type === 'breaker' ? ui.selection.id : null;
+  useEffect(() => {
+    if (!selBreakerId) return;
+    const lay = design.ok ? design.layout : null;
+    if (!lay || !breakerSpans(lay).some((b) => b.id === selBreakerId)) setUi({ selection: null });
+  }, [design.ok, design.layout, selBreakerId, setUi]);
 
   const select = useCallback(
     (selection: NonNullable<UISelection>) => setUi(ui.advanced ? { selection, panelTab: 'selection' } : { selection }),
@@ -442,7 +459,9 @@ export function CanvasEditor() {
     }
     if (hit.type === 'breaker' && design.layout) {
       const lay = design.layout;
-      const span = breakerSpans(lay).find((b) => b.id === hit.id);
+      // the piece that was hit (a breaker can come back as two pieces), else its first piece
+      const spans = breakerSpans(lay).filter((b) => b.id === hit.id);
+      const span = spans.find((b) => hit.c0 !== undefined && Math.abs(b.c0 - hit.c0) < 0.5) ?? spans[0];
       // the automatic layout is frozen into hand-placed breakers once something actually moves
       const base = currentBreakers(project, lay);
       const item = base.items.find((it) => it.id === hit.id);
@@ -450,8 +469,9 @@ export function CanvasEditor() {
       if (!span || !item) return;
       if (hit.end) {
         const other = hit.end === 'from' ? span.c1 : span.c0;
+        const at = hit.end === 'from' ? span.c0 : span.c1;
         const orig = hit.end === 'from' ? item.from : item.to;
-        dragRef.current = { type: 'breakerEnd', id: hit.id, end: hit.end, base, pos: item.pos, other, orig, last: orig, sx: e.clientX, sy: e.clientY, moved: false };
+        dragRef.current = { type: 'breakerEnd', id: hit.id, end: hit.end, base, pos: item.pos, other, at, orig, last: orig, sx: e.clientX, sy: e.clientY, moved: false };
         return;
       }
       const band = mainBay(breakerBays(lay, hit.id, span.pos, span.c0, span.c1));
@@ -489,7 +509,11 @@ export function CanvasEditor() {
     if (!d) {
       if (ui.tool === 'select' && !touchRef.current) {
         const h = hitTest(w);
-        const same = h?.type === hover?.type && (h as { index?: number } | null)?.index === (hover as { index?: number } | null)?.index && (h as { id?: string } | null)?.id === (hover as { id?: string } | null)?.id;
+        const same =
+          h?.type === hover?.type &&
+          (h as { index?: number } | null)?.index === (hover as { index?: number } | null)?.index &&
+          (h as { id?: string } | null)?.id === (hover as { id?: string } | null)?.id &&
+          (h as { end?: string } | null)?.end === (hover as { end?: string } | null)?.end;
         if (!same) setHover(h);
       }
       return;
@@ -535,7 +559,9 @@ export function CanvasEditor() {
       return;
     }
     if (d.type === 'breakerEnd' && design.layout) {
-      const v = snapBreakerEnd(design.layout, d.pos, acrossOf(design.layout.boardAxis, w), d.end, d.other);
+      let v = snapBreakerEnd(design.layout, d.pos, acrossOf(design.layout.boardAxis, w), d.end, d.other, d.id);
+      // back where it started (a row edge one gap from where the end lies): nothing changes
+      if (v !== null && Math.abs(v - d.at) <= design.layout.boardGap + 1) v = d.orig;
       if (v !== d.last) {
         d.last = v;
         setLiveBreakers(updateBreaker(d.base, d.id, d.end === 'from' ? { from: v } : { to: v }));
@@ -678,7 +704,7 @@ export function CanvasEditor() {
             const base = currentBreakers(p, lay);
             const item = base.items.find((it) => it.id === sel.id);
             return item ? { ...p, breakers: updateBreaker(base, sel.id, movedBreaker(lay, item, span, pos)) } : p;
-          }, 'h.moveBreaker');
+          }, 'h.moveBreaker', 1200);
         return true;
       }
       return false;
@@ -720,7 +746,7 @@ export function CanvasEditor() {
         } else if (ui.selection?.type === 'breaker' && design.layout) {
           const id = ui.selection.id;
           const lay = design.layout;
-          updateProject((p) => ({ ...p, breakers: removeBreaker(currentBreakers(p, lay), id) }), 'h.deleteBreaker');
+          if (breakerSpans(lay).some((b) => b.id === id)) updateProject((p) => ({ ...p, breakers: removeBreaker(currentBreakers(p, lay), id) }), 'h.deleteBreaker');
           setUi({ selection: null });
         }
         return;
@@ -810,6 +836,8 @@ export function CanvasEditor() {
     return lay.boardAxis === 'x' ? { x: b.pos - half, y: b.c0, w: 2 * half, h: b.c1 - b.c0 } : { x: b.c0, y: b.pos - half, w: b.c1 - b.c0, h: 2 * half };
   };
   const brkPt = (lay: LayoutResult, a: number, c: number): Pt => (lay.boardAxis === 'x' ? { x: a, y: c } : { x: c, y: a });
+  const sameEnd = (a: number | null | undefined, b: number | null | undefined) => a === b || (a != null && b != null && Math.abs(a - b) < 1);
+  const canExtend = (it: { from: number | null; to: number | null }, ext: { from?: number | null; to?: number | null }) => !sameEnd(it.from, ext.from) || !sameEnd(it.to, ext.to);
   const selectedEdge = sel?.type === 'edge' ? deckEdges[sel.index] : undefined;
   const selectedIsHouse = sel?.type === 'edge' ? project.houseEdges.includes(sel.index) : false;
   const layerFlags = useMemo(
@@ -840,7 +868,7 @@ export function CanvasEditor() {
     : ui.tool === 'house' ? t('status.hintHouse')
     : ui.tool === 'pan' ? t('tool.pan')
     : ui.drawMode && project.deck.length >= 4 ? t('canvas.editExisting')
-    : sel?.type === 'breaker' ? t('status.hintBreaker')
+    : sel?.type === 'breaker' && selBrk ? t('status.hintBreaker')
     : t('status.hintSelect');
   const brkAxis = design.layout?.boardAxis ?? 'x';
   const cursorStyle =
@@ -1310,8 +1338,8 @@ export function CanvasEditor() {
                 </button>
               </>
             )}
-            {item && (item.from !== null || item.to !== null) && (
-              <button className="tool" onClick={() => updateProject((p) => ({ ...p, breakers: updateBreaker(currentBreakers(p, lay), id, { from: null, to: null }) }), 'h.breakerLength')}>
+            {item && canExtend(item, extendedBreaker(lay, selBrk)) && (
+              <button className="tool" onClick={() => updateProject((p) => ({ ...p, breakers: updateBreaker(currentBreakers(p, lay), id, extendedBreaker(lay, selBrk)) }), 'h.breakerLength')}>
                 {t('canvas.extend')}
               </button>
             )}

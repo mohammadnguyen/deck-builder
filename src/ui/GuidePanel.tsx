@@ -5,6 +5,7 @@ import type { Project } from '../model/types';
 import { useApp } from '../state';
 import { money } from '../utils/format';
 import { breakersForAxis, currentBreakers, nextBreakerId, suggestBreaker } from '../utils/breakers';
+import { frameSummary } from '../utils/frame';
 import { addStairOnLongestEdge, detectShape, housePolylineFor, makeShape, mirrorProject, shapeDims, topEdgeIndex, type ShapeKind } from '../utils/shapes';
 import { Chk, Num, Seg } from './fields';
 import { SidePanel } from './SidePanel';
@@ -254,6 +255,7 @@ export function GuidePanel() {
         </div>
         {lay && <p className="hint">{t('g.boardDirHint', { now: t(`g.boardDir.now.${lay.boardAxis}`) })}</p>}
         {lay && <p className="hint">{design.joistSetout ? t('g.joistSetoutNote', { spacing: Math.round(design.joistSetoutSpacing) }) : t('g.joistSpacingNote', { cap: design.joistSpacingCap, spacing: design.joistSpacingText })}</p>}
+        {lay && <p className={design.frame.noFit ? 'hint warn' : 'hint'}>{frameSummary(design, project.rules, t)}</p>}
         <Chk label={t('g.edgeBoard')} checked={p.edgeBoard} onChange={(v) => setParam('edgeBoard', v)} />
         {p.edgeBoard && design.ok && <p className="hint">{t('g.edgeBoardNote', { product: productName(design.edgeBoardProductId, lang) })}</p>}
         {lay && design.breakersOn && (

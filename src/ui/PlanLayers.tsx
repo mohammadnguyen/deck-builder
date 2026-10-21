@@ -147,8 +147,8 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
   const poly = design.poly;
   const lay = design.layout;
   const E = design.ok ? design.edges : poly.length >= 3 ? polyEdges(poly) : [];
-  const bw = project.params.bearerLaminations * (PRODUCT_MAP[project.params.bearerProductId]?.width ?? 45);
-  const jw = PRODUCT_MAP[project.params.joistProductId]?.width ?? 45;
+  const bw = design.frame.bearerLaminations * (PRODUCT_MAP[design.frame.bearerProductId]?.width ?? 45);
+  const jw = PRODUCT_MAP[design.frame.joistProductId]?.width ?? 45;
   const postW = PRODUCT_MAP[design.postProductId]?.width ?? 90;
   const path = poly.length ? `M${poly.map((p) => `${p.x},${p.y}`).join('L')}Z` : '';
 
@@ -325,7 +325,7 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
                     fontWeight={600}
                     transform={horizontal ? undefined : `rotate(-90 ${m.x + fs * 0.9} ${m.y})`}
                   >
-                    {b.id} {project.params.bearerLaminations}/{sizeLabel(project.params.bearerProductId)}
+                    {b.id} {design.frame.bearerLaminations}/{sizeLabel(design.frame.bearerProductId)}
                   </text>
                 )}
               </g>

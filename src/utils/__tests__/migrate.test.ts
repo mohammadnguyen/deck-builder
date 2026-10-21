@@ -43,5 +43,17 @@ describe('saved projects', () => {
     later.rules.postEndSetback = 150; // set by hand after the upgrade
     expect(migrateProject(JSON.parse(JSON.stringify(later))).rules.postEndSetback).toBe(150);
   });
-});
 
+  it('sizes the frame automatically for projects still on the old default sizes, and keeps sizes someone picked', () => {
+    const plain = newProject('plain', true) as ReturnType<typeof newProject>;
+    const a = JSON.parse(JSON.stringify(plain));
+    delete a.params.frameSizing;
+    expect(migrateProject(a).params.frameSizing).toBe('auto');
+    const picked = JSON.parse(JSON.stringify(plain));
+    delete picked.params.frameSizing;
+    picked.params.joistProductId = 'tp-140x45';
+    const m = migrateProject(picked);
+    expect(m.params.frameSizing).toBe('fixed');
+    expect(computeDesign(m).frame.joistProductId).toBe('tp-140x45');
+  });
+});

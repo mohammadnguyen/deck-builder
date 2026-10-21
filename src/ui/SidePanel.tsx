@@ -33,7 +33,7 @@ export function SidePanel() {
 }
 
 function ParamsPanel() {
-  const { project, updateProject, lang } = useApp();
+  const { project, design, updateProject, lang } = useApp();
   const { t } = useT();
   const p = project.params;
   const set = <K extends keyof DeckParams>(k: K, v: DeckParams[K]) => updateProject((pr) => ({ ...pr, params: { ...pr.params, [k]: v } }), 'h.params');
@@ -69,7 +69,7 @@ function ParamsPanel() {
             { value: 'x', label: t('p.boardAxis.x') },
             { value: 'y', label: t('p.boardAxis.y') },
           ]}
-          onChange={(v) => set('boardAxis', v as DeckParams['boardAxis'])}
+          onChange={(v) => updateProject((pr) => ({ ...pr, params: { ...pr.params, boardAxis: v as DeckParams['boardAxis'] }, breakers: null }), 'h.boardAxis')}
         />
         <Sel
           label={t('p.attachment')}
@@ -110,7 +110,7 @@ function ParamsPanel() {
           label={t('p.joistSpacingMode')}
           value={p.joistSpacingMode}
           options={[
-            { value: 'auto', label: t('p.joistSpacingMode.auto', { target: project.rules.joistSpacingTarget }) },
+            { value: 'auto', label: t('p.joistSpacingMode.auto', { target: design.joistSpacingTarget }) },
             { value: 'fixed', label: t('p.joistSpacingMode.fixed') },
           ]}
           onChange={(v) => set('joistSpacingMode', v as DeckParams['joistSpacingMode'])}
@@ -139,7 +139,7 @@ function ParamsPanel() {
             { value: 'on', label: t('p.breakerBoards.on') },
             { value: 'off', label: t('p.breakerBoards.off') },
           ]}
-          onChange={(v) => set('breakerBoards', v as DeckParams['breakerBoards'])}
+          onChange={(v) => updateProject((pr) => ({ ...pr, params: { ...pr.params, breakerBoards: v as DeckParams['breakerBoards'] }, breakers: null }), 'h.params')}
         />
         {p.breakerBoards !== 'off' && (
           <Sel
@@ -151,7 +151,7 @@ function ParamsPanel() {
               { value: '2', label: t('p.breakerCount.2') },
               { value: '3', label: t('p.breakerCount.3') },
             ]}
-            onChange={(v) => set('breakerCount', v === 'auto' ? 'auto' : (Number(v) as 1 | 2 | 3))}
+            onChange={(v) => updateProject((pr) => ({ ...pr, params: { ...pr.params, breakerCount: v === 'auto' ? 'auto' : (Number(v) as 1 | 2 | 3) }, breakers: null }), 'h.params')}
           />
         )}
         <Chk label={t('p.fascia')} checked={p.fascia} onChange={(v) => set('fascia', v)} />
@@ -391,6 +391,8 @@ function SelectionPanel() {
       </div>
     );
   }
+
+  if (sel.type === 'breaker') return <p className="muted">{t('status.hintBreaker')}</p>;
 
   if (sel.type === 'stair') {
     const s = project.stairs.find((x) => x.id === sel.id);

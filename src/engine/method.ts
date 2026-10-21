@@ -38,6 +38,8 @@ export interface MethodInput {
   edgeBoardName: string;
   /** true when the boards start from a house wall */
   houseSide: boolean;
+  /** largest joist spacing allowed */
+  joistSpacingCap: number;
 }
 
 export function buildMethod(m: MethodInput): MethodStep[] {
@@ -109,7 +111,7 @@ export function buildMethod(m: MethodInput): MethodStep[] {
     },
     notes: [
       { key: flush ? 'm.joists.flush.n1' : nails ? 'm.joists.n1.nails' : 'm.joists.n1', params: { n: m.rules.skewNailsPerCrossing } },
-      ...(p.joistSpacingMode === 'auto' ? [{ key: 'm.joists.auto', params: { max: Math.round(p.joistSpacingMax), spacing: m.joistSpacingText } }] : []),
+      ...(p.joistSpacingMode === 'auto' ? [{ key: 'm.joists.auto', params: { max: Math.round(m.joistSpacingCap), spacing: m.joistSpacingText } }] : []),
       ...(m.layout.totals.frameJoists > 0 ? [{ key: 'm.joists.frame', params: { n: m.layout.totals.frameJoists, pairs: Math.ceil(m.layout.totals.frameJoists / 2), inset: Math.round(m.layout.edgeBoards[0]?.width ?? 0) + p.boardGap } }] : []),
       ...(p.joistTape ? [{ key: 'm.joists.n2' }] : []),
       ...(m.layout.totals.boardJoins > 0 ? [{ key: 'm.joists.n3', params: { joins: m.layout.totals.boardJoins } }] : []),
@@ -126,9 +128,9 @@ export function buildMethod(m: MethodInput): MethodStep[] {
         ? [{ key: 'm.decking.edgeBoard', params: { n: m.layout.edgeBoards.length, mitres: m.layout.totals.mitres, product: m.edgeBoardName, lm: (m.layout.totals.edgeBoardLm / 1000).toFixed(1) } }]
         : []),
       ...(m.layout.breakers.length
-        ? [{ key: 'm.decking.breaker', params: { n: m.layout.breakers.length, lm: (m.layout.totals.breakerLm / 1000).toFixed(1) } }]
+        ? [{ key: m.layout.breakerMode === 'manual' ? 'm.decking.breaker.manual' : 'm.decking.breaker', params: { n: m.layout.breakers.length, lm: (m.layout.totals.breakerLm / 1000).toFixed(1) } }]
         : []),
-      { key: m.layout.breakers.length ? (m.clips ? 'm.decking.clips.n1.nojoins' : 'm.decking.n1.nojoins') : m.clips ? 'm.decking.clips.n1' : 'm.decking.n1', params: { side: m.houseSide ? 'house' : 'edge' } },
+      { key: m.layout.breakers.length && m.layout.totals.boardJoins === 0 ? (m.clips ? 'm.decking.clips.n1.nojoins' : 'm.decking.n1.nojoins') : m.clips ? 'm.decking.clips.n1' : 'm.decking.n1', params: { side: m.houseSide ? 'house' : 'edge' } },
       { key: m.layout.breakers.length ? 'm.decking.n2.breaker' : 'm.decking.n2' },
       ...m.layout.rips.map((r) => ({ key: 'm.decking.rip', params: { row: r.row, width: r.width, n: r.boards } })),
       { key: 'm.decking.n3' },

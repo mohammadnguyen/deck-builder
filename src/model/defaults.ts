@@ -7,6 +7,9 @@ import { CATALOG } from './catalog';
  * AS 1684.2 / supplier tables (or an engineer) before construction. Everything
  * here is editable in the Rules panel.
  */
+/** bumped when a default changes in a way saved rule sets should follow once (2: composite joists at 400) */
+export const RULES_VERSION = 2;
+
 export function defaultRules(): RuleSet {
   return {
     joistSpan: {
@@ -35,6 +38,7 @@ export function defaultRules(): RuleSet {
       CATALOG.filter((p) => p.isDecking).map((p) => [p.id, p.maxJoistSpacing ?? 450]),
     ),
     joistSpacingTarget: 450,
+    rulesVersion: RULES_VERSION,
     frameJoist: true,
     // perimeter bearer sits at the deck edge; joist ends finish flush with its outer face
     bearerEdgeInset: 25,
@@ -173,5 +177,6 @@ export function newProject(name: string, withSample = false, rules?: RuleSet, pr
     rules: rules ? JSON.parse(JSON.stringify(rules)) : defaultRules(),
     prices: prices ? { ...prices } : {},
     progress: {},
+    breakers: null,
   };
 }

@@ -134,7 +134,7 @@ export function SheetsView() {
   const joistGroups = new Map<number, number>();
   for (const j of lay.joists) joistGroups.set(Math.round(j.length), (joistGroups.get(Math.round(j.length)) ?? 0) + 1);
   const joistSummary = [...joistGroups.entries()].sort((a, b) => b[0] - a[0]).map(([len, n]) => `${n} x ${len}`).join(', ');
-  const spacingMode = p.joistSpacingMode === 'auto' ? t('sheet.spacingAuto', { max: p.joistSpacingMax }) : t('sheet.spacingFixed');
+  const spacingMode = p.joistSpacingMode === 'auto' ? t('sheet.spacingAuto', { max: design.joistSpacingCap }) : t('sheet.spacingFixed');
   const baySummary = lay.joistBays.map((b) => `${b.count} x @${Math.round(b.spacing)}`).join(', ');
   const edgeBoardLine = design.bom.lines.find((l) => l.tags.includes('edgeBoard'));
   const lastRow = lay.boards[lay.boards.length - 1];
@@ -303,8 +303,8 @@ export function SheetsView() {
             {lay.edgeBoards.length > 0 && (
               <p>{t('sheet.deckingNote4', { product: productName(design.edgeBoardProductId, lang), n: lay.edgeBoards.length, lm: (lay.totals.edgeBoardLm / 1000).toFixed(1), mitres: lay.totals.mitres, gap: p.boardGap })}</p>
             )}
-            {lay.breakers.length > 0 && <p>{t('sheet.deckingNote6', { n: lay.breakers.length, lm: (lay.totals.breakerLm / 1000).toFixed(1) })}</p>}
-            <p>{t(lay.breakers.length ? 'sheet.deckingNote2.breaker' : 'sheet.deckingNote2')}</p>
+            {lay.breakers.length > 0 && <p>{t(lay.totals.boardJoins ? 'sheet.deckingNote6.joins' : 'sheet.deckingNote6', { n: lay.breakers.length, lm: (lay.totals.breakerLm / 1000).toFixed(1) })}</p>}
+            <p>{t(lay.breakers.length && !lay.totals.boardJoins ? 'sheet.deckingNote2.breaker' : 'sheet.deckingNote2')}</p>
             {lay.rips.length ? (
               <p>
                 <b>{t(houseSide ? 'sheet.rows.house' : 'sheet.rows.edge')} {lay.rips.map((r) => t('sheet.ripRow', { row: r.row, width: r.width, n: r.boards })).join(t('list.sep'))}</b>

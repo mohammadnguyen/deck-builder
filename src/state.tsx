@@ -89,6 +89,11 @@ export function migrateProject(p: Partial<Project>): Project {
       if (prod.isDecking && prod.family === 'composite' && rules.deckingMaxJoistSpacing[prod.id] === 500) rules.deckingMaxJoistSpacing[prod.id] = dr.deckingMaxJoistSpacing[prod.id];
     }
   }
+  // version 3: bearers run out under the edge joists and every bearer end sits on its stump
+  if ((p.rules?.rulesVersion ?? 1) < 3) {
+    if (rules.postEndSetback === 150) rules.postEndSetback = dr.postEndSetback;
+    if (rules.bearerEndInset === 45) rules.bearerEndInset = dr.bearerEndInset;
+  }
   rules.rulesVersion = Math.max(p.rules?.rulesVersion ?? 1, dr.rulesVersion ?? 1);
   const params: DeckParams = {
     ...dp,

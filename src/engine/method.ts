@@ -114,6 +114,7 @@ export function buildMethod(m: MethodInput): MethodStep[] {
     },
     notes: [
       { key: flush ? 'm.joists.flush.n1' : nails ? 'm.joists.n1.nails' : 'm.joists.n1', params: { n: m.rules.skewNailsPerCrossing } },
+      ...(flush ? [] : [{ key: 'm.joists.ends' }]),
       ...(m.joistSetout
         ? [{ key: 'm.joists.setout', params: { spacing: Math.round(m.joistSetoutSpacing) } }]
         : p.joistSpacingMode === 'auto'

@@ -128,6 +128,13 @@ export function computeDesign(project: Project): DesignResult {
   const joistSetout = params.joistSpacingMode === 'fixed' || (decking.family === 'composite' && rules.compositeJoistSetout !== false);
   const joistSetoutSpacing = params.joistSpacingMode === 'fixed' ? params.joistSpacing : joistSpacingCap;
 
+  // the stump the bearers sit on (sized by height when automatic): a bearer end sits fully on it
+  let postProductId = params.postProductId;
+  if (postProductId === 'auto' || !PRODUCT_MAP[postProductId]) {
+    const fit = POST_PRODUCTS.find((p) => (rules.postMaxHeight[p.id] ?? 0) >= postTop);
+    postProductId = (fit ?? POST_PRODUCTS[POST_PRODUCTS.length - 1]).id;
+  }
+
   const layout = computeLayout(poly, houseEdges, params, rules, {
     boardWidth: decking.width ?? 86,
     boardGap: params.boardGap,
@@ -146,17 +153,15 @@ export function computeDesign(project: Project): DesignResult {
     edgeBoardMaxStock: maxStock(edgeBoardProductId),
     joistMaxStock: maxStock(joist.id),
     bearerMaxStock: maxStock(bearer.id),
+    joistStockLengths: joist.stockLengths,
+    bearerStockLengths: bearer.stockLengths,
+    postWidth: PRODUCT_MAP[postProductId]?.width ?? 90,
   });
   const spMin = Math.round(layout.joistSpacingMin);
   const spMax = Math.round(layout.joistSpacingUsed);
   const joistSpacingText = joistSetout ? `${Math.round(joistSetoutSpacing)}` : spMin === spMax ? `${spMax}` : `${spMin}-${spMax}`;
 
   // ---- posts ----
-  let postProductId = params.postProductId;
-  if (postProductId === 'auto' || !PRODUCT_MAP[postProductId]) {
-    const fit = POST_PRODUCTS.find((p) => (rules.postMaxHeight[p.id] ?? 0) >= postTop);
-    postProductId = (fit ?? POST_PRODUCTS[POST_PRODUCTS.length - 1]).id;
-  }
   const postProd = product(postProductId);
   const postW = postProd.width ?? 90;
   const postLength =

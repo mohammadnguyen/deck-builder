@@ -3,12 +3,13 @@ import { productName, useT } from '../i18n';
 import { useApp } from '../state';
 import { exportCsv, exportProjectJson, exportXlsx } from '../utils/export';
 import { supplierOrderText } from '../utils/order';
-import { BomTable } from './BomTable';
+import { withNote } from '../utils/orderEdits';
+import { OrderEditor } from './OrderEditor';
 import { PricesPanel } from './SidePanel';
 
 /** Bill of materials, the supplier order text, exports and the price list, on one screen page. */
 export function MaterialsView() {
-  const { project, design, lang } = useApp();
+  const { project, design, lang, updateProject } = useApp();
   const { t } = useT();
   const [copied, setCopied] = useState(false);
   if (!design.ok) {
@@ -46,12 +47,16 @@ export function MaterialsView() {
       </div>
       <div className="materials-grid">
         <section className="card bom-card">
-          <BomTable design={design} params={project.params} />
+          <OrderEditor />
         </section>
         <section className="card order-card">
           <h3>{t('mat.order')}</h3>
           <p className="hint">{t('mat.orderHint')}</p>
           <textarea className="order" value={order} readOnly rows={Math.min(24, order.split('\n').length + 1)} />
+          <label className="order-note">
+            <span>{t('ord.note')}</span>
+            <textarea rows={2} value={project.order?.note ?? ''} onChange={(e) => updateProject((p) => ({ ...p, order: withNote(p, e.target.value) }), 'h.orderNote')} />
+          </label>
           <button className="btn primary" onClick={() => void copy()}>
             {copied ? t('mat.copied') : t('mat.copy')}
           </button>

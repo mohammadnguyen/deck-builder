@@ -179,5 +179,6 @@ export function newProject(name: string, withSample = false, rules?: RuleSet, pr
     prices: prices ? { ...prices } : {},
     progress: {},
     breakers: null,
+    order: null,
   };
 }

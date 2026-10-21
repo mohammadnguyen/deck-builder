@@ -1,8 +1,9 @@
 import type { DesignResult } from '../engine';
-import { productName, useT } from '../i18n';
+import { useT } from '../i18n';
 import { PRODUCT_MAP } from '../model/catalog';
 import type { DeckParams } from '../model/types';
 import { money, stockLabel } from '../utils/format';
+import { lineName } from '../utils/order';
 
 /** Bill of materials with the purchase quantities, prices and the GST footer. Used on the sheet and the materials page. */
 export function BomTable({ design, params }: { design: DesignResult; params: DeckParams }) {
@@ -96,9 +97,9 @@ function CatRows({ cat, lines, offset }: { cat: string; lines: DesignResult['bom
         <td colSpan={11}>{t(`bom.cat.${cat}`)}</td>
       </tr>
       {lines.map((l, i) => (
-        <tr key={l.productId}>
+        <tr key={l.key}>
           <td>{offset + i + 1}</td>
-          <td>{productName(l.productId, lang)}</td>
+          <td>{lineName(l, lang)}</td>
           <td>{stockLabel(l.stockBreakdown)}</td>
           <td>
             {l.qty}

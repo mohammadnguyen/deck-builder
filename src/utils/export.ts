@@ -1,4 +1,5 @@
 import type { DesignResult } from '../engine';
+import { lineName } from './order';
 import { productName, translate } from '../i18n';
 import type { Lang, Project } from '../model/types';
 import { PRODUCT_MAP } from '../model/catalog';
@@ -28,7 +29,7 @@ function bomRows(design: DesignResult, lang: Lang): (string | number)[][] {
   const rows: (string | number)[][] = [[t('bom.item'), t('bom.spec'), t('bom.qty'), t('bom.unit'), t('bom.required'), t('bom.purchased'), t('bom.price'), t('bom.total'), t('bom.use')]];
   for (const l of design.bom.lines) {
     rows.push([
-      productName(l.productId, lang),
+      lineName(l, lang),
       stockLabel(l.stockBreakdown),
       l.qty,
       t(`unit.${l.unit}`),

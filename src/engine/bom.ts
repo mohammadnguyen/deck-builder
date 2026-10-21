@@ -1,5 +1,5 @@
 import { PRODUCT_MAP } from '../model/catalog';
-import type { ProductCategory, RuleSet, Unit } from '../model/types';
+import type { OrderEdits, ProductCategory, RuleSet, Unit } from '../model/types';
 import { packPieces, type BinGroup } from './cutlist';
 
 export interface Piece {
@@ -15,7 +15,12 @@ export interface CountItem {
 }
 
 export interface BomLine {
+  /** stable key: the product for calculated lines, add:<id> for items added by hand */
+  key: string;
+  /** empty for a free-text item added by hand */
   productId: string;
+  /** name of a free-text item */
+  name?: string;
   category: ProductCategory;
   unit: Unit;
   /** purchase quantity: number of stock pieces for 'm' products, otherwise units */
@@ -29,6 +34,12 @@ export interface BomLine {
   unitPrice: number;
   total: number;
   tags: string[];
+  /** quantity changed by hand; the calculated quantity and stock lengths are kept for reference */
+  edited?: boolean;
+  calcQty?: number;
+  calcStock?: { length: number; count: number }[];
+  /** an item added by hand (its id in OrderEdits.added) */
+  addedId?: string;
 }
 
 export interface CutList {
@@ -44,10 +55,15 @@ export interface BomOptions {
   pricesIncludeGst: boolean;
   supplierDiscountPct: number;
   deliveryFee: number;
+  /** hand changes to the order list */
+  edits?: OrderEdits | null;
 }
 
 export interface BomResult {
+  /** the order: calculated lines with hand changes, and items added by hand */
   lines: BomLine[];
+  /** calculated lines taken off the order by hand (kept so they can be put back) */
+  removed: BomLine[];
   cutlists: CutList[];
   /** sum of all lines before discount */
   linesTotal: number;
@@ -61,7 +77,15 @@ export interface BomResult {
   pricesIncludeGst: boolean;
 }
 
-const CATEGORY_ORDER: ProductCategory[] = ['decking', 'framing', 'post', 'balustrade', 'hardware', 'concrete', 'consumable'];
+const CATEGORY_ORDER: ProductCategory[] = ['decking', 'framing', 'post', 'balustrade', 'hardware', 'concrete', 'consumable', 'other'];
+
+/** stock lengths from a hand-edited map, longest first, empty entries dropped */
+export function stockFromMap(map: Record<string, number> | undefined): { length: number; count: number }[] {
+  return Object.entries(map ?? {})
+    .map(([len, count]) => ({ length: Number(len), count: Math.max(0, Math.round(Number(count) || 0)) }))
+    .filter((s) => s.length > 0 && s.count > 0)
+    .sort((p, q) => q.length - p.length);
+}
 
 export function buildBom(
   pieces: Piece[],
@@ -118,6 +142,7 @@ export function buildBom(
       unitPrice,
       total: prod.unit === 'm' ? purchasedLm * unitPrice : (count + extraCount) * unitPrice,
       tags: [...new Set(list.map((p) => p.tag))],
+      key: productId,
     });
     cutlists.push({
       productId,
@@ -142,13 +167,58 @@ export function buildBom(
     if (!prod) continue;
     const qty = prod.unit === 'L' ? Math.ceil(c.qty * 10) / 10 : Math.ceil(c.qty);
     const unitPrice = priceOf(productId);
-    lines.push({ productId, category: prod.category, unit: prod.unit, qty, unitPrice, total: qty * unitPrice, tags: [...c.tags] });
+    lines.push({ key: productId, productId, category: prod.category, unit: prod.unit, qty, unitPrice, total: qty * unitPrice, tags: [...c.tags] });
+  }
+
+  // ---- hand changes: quantities, lines taken off, items added ----
+  const removed: BomLine[] = [];
+  const edits = opts.edits;
+  if (edits) {
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const l = lines[i];
+      const e = edits.lines?.[l.productId];
+      if (!e) continue;
+      if (e.removed) {
+        removed.push(l);
+        lines.splice(i, 1);
+        continue;
+      }
+      if (l.unit === 'm' && e.stock) {
+        const breakdown = stockFromMap(e.stock);
+        const purchasedLm = breakdown.reduce((s, b) => s + (b.length * b.count) / 1000, 0);
+        lines[i] = { ...l, edited: true, calcQty: l.qty, calcStock: l.stockBreakdown, stockBreakdown: breakdown, qty: breakdown.reduce((s, b) => s + b.count, 0), purchasedLm, extraCount: undefined, total: purchasedLm * l.unitPrice };
+      } else if (l.unit !== 'm' && typeof e.qty === 'number' && Number.isFinite(e.qty)) {
+        const qty = Math.max(0, e.qty);
+        lines[i] = { ...l, edited: true, calcQty: l.qty, qty, total: qty * l.unitPrice };
+      }
+    }
+    for (const it of edits.added ?? []) {
+      const prod = it.productId ? PRODUCT_MAP[it.productId] : undefined;
+      if (prod) {
+        const unitPrice = priceOf(prod.id);
+        if (prod.unit === 'm') {
+          const breakdown = stockFromMap(it.stock);
+          const purchasedLm = breakdown.reduce((s, b) => s + (b.length * b.count) / 1000, 0);
+          lines.push({ key: `add:${it.id}`, productId: prod.id, category: prod.category, unit: prod.unit, qty: breakdown.reduce((s, b) => s + b.count, 0), stockBreakdown: breakdown, purchasedLm, unitPrice, total: purchasedLm * unitPrice, tags: ['added'], addedId: it.id });
+        } else {
+          const qty = Math.max(0, Number(it.qty) || 0);
+          lines.push({ key: `add:${it.id}`, productId: prod.id, category: prod.category, unit: prod.unit, qty, unitPrice, total: qty * unitPrice, tags: ['added'], addedId: it.id });
+        }
+      } else if (!it.productId) {
+        const qty = Math.max(0, Number(it.qty) || 0);
+        const unitPrice = Math.max(0, Number(it.unitPrice) || 0);
+        lines.push({ key: `add:${it.id}`, productId: '', name: (it.name ?? '').trim() || '-', category: 'other', unit: it.unit ?? 'ea', qty, unitPrice, total: qty * unitPrice, tags: ['added'], addedId: it.id });
+      }
+    }
   }
 
   lines.sort((p, q) => {
     const c = CATEGORY_ORDER.indexOf(p.category) - CATEGORY_ORDER.indexOf(q.category);
     if (c !== 0) return c;
-    return p.productId.localeCompare(q.productId);
+    // items added by hand come after the calculated ones of their group, in the order they were added
+    const a = (p.addedId ? 1 : 0) - (q.addedId ? 1 : 0);
+    if (a !== 0) return a;
+    return p.addedId ? 0 : p.productId.localeCompare(q.productId);
   });
   const linesTotal = lines.reduce((s, l) => s + l.total, 0);
   const discount = (linesTotal * Math.max(0, opts.supplierDiscountPct)) / 100;
@@ -156,8 +226,8 @@ export function buildBom(
   const subtotal = linesTotal - discount + delivery;
   if (opts.pricesIncludeGst) {
     const exGst = subtotal / (1 + gstPct / 100);
-    return { lines, cutlists, linesTotal, discount, delivery, subtotal, exGst, gst: subtotal - exGst, total: subtotal, pricesIncludeGst: true };
+    return { lines, removed, cutlists, linesTotal, discount, delivery, subtotal, exGst, gst: subtotal - exGst, total: subtotal, pricesIncludeGst: true };
   }
   const gst = (subtotal * gstPct) / 100;
-  return { lines, cutlists, linesTotal, discount, delivery, subtotal, exGst: subtotal, gst, total: subtotal + gst, pricesIncludeGst: false };
+  return { lines, removed, cutlists, linesTotal, discount, delivery, subtotal, exGst: subtotal, gst, total: subtotal + gst, pricesIncludeGst: false };
 }

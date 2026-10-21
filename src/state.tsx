@@ -121,6 +121,10 @@ export function migrateProject(p: Partial<Project>): Project {
     params,
     progress: p.progress ?? {},
     breakers: p.breakers && Array.isArray(p.breakers.items) ? p.breakers : null,
+    order:
+      p.order && typeof p.order === 'object'
+        ? { lines: p.order.lines && typeof p.order.lines === 'object' ? p.order.lines : {}, added: Array.isArray(p.order.added) ? p.order.added : [], note: typeof p.order.note === 'string' ? p.order.note : undefined }
+        : null,
   } as Project;
 }
 
@@ -177,6 +181,7 @@ const DISCRETE = new Set([
   'h.shape', 'h.wall', 'h.decking', 'h.edgeBoard', 'h.draw', 'h.house', 'h.moveEdge', 'h.moveVertex', 'h.moveStair',
   'h.addStair', 'h.deleteStair', 'h.edgeLength', 'h.notch', 'h.removeNotch', 'h.mirror', 'h.clear',
   'h.moveBreaker', 'h.breakerLength', 'h.addBreaker', 'h.deleteBreaker', 'h.breakerAuto', 'h.boardAxis',
+  'h.order', 'h.orderAdd', 'h.orderRemove', 'h.orderRestore', 'h.orderReset', 'h.price',
 ]);
 
 export function AppProvider({ children }: { children: ReactNode }) {

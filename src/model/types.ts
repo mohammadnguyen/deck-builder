@@ -173,7 +173,8 @@ export type ProductCategory =
   | 'balustrade'
   | 'hardware'
   | 'consumable'
-  | 'concrete';
+  | 'concrete'
+  | 'other';
 
 export type ConcreteProduct = 'rapid-set-20kg' | 'concrete-mix-20kg';
 
@@ -226,6 +227,38 @@ export interface ManualBreaker {
   to: number | null;
 }
 
+/** A hand change to a calculated order line (keyed by product). */
+export interface OrderLineEdit {
+  /** left off the order */
+  removed?: boolean;
+  /** purchase quantity set by hand: units, or pieces for products sold in boxes */
+  qty?: number;
+  /** stock lengths set by hand for timber sold by the metre: length in mm -> pieces */
+  stock?: Record<string, number>;
+}
+
+/** An item added to the order by hand: a catalogue product, or anything else by name. */
+export interface OrderItem {
+  id: string;
+  productId?: string;
+  /** free-text items */
+  name?: string;
+  unit?: Unit;
+  unitPrice?: number;
+  /** units, or pieces for products sold in boxes */
+  qty?: number;
+  /** timber sold by the metre: length in mm -> pieces */
+  stock?: Record<string, number>;
+}
+
+/** Everything changed by hand on the order list; the calculated list is the starting point. */
+export interface OrderEdits {
+  lines: Record<string, OrderLineEdit>;
+  added: OrderItem[];
+  /** printed at the end of the supplier order */
+  note?: string;
+}
+
 /** Hand-placed breakers, valid for the board direction they were laid out for. */
 export interface BreakerLayout {
   axis: Axis;
@@ -251,4 +284,6 @@ export interface Project {
   progress: Record<string, boolean>;
   /** breaker boards placed by hand; null / absent = laid out automatically */
   breakers?: BreakerLayout | null;
+  /** hand changes to the order list; null / absent = as calculated */
+  order?: OrderEdits | null;
 }

@@ -97,7 +97,7 @@ export function computeDesign(project: Project): DesignResult {
     enabled: false, edges: [], segments: [], posts: [], totalLength: 0, railPieces: [], railCount: 2,
     slatCount: 0, slatLength: 0, wireLength: 0, wireKits: 0, postLength: 0,
   };
-  const emptyBom: BomResult = { lines: [], cutlists: [], linesTotal: 0, discount: 0, delivery: 0, subtotal: 0, exGst: 0, gst: 0, total: 0, pricesIncludeGst: params.pricesIncludeGst };
+  const emptyBom: BomResult = { lines: [], removed: [], cutlists: [], linesTotal: 0, discount: 0, delivery: 0, subtotal: 0, exGst: 0, gst: 0, total: 0, pricesIncludeGst: params.pricesIncludeGst };
 
   if (!valid.ok) {
     return {
@@ -319,6 +319,7 @@ export function computeDesign(project: Project): DesignResult {
     pricesIncludeGst: params.pricesIncludeGst,
     supplierDiscountPct: params.supplierDiscountPct,
     deliveryFee: params.deliveryFee,
+    edits: project.order ?? null,
   });
 
   const compliance = assessCompliance({

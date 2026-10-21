@@ -372,3 +372,60 @@ ol.steps ul { margin: 6px 0 0 30px; padding: 0 0 0 14px; color: #374151; font-si
   .edgebar > span:first-child { flex-basis: 100%; text-align: center; font-weight: 600; }
   .canvas-wrap:has(.edgebar) .zoomctl { display: none; }
 }
+
+/* editable order list */
+.order-edit .hint { margin: 0 0 8px; font-size: 12px; color: var(--muted); line-height: 1.5; }
+.bom-scroll { overflow-x: auto; }
+table.bom.edit { font-size: 12.5px; }
+table.bom.edit th, table.bom.edit td { border: 1px solid var(--border); padding: 5px 7px; vertical-align: middle; }
+table.bom.edit td.name .sub { font-size: 11px; color: var(--muted); margin-top: 2px; }
+table.bom.edit td.name .calc { color: #b45309; font-weight: 600; }
+table.bom.edit td.qty .stock { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center; }
+table.bom.edit label.len { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; }
+table.bom.edit input[type=number] { width: 64px; padding: 3px 5px; border: 1px solid var(--border); border-radius: 4px; font: inherit; }
+table.bom.edit td.price { white-space: nowrap; }
+table.bom.edit td.price input[type=number] { width: 76px; }
+table.bom.edit td.price small { color: var(--muted); margin-left: 2px; }
+table.bom.edit td.total { white-space: nowrap; text-align: right; font-variant-numeric: tabular-nums; }
+table.bom.edit tr.edited td { background: #fffbeb; }
+table.bom.edit tr.added td { background: #f0fdf4; }
+table.bom.edit tr.flash td { animation: flash 1.6s ease-out; }
+@keyframes flash { from { background: #fde68a; } }
+table.bom.edit .del { border: 0; background: transparent; color: #b91c1c; font-size: 18px; line-height: 1; cursor: pointer; padding: 0 4px; }
+table.bom.edit .add-len { font-size: 12px; padding: 2px 4px; }
+.order-removed { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; font-size: 12.5px; color: var(--muted); margin: 10px 0 0; }
+.order-removed .chip { background: #f3f4f6; border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; color: var(--text); text-decoration: line-through; }
+.order-removed .chip button { text-decoration: none; margin-left: 6px; display: inline-block; }
+.order-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.add-item { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; padding: 8px; border: 1px dashed var(--border); border-radius: 8px; width: 100%; box-sizing: border-box; }
+.add-item select, .add-item input { padding: 5px 6px; border: 1px solid var(--border); border-radius: 5px; font: inherit; font-size: 13px; }
+.add-item select:first-child { max-width: 100%; }
+.add-item input.name { flex: 1 1 160px; }
+.add-item input[type=number] { width: 80px; }
+.order-note { display: flex; flex-direction: column; gap: 4px; margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+.order-note textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; padding: 6px; font: inherit; font-size: 13px; resize: vertical; }
+
+/* phones: one card per order line (name, then quantity, then price and amount) */
+@media (max-width: 760px) {
+  table.bom.edit, table.bom.edit tbody, table.bom.edit tfoot { display: block; }
+  table.bom.edit thead { display: none; }
+  table.bom.edit tr.cat { display: block; }
+  table.bom.edit tr.cat td { display: block; border: 0; padding: 6px 8px; }
+  table.bom.edit tbody tr:not(.cat) {
+    display: grid; grid-template-columns: 24px minmax(0, 1fr) auto; gap: 6px 8px; align-items: center;
+    grid-template-areas: 'n name del' '. qty qty' '. price total';
+    padding: 8px; border-bottom: 1px solid var(--border);
+  }
+  table.bom.edit tbody tr:not(.cat) td { border: 0; padding: 0; background: transparent; }
+  table.bom.edit tbody tr.edited { background: #fffbeb; }
+  table.bom.edit tbody tr.added { background: #f0fdf4; }
+  table.bom.edit tbody tr:not(.cat) td:nth-child(1) { grid-area: n; color: var(--muted); align-self: start; }
+  table.bom.edit tbody tr:not(.cat) td.name { grid-area: name; }
+  table.bom.edit tbody tr:not(.cat) td.qty { grid-area: qty; }
+  table.bom.edit tbody tr:not(.cat) td.price { grid-area: price; }
+  table.bom.edit tbody tr:not(.cat) td.total { grid-area: total; font-weight: 600; }
+  table.bom.edit tbody tr:not(.cat) td:last-child { grid-area: del; align-self: start; }
+  table.bom.edit tfoot tr { display: flex; justify-content: space-between; gap: 12px; padding: 6px 8px; border-bottom: 1px solid var(--border); }
+  table.bom.edit tfoot td { border: 0; padding: 0; }
+  table.bom.edit input[type=number] { width: 72px; font-size: 16px; }
+}

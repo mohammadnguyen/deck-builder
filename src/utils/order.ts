@@ -1,7 +1,13 @@
 import type { DesignResult } from '../engine';
+import type { BomLine } from '../engine/bom';
 import { PRODUCT_MAP } from '../model/catalog';
 import type { Lang, Project } from '../model/types';
-import { productName } from '../i18n';
+import { productName, translate } from '../i18n';
+
+/** Name of an order line: the catalogue name, or what was typed for an item added by hand. */
+export function lineName(l: BomLine, lang: Lang): string {
+  return l.productId ? productName(l.productId, lang) : l.name || '-';
+}
 
 /** The supplier's own item wording when an invoice reference is known, else the catalogue name. */
 export function orderName(productId: string, lang: Lang): string {
@@ -20,8 +26,14 @@ export function supplierOrderText(project: Project, design: DesignResult, lang: 
   lines.push('');
   let n = 0;
   for (const l of design.bom.lines) {
+    if (!(l.qty > 0)) continue;
     const p = PRODUCT_MAP[l.productId];
-    if (!p) continue;
+    if (!p) {
+      // an item added by hand by name
+      n++;
+      lines.push(`${n}. ${l.name || '-'} — ${l.qty} ${translate(lang, `unitName.${l.unit}`)}`);
+      continue;
+    }
     n++;
     let qty: string;
     if (p.unit === 'm' && l.stockBreakdown?.length) {
@@ -34,6 +46,11 @@ export function supplierOrderText(project: Project, design: DesignResult, lang: 
       qty = `${l.qty} ${unit}`;
     }
     lines.push(`${n}. ${orderName(l.productId, lang)} — ${qty}`);
+  }
+  const note = project.order?.note?.trim();
+  if (note) {
+    lines.push('');
+    lines.push(`${translate(lang, 'ord.noteLabel')}: ${note}`);
   }
   return lines.join('\n');
 }

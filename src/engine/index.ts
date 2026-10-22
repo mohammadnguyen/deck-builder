@@ -1,4 +1,4 @@
-import { PRODUCT_MAP, POST_PRODUCTS, hangerFor, product, resolveProductId } from '../model/catalog';
+import { PRODUCT_MAP, POST_PRODUCTS, hangerFor, product, resolveProductId, stockLengthsOf } from '../model/catalog';
 import type { FrameSizes, Project, Pt, RuleSet } from '../model/types';
 import { designBalustrade, type BalustradeDesign } from './balustrade';
 import { buildBom, type BomResult, type CountItem, type Piece } from './bom';
@@ -75,7 +75,11 @@ export interface DesignResult {
   method: MethodStep[];
 }
 
-const maxStock = (id: string): number => Math.max(...(product(id).stockLengths ?? [6000]));
+/** the longest length a product is bought in (framing pine: of the yard's lengths) */
+const maxStock = (id: string, rules: RuleSet): number => {
+  const lengths = stockLengthsOf(product(id), rules);
+  return lengths.length ? Math.max(...lengths) : 6000;
+};
 
 export interface FrameInfo {
   joistProductId: string;
@@ -252,12 +256,13 @@ function setup(project: Project) {
     joistSetoutSpacing,
     kerf: rules.kerf,
     deckingMaxJoistSpacing: maxTreadSpan,
-    deckingMaxStock: maxStock(decking.id),
-    edgeBoardMaxStock: maxStock(edgeBoardProductId),
-    joistMaxStock: maxStock(joist.id),
-    bearerMaxStock: maxStock(bearer.id),
-    joistStockLengths: joist.stockLengths,
-    bearerStockLengths: bearer.stockLengths,
+    deckingMaxStock: maxStock(decking.id, rules),
+    edgeBoardMaxStock: maxStock(edgeBoardProductId, rules),
+    joistMaxStock: maxStock(joist.id, rules),
+    bearerMaxStock: maxStock(bearer.id, rules),
+    joistStockLengths: stockLengthsOf(joist, rules),
+    bearerStockLengths: stockLengthsOf(bearer, rules),
+    sameTimber: joist.id === bearer.id,
     postWidth: postW,
   };
   return {
@@ -318,7 +323,7 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
   // ---- balustrade ----
   const balustrade = designBalustrade(
     E, houseEdges, clampedStairs, params.balustrade, params.deckHeight, rules.balustradeTriggerHeight,
-    boardT, joistD, maxStock('tp-90x45'), 90,
+    boardT, joistD, maxStock('tp-90x45', rules), 90,
   );
 
   // ---- bracing ----
@@ -371,7 +376,7 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
   for (const row of layout.boards) for (const run of row.runs) for (const len of run.pieces) push(decking.id, len, 'decking');
   for (const eb of layout.edgeBoards) for (const len of eb.pieces) push(edgeBoardProductId, len, 'edgeBoard');
   for (const br of layout.breakers) for (const len of br.pieces) push(decking.id, len, 'breaker');
-  const fasciaMax = maxStock(fasciaProductId) - rules.boardEndAllowance;
+  const fasciaMax = maxStock(fasciaProductId, rules) - rules.boardEndAllowance;
   let fasciaScrews = 0;
   for (const f of fascia) {
     const split = splitRun(0, f.length, [], fasciaMax, 300);
@@ -399,7 +404,7 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
     push('tp-90x45-h4', s.width + 20, 'stairKicker');
     for (let i = 0; i < s.handrailPosts; i++) push('post-90x90-h4', 1200, 'handrailPost');
     if (s.handrailLength > 0) {
-      const split = splitRun(0, s.handrailLength, [], maxStock('tp-90x45'), 300);
+      const split = splitRun(0, s.handrailLength, [], maxStock('tp-90x45', rules), 300);
       for (const len of split.pieces) push('tp-90x45', len, 'handrail');
     }
     treadScrews += s.treads * s.boardsPerTread * s.stringerCount * 2;

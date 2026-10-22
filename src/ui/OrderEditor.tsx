@@ -1,7 +1,7 @@
 import { Fragment, useState } from 'react';
 import type { BomLine } from '../engine/bom';
 import { productName, useT } from '../i18n';
-import { CATALOG, PRODUCT_MAP } from '../model/catalog';
+import { CATALOG, PRODUCT_MAP, stockLengthsOf } from '../model/catalog';
 import type { ProductCategory, Unit } from '../model/types';
 import { useApp } from '../state';
 import { money, stockLabel } from '../utils/format';
@@ -134,13 +134,13 @@ export function OrderEditor() {
 }
 
 function OrderRow({ n, line, flash }: { n: number; line: BomLine; flash: boolean }) {
-  const { updateProject } = useApp();
+  const { project, updateProject } = useApp();
   const { t, lang } = useT();
   const prod = line.productId ? PRODUCT_MAP[line.productId] : undefined;
   const timber = !!prod && line.unit === 'm';
   const pack = packOf(line);
   const order = (fn: Parameters<typeof updateProject>[0], label = 'h.order') => updateProject(fn, label);
-  const freeLengths = timber ? [...(prod?.stockLengths ?? [])].sort((a, b) => b - a).filter((len) => !(line.stockBreakdown ?? []).some((s) => s.length === len)) : [];
+  const freeLengths = timber ? [...stockLengthsOf(prod, project.rules)].sort((a, b) => b - a).filter((len) => !(line.stockBreakdown ?? []).some((s) => s.length === len)) : [];
   const calcText = line.calcQty === undefined ? '' : timber && line.calcStock ? stockLabel(line.calcStock) : pack ? `${Math.ceil(line.calcQty / pack)} ${t('unitName.box')}` : `${line.calcQty} ${t(`unitName.${line.unit}`)}`;
   return (
     <tr className={`${line.edited ? 'edited' : ''} ${line.addedId ? 'added' : ''} ${flash ? 'flash' : ''}`}>
@@ -216,7 +216,7 @@ function OrderRow({ n, line, flash }: { n: number; line: BomLine; flash: boolean
 }
 
 function AddItem({ onDone }: { onDone: (key: string | null) => void }) {
-  const { design, updateProject } = useApp();
+  const { project, design, updateProject } = useApp();
   const { t, lang } = useT();
   const [pid, setPid] = useState('');
   const [len, setLen] = useState(0);
@@ -227,7 +227,7 @@ function AddItem({ onDone }: { onDone: (key: string | null) => void }) {
   const custom = pid === 'custom';
   const prod = pid && !custom ? PRODUCT_MAP[pid] : undefined;
   const timber = prod?.unit === 'm';
-  const lengths = timber ? [...(prod?.stockLengths ?? [])].sort((a, b) => b - a) : [];
+  const lengths = timber ? [...stockLengthsOf(prod, project.rules)].sort((a, b) => b - a) : [];
   const pack = prod && !timber && prod.packSize ? prod.packSize : 0;
   const q = Number(qty);
   const ready = Number.isFinite(q) && q > 0 && (custom ? name.trim().length > 0 : !!prod);

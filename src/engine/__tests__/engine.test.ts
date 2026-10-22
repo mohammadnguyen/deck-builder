@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { defaultRules, newProject } from '../../model/defaults';
+import { PRODUCT_MAP } from '../../model/catalog';
 import type { Project } from '../../model/types';
-import { packPieces, splitRun } from '../cutlist';
+import { packPieces, pieceWaste, splitRun, splitRunStocked } from '../cutlist';
 import { bayLabel, joistMaxSpan, joistSpaces } from '../layout';
 import { clipHorizontal, clipVertical, detectHouseEdges, edges, normalizePolygon, polygonAreaMm2, validatePolygon } from '../geometry';
 import { computeDesign } from '../index';
@@ -50,6 +51,48 @@ describe('cutlist', () => {
     expect(r.oversize).toEqual([]);
     expect(r.totalStockLength).toBeLessThanOrEqual(2 * 3600 + 2400);
     for (const b of r.bins) expect(b.used).toBeLessThanOrEqual(b.stock);
+  });
+  it('mixes lengths in one cut list when that buys less timber', () => {
+    // two 4.5 m pieces from 4.8s, four 2.5 m pieces from two 5.4s cut in half
+    const r = packPieces([4500, 4500, 2500, 2500, 2500, 2500], [3600, 4800, 5400, 6000], 5);
+    expect(r.totalStockLength).toBe(2 * 4800 + 2 * 5400);
+    expect(r.stockCount).toEqual([{ length: 5400, count: 2 }, { length: 4800, count: 2 }]);
+    expect(r.groups.find((g) => g.stock === 5400)!.cuts).toEqual([2500, 2500]);
+  });
+  it('never buys more than the best single length would', () => {
+    let seed = 7;
+    const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    const stocks = [3600, 4800, 5400, 6000];
+    for (let t = 0; t < 60; t++) {
+      const pieces = Array.from({ length: 3 + Math.floor(rnd() * 25) }, () => 300 + Math.round(rnd() * 5600));
+      const mixed = packPieces(pieces, stocks, 5).totalStockLength;
+      const longest = Math.max(...pieces);
+      for (const L of stocks.filter((s) => s >= longest)) expect(mixed).toBeLessThanOrEqual(packPieces(pieces, [L], 5).totalStockLength);
+    }
+  });
+  it('weighs a cut by how cleanly it comes out of the stocked lengths', () => {
+    const stocks = [3600, 4800, 5400, 6000];
+    // half a 5.4: 2 x 2520 + kerf leaves 355, shared by two pieces
+    expect(pieceWaste(2520, stocks, 5)).toBeCloseTo(177.5, 6);
+    expect(pieceWaste(5400, stocks, 5)).toBe(0);
+    expect(pieceWaste(6100, stocks, 5)).toBe(Infinity);
+  });
+  it('splits a run with the fewest joins, over supports, where the pieces cut cleanly', () => {
+    const stocks = [3600, 4800, 5400, 6000];
+    // a 9 m run over bearers every 900: one join is enough; of the bearers that allow it, the one that leaves
+    // a whole 5.4 and a whole 3.6 (less the end trim)
+    const sup = [900, 1800, 2700, 3600, 4500, 5400, 6300, 7200, 8100];
+    const r = splitRunStocked(0, 9000, sup, stocks, 20, 5, 600)!;
+    expect(r.joins.length).toBe(1);
+    expect(r.pieces.reduce((s, p) => s + p, 0)).toBe(9000);
+    expect(sup).toContain(r.joins[0]);
+    expect(r.pieces.map((p) => pieceWaste(p + 20, stocks, 5)).reduce((s, w) => s + w, 0)).toBeLessThanOrEqual(
+      splitRun(0, 9000, sup, 5980, 600).pieces.map((p) => pieceWaste(p + 20, stocks, 5)).reduce((s, w) => s + w, 0),
+    );
+    // a run that fits one stick is never joined
+    expect(splitRunStocked(0, 5900, sup, stocks, 20, 5, 600)!.joins).toEqual([]);
+    // no support in reach: no carpenter's split (the caller joins off a support and warns)
+    expect(splitRunStocked(0, 9000, [], stocks, 20, 5, 600)).toBeNull();
   });
   it('splits long runs at supports', () => {
     const r = splitRun(0, 9000, [450, 900, 1350, 1800, 2250, 2700, 3150, 3600, 4050, 4500, 4950, 5400, 5850, 6300, 6750, 7200, 7650, 8100, 8550], 5380, 600);
@@ -441,7 +484,7 @@ describe('design', () => {
       }
     }
   });
-  it('frames by the company rules: stumps under bearer ends and joins, joist joins over bearers, one length per timber', () => {
+  it('frames by the company rules: stumps under bearer ends and joins, joist joins over bearers, the yard lengths', () => {
     const decks: [string, { x: number; y: number }[], number[]][] = [
       ['sample L', L, [0]],
       ['shop L', [{ x: 0, y: 0 }, { x: 11300, y: 0 }, { x: 11300, y: 7800 }, { x: 6500, y: 7800 }, { x: 6500, y: 2350 }, { x: 0, y: 2350 }], [0]],
@@ -478,8 +521,8 @@ describe('design', () => {
           // joist joins only over a bearer
           const supports = lay.supports.map((s) => s.pos);
           for (const j of lay.joists) for (const sp of j.splices) expect(supports.some((x) => Math.abs(x - sp) < 0.5)).toBe(true);
-          // one stock length per timber product, and no join warnings
-          for (const l of d.bom.lines) expect(l.stockBreakdown?.length ?? 0).toBeLessThanOrEqual(1);
+          // framing pine in the yard's lengths only (a cut list may mix them), and no join warnings
+          for (const l of d.bom.lines) if (PRODUCT_MAP[l.productId]?.yardLengths) for (const s of l.stockBreakdown ?? []) expect(p.rules.timberLengths).toContain(s.length);
           expect(d.warnings.some((w) => w.key === 'layout.bearerJoinOffPost' || w.key === 'layout.joistJoinOffBearer')).toBe(false);
         }
       }
@@ -488,10 +531,29 @@ describe('design', () => {
   it('never joins a joist or a bearer that fits one stick', () => {
     const d = computeDesign(newProject('s', true)); // 4.2 m joists, 6 m bearers on stumps
     expect(d.layout!.joists.every((j) => j.splices.length === 0)).toBe(true);
-    // H3 pine comes in 2.4 to 6.0 m: the joists are all cut from one of them
+    // the joists come in the lengths the yard stocks
     const joists = d.bom.lines.find((l) => l.productId === 'tp-90x45')!;
-    expect(joists.stockBreakdown!.length).toBe(1);
-    expect(joists.stockBreakdown![0].length % 300).toBe(0);
+    for (const s of joists.stockBreakdown!) expect([3600, 4800, 5400, 6000]).toContain(s.length);
+  });
+  it('cuts 2.5 m joists from 5.4 m sticks in half, like a carpenter', () => {
+    const p = newProject('2.5 m', true);
+    p.deck = [{ x: 0, y: 0 }, { x: 6000, y: 0 }, { x: 6000, y: 2500 }, { x: 0, y: 2500 }];
+    p.houseEdges = [0];
+    p.house = [[{ x: -500, y: 0 }, { x: 6500, y: 0 }]];
+    p.stairs = [];
+    const d = computeDesign(p);
+    const lay = d.layout!;
+    expect(lay.joists.every((j) => j.splices.length === 0 && Math.round(j.length) === 2500)).toBe(true);
+    const cuts = d.bom.cutlists.find((c) => c.productId === d.frame.joistProductId)!;
+    const joistSticks = cuts.groups.filter((g) => g.cuts.includes(2520));
+    expect(joistSticks.every((g) => g.stock === 5400 && g.cuts.length === 2)).toBe(true);
+    expect(joistSticks.reduce((n, g) => n + g.count * 2, 0)).toBe(lay.joists.length);
+  });
+  it('buys only the lengths the owner ticks', () => {
+    const p = newProject('s', true);
+    p.rules.timberLengths = [4800, 6000];
+    const d = computeDesign(p);
+    for (const l of d.bom.lines) if (PRODUCT_MAP[l.productId]?.yardLengths) for (const s of l.stockBreakdown ?? []) expect([4800, 6000]).toContain(s.length);
   });
 });
 

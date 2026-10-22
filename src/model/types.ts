@@ -175,6 +175,8 @@ export interface RuleSet {
   frameSwitchMargin?: number;
   /** timber sizes the automatic frame may use (what the supplier stocks) */
   frameSizes?: string[];
+  /** lengths framing pine is bought in (mm), what the yard usually has; a cut list may mix them */
+  timberLengths?: number[];
 }
 
 export interface FrameSizes {
@@ -232,6 +234,8 @@ export interface Product {
   /** true when the product may be chosen as joist / bearer */
   isFraming?: boolean;
   isPost?: boolean;
+  /** framing pine bought in the lengths the yard stocks (the rule set's timber lengths) */
+  yardLengths?: boolean;
 }
 
 /**

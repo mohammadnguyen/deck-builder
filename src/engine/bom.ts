@@ -1,4 +1,4 @@
-import { PRODUCT_MAP } from '../model/catalog';
+import { PRODUCT_MAP, stockLengthsOf } from '../model/catalog';
 import type { OrderEdits, ProductCategory, RuleSet, Unit } from '../model/types';
 import { packPieces, type BinGroup } from './cutlist';
 
@@ -117,7 +117,7 @@ export function buildBom(
   for (const [productId, list] of byProduct) {
     const prod = PRODUCT_MAP[productId];
     if (!prod) continue;
-    const stock = prod.stockLengths ?? [];
+    const stock = stockLengthsOf(prod, rules);
     const pack = packPieces(list.map((p) => p.length), stock, rules.kerf);
     const requiredLm = pack.totalPieceLength / 1000;
     const pct = prod.category === 'decking' ? wasteDeckingPct : wasteFramingPct;

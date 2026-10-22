@@ -23,7 +23,11 @@ owner can change rather than a hidden constant.
   double bearers join over different stumps (a double wall bearer's joins at least a bolt spacing apart).
 - Every joist end sits on a bearer; joists join only over a bearer, half each; only the perimeter ends
   under the edge boards overhang. A run that fits one stick is never joined.
-- H3 treated pine MGP10 comes in 2.4 to 6.0 m in 0.3 m steps; each timber size is ordered in one length.
+- Framing pine (H3 MGP10 / F7) is bought in the lengths the yard usually has: 3.6, 4.8, 5.4 and 6.0 m (a
+  rule the owner can change). One cut list may mix lengths, cut the way a carpenter would: the cheapest mix
+  wins, e.g. 2.5 m joists come from 5.4 m sticks cut in half.
+- Joins: the fewer the better. A joist or bearer takes pieces up to the longest stick, and of the supports
+  that allow the fewest joins, the joins go where the pieces cut cleanly from the stocked lengths.
 - Standard frame: 90x45 joists on single 140x45 bearers, stumps at about 1.5 m. The frame is sized
   automatically from the stocked sizes and kept standard unless another frame is clearly cheaper once
   stump labour is counted (rules: labour per stump, switch margin, sizes to choose from).

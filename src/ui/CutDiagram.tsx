@@ -96,14 +96,17 @@ export function CutDiagrams({ design, project, filter, showUses = true }: { desi
         const line = design.bom.lines.find((l) => l.productId === c.productId);
         const maxStock = Math.max(...c.groups.map((g) => g.stock), 1);
         const sticks = c.groups.reduce((n, g) => n + g.count, 0);
-        const stockText = [...new Set(c.groups.map((g) => g.stock))].sort((a, b) => b - a).map((s) => `${(s / 1000).toFixed(1)} m`).join(' / ');
+        const perLength = new Map<number, number>();
+        for (const g of c.groups) perLength.set(g.stock, (perLength.get(g.stock) ?? 0) + g.count);
+        const lengths = [...perLength.entries()].sort((a, b) => b[0] - a[0]);
+        const stockText = lengths.length === 1 ? t('cutd.sticks', { n: sticks, stock: `${(lengths[0][0] / 1000).toFixed(1)} m` }) : t('cutd.sticksMixed', { n: sticks, list: lengths.map(([len, n]) => `${n} × ${(len / 1000).toFixed(1)} m`).join(' + ') });
         const pieceMarks = marks.marks.filter((m) => m.productId === c.productId);
         return (
           <div key={c.productId} className="cut-product">
             <div className="cut-head">
               <b>{productName(c.productId, lang)}</b>
               <span>
-                {t('cutd.sticks', { n: sticks, stock: stockText })}
+                {stockText}
                 {line?.extraCount ? ` · ${t('cutd.spare', { n: line.extraCount })}` : ''}
               </span>
             </div>
@@ -121,6 +124,7 @@ export function CutDiagrams({ design, project, filter, showUses = true }: { desi
               .map((g, i) => (
                 <div key={i} className="cut-row">
                   <span className="cut-n">{g.count} ×</span>
+                  <span className="cut-len">{(g.stock / 1000).toFixed(1)} m</span>
                   <Bar stock={g.stock} cuts={g.cuts} offcut={g.offcut} maxStock={maxStock} productId={c.productId} marks={marks} project={project} hatch={hatch} />
                 </div>
               ))}

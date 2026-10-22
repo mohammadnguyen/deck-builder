@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { edges as polyEdges, moveVertex, normalizePolygon, validatePolygon } from '../engine/geometry';
 import { productName, useT } from '../i18n';
-import { CATALOG, CONCRETE_PRODUCTS, DECKING_PRODUCTS, FRAMING_PRODUCTS, POST_PRODUCTS, PRODUCT_MAP } from '../model/catalog';
+import { CATALOG, CONCRETE_PRODUCTS, DECKING_PRODUCTS, FRAMING_PRODUCTS, PINE_LENGTHS, POST_PRODUCTS, PRODUCT_MAP } from '../model/catalog';
 import { defaultRules } from '../model/defaults';
 import type { DeckParams, Pt, RuleSet } from '../model/types';
 import { useApp, type PanelTab } from '../state';
@@ -542,6 +542,29 @@ function RulesPanel() {
             onChange={(v) => setRules((rr) => ({ ...rr, frameSizes: v ? [...new Set([...(rr.frameSizes ?? []), d.id])] : (rr.frameSizes ?? []).filter((x) => x !== d.id) }))}
           />
         ))}
+        <p className="hint">{t('r.timberLengths')}</p>
+        <div className="len-chips">
+          {PINE_LENGTHS.map((len) => {
+            const on = (r.timberLengths ?? []).includes(len);
+            return (
+              <label key={len} className={`len-chip ${on ? 'on' : ''}`}>
+                <input
+                  type="checkbox"
+                  checked={on}
+                  onChange={(e) =>
+                    setRules((rr) => {
+                      const cur = rr.timberLengths ?? [];
+                      const next = e.target.checked ? [...new Set([...cur, len])].sort((a, b) => a - b) : cur.filter((x) => x !== len);
+                      // at least one length stays
+                      return next.length ? { ...rr, timberLengths: next } : rr;
+                    })
+                  }
+                />
+                {(len / 1000).toFixed(1)}
+              </label>
+            );
+          })}
+        </div>
       </Group>
       <Group title={t('r.joistSpan')}>
         <table className="rules">

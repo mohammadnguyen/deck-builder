@@ -1,5 +1,6 @@
 import type { Axis, BreakerLayout, DeckParams, Pt, RuleSet, Seg } from '../model/types';
 import { bbox, clipHorizontal, clipVertical, edges, pointInPolygon, swapPoly, swapPt, validatePolygon, type Edge } from './geometry';
+import { bestBreakerSplit } from './breakerplan';
 import { packedLength, splitRun, splitRunStocked } from './cutlist';
 import type { WarningItem } from './warnings';
 
@@ -230,6 +231,8 @@ export interface LayoutContext {
   /** the decking's own joist spacing limit */
   deckingMaxJoistSpacing: number;
   deckingMaxStock: number;
+  /** the lengths the decking comes in */
+  deckingStockLengths?: number[];
   edgeBoardMaxStock: number;
   joistMaxStock: number;
   bearerMaxStock: number;
@@ -352,6 +355,73 @@ export function planFrame(polyIn: Pt[], houseEdges: number[], params: DeckParams
   return layoutImpl(polyIn, houseEdges, params, rules, ctx, true) as FramePlan;
 }
 
+/** automatic breakers by field and settings: the same for every frame the sizing tries */
+const autoBreakerCache = new Map<string, { breakers: { xc: number; y0: number; y1: number; aligned: boolean; id: string; manual: boolean }[]; saving: { n: number; saving: number }[] }>();
+
+/** the decking a set of breakers needs: every band's rows cut at its breakers, and the breaker boards (mm bought) */
+function breakerDecking(
+  list: { xc: number; y0: number; y1: number }[],
+  bands: { y0: number; y1: number; x0: number; x1: number; rows: number }[],
+  strip: number, maxBoard: number, stocks: number[], allowance: number, kerf: number,
+): number {
+  const cuts: number[] = [];
+  for (const iv of bands) {
+    const xs = list.filter((b) => b.y0 < iv.y1 - 0.5 && b.y1 > iv.y0 + 0.5 && b.xc > iv.x0 && b.xc < iv.x1).map((b) => b.xc).sort((p, q) => p - q);
+    const pieces: number[] = [];
+    let from = iv.x0;
+    for (const xc of xs) {
+      pieces.push(xc - strip / 2 - from);
+      from = xc + strip / 2;
+    }
+    pieces.push(iv.x1 - from);
+    for (const p of pieces) {
+      if (p <= 1) continue;
+      const k = Math.ceil(p / maxBoard);
+      for (let r = 0; r < iv.rows; r++) for (let i = 0; i < k; i++) cuts.push(p / k + allowance);
+    }
+  }
+  // breaker boards: one length per line, across the bands it runs through
+  const lines = new Map<number, number>();
+  for (const b of list) lines.set(Math.round(b.xc), (lines.get(Math.round(b.xc)) ?? 0) + (b.y1 - b.y0));
+  for (const len of lines.values()) {
+    const k = Math.ceil(len / maxBoard);
+    for (let i = 0; i < k; i++) cuts.push(len / k + allowance);
+  }
+  return packedLength(cuts, stocks, kerf);
+}
+
+/** Carry each automatic breaker on into the bands it touches, where its pieces either side stay long enough and the
+ *  deck buys no more decking (repeated, so a line can run on through several bands). */
+function extendBreakers(
+  list: { xc: number; y0: number; y1: number; aligned: boolean; id: string; manual: boolean }[],
+  bands: { y0: number; y1: number; x0: number; x1: number; rows: number }[],
+  strip: number, maxBoard: number, minPiece: number, stocks: number[], allowance: number, kerf: number,
+): void {
+  if (!list.length) return;
+  let base = breakerDecking(list, bands, strip, maxBoard, stocks, allowance, kerf);
+  const tried = new Set<string>();
+  const queue = [...list];
+  while (queue.length) {
+    const b = queue.shift()!;
+    for (const iv of bands) {
+      const touches = Math.abs(b.y0 - iv.y1) < 1 || Math.abs(b.y1 - iv.y0) < 1;
+      if (!touches || b.xc - strip / 2 - iv.x0 < minPiece || iv.x1 - (b.xc + strip / 2) < minPiece) continue;
+      const key = `${Math.round(b.xc)}|${Math.round(iv.y0)}|${Math.round(iv.x0)}`;
+      if (tried.has(key)) continue;
+      tried.add(key);
+      // not where a breaker already is
+      if (list.some((o) => o.y0 < iv.y1 - 0.5 && o.y1 > iv.y0 + 0.5 && Math.abs(o.xc - b.xc) < strip)) continue;
+      const cand = { xc: b.xc, y0: iv.y0, y1: iv.y1, aligned: false, id: '', manual: false };
+      const trial = breakerDecking([...list, cand], bands, strip, maxBoard, stocks, allowance, kerf);
+      if (trial <= base + 1) {
+        list.push(cand);
+        queue.push(cand);
+        base = trial;
+      }
+    }
+  }
+}
+
 function layoutImpl(
   polyIn: Pt[],
   houseEdges: number[],
@@ -389,7 +459,8 @@ function layoutImpl(
   }
 
   // ---- breaker boards: a run longer than one board is divided symmetrically by boards laid
-  //      across it (stopping at the edge boards), instead of staggered butt joins ----
+  //      across it (stopping at the edge boards), instead of staggered butt joins, where the pieces waste the
+  //      least board ----
   const maxBoard = ctx.deckingMaxStock - rules.boardEndAllowance;
   const strip = bw + 2 * gap;
   interface BandBreaker { xc: number; y0: number; y1: number; aligned: boolean; id: string; manual: boolean }
@@ -418,58 +489,65 @@ function layoutImpl(
       }
     }
   } else if (ctx.breakerBoards) {
-    const fE = edges(fieldPoly);
-    const ys = [...new Set(fieldPoly.map((p) => Math.round(p.y * 10) / 10))].sort((p, q) => p - q);
-    for (let bi = 0; bi + 1 < ys.length; bi++) {
-      const y0 = ys[bi];
-      const y1 = ys[bi + 1];
-      if (y1 - y0 < 1) continue;
-      for (const [x0, x1] of clipHorizontal(fieldPoly, (y0 + y1) / 2)) {
-        const len = x1 - x0;
-        if (len <= maxBoard) continue;
-        const rowsInBand = Math.max(1, Math.round((y1 - y0) / (bw + gap)));
-        // stock boards this band needs with n symmetric breakers (pieces nested into stock lengths)
-        const boardsWith = (n: number): number => {
-          const bay = (len - n * strip) / (n + 1);
-          const perBoard = Math.max(1, Math.floor((ctx.deckingMaxStock + ctx.kerf) / (bay + rules.boardEndAllowance + ctx.kerf)));
-          return rowsInBand * Math.ceil((n + 1) / perBoard) + n * Math.ceil((y1 - y0) / maxBoard);
-        };
-        const nMin = Math.max(1, Math.ceil(len / maxBoard) - 1);
-        let nWanted = params.breakerCount === 'auto' ? nMin : Math.max(nMin, params.breakerCount);
-        while ((len - nWanted * strip) / (nWanted + 1) > maxBoard) nWanted++;
-        // tell the user when more breakers would nest the pieces into fewer boards
-        let bestN = nWanted;
-        for (let n = nWanted + 1; n <= 3; n++) if (boardsWith(n) < boardsWith(bestN)) bestN = n;
-        if (bestN !== nWanted && boardsWith(nWanted) - boardsWith(bestN) >= 3) {
-          breakerSaving.push({ n: bestN, saving: boardsWith(nWanted) - boardsWith(bestN) });
-        }
-        // first choice (when the count is not forced): continue an edge board line from an inside corner
-        let aligned: number | null = null;
-        let balance = Infinity;
-        for (const e of params.breakerCount === 'auto' ? fE : []) {
-          if (e.axis !== 'y') continue;
-          const ya = Math.min(e.a.y, e.b.y);
-          const yb = Math.max(e.a.y, e.b.y);
-          const touches = Math.abs(yb - y0) < 1 || Math.abs(ya - y1) < 1;
-          if (!touches || e.a.x <= x0 + 1 || e.a.x >= x1 - 1) continue;
-          const xc = e.a.x + e.outward.x * (gap + bw / 2);
-          const left = xc - strip / 2 - x0;
-          const right = x1 - (xc + strip / 2);
-          if (left > maxBoard || right > maxBoard || left < rules.minBoardPiece || right < rules.minBoardPiece) continue;
-          const b = Math.abs(left - right);
-          if (b < balance) {
-            balance = b;
-            aligned = xc;
+    const autoKey = JSON.stringify([fieldPoly, strip, bw, gap, maxBoard, ctx.deckingStockLengths, ctx.deckingMaxStock, ctx.kerf, rules.boardEndAllowance, rules.minBoardPiece, rules.breakerMinSaving, params.breakerCount]);
+    const known = autoBreakerCache.get(autoKey);
+    if (known) {
+      for (const b of known.breakers) bandBreakers.push({ ...b });
+      breakerSaving.push(...known.saving);
+    } else {
+      const fE = edges(fieldPoly);
+      const ys = [...new Set(fieldPoly.map((p) => Math.round(p.y * 10) / 10))].sort((p, q) => p - q);
+      const deckStocks = ctx.deckingStockLengths?.length ? ctx.deckingStockLengths : [ctx.deckingMaxStock];
+      const bands: { y0: number; y1: number; x0: number; x1: number; rows: number }[] = [];
+      for (let bi = 0; bi + 1 < ys.length; bi++) {
+        const y0 = ys[bi];
+        const y1 = ys[bi + 1];
+        if (y1 - y0 < 1) continue;
+        for (const [x0, x1] of clipHorizontal(fieldPoly, (y0 + y1) / 2)) {
+          bands.push({ y0, y1, x0, x1, rows: Math.max(1, Math.round((y1 - y0) / (bw + gap))) });
+          const len = x1 - x0;
+          if (len <= maxBoard) continue;
+          // an edge board line continued from an inside corner is weighed too (one breaker, off centre)
+          const extra: { pieces: number[]; n: number }[] = [];
+          for (const e of params.breakerCount === 'auto' ? fE : []) {
+            if (e.axis !== 'y') continue;
+            const ya = Math.min(e.a.y, e.b.y);
+            const yb = Math.max(e.a.y, e.b.y);
+            const touches = Math.abs(yb - y0) < 1 || Math.abs(ya - y1) < 1;
+            if (!touches || e.a.x <= x0 + 1 || e.a.x >= x1 - 1) continue;
+            const xc = e.a.x + e.outward.x * (gap + bw / 2);
+            const left = xc - strip / 2 - x0;
+            const right = x1 - (xc + strip / 2);
+            if (left > maxBoard || right > maxBoard || left < rules.minBoardPiece || right < rules.minBoardPiece) continue;
+            extra.push({ pieces: [left, right], n: 1 });
+          }
+          // the symmetric breakers that waste the least decking (a whole board, halves, thirds ...)
+          const plan = bestBreakerSplit(
+            {
+              len, rows: Math.max(1, Math.round((y1 - y0) / (bw + gap))), bandWidth: y1 - y0, strip,
+              stocks: deckStocks,
+              allowance: rules.boardEndAllowance, kerf: ctx.kerf, minPiece: rules.minBoardPiece,
+              count: params.breakerCount, extraBreakerBoards: rules.breakerMinSaving ?? 2,
+            },
+            extra,
+          );
+          if (!plan) continue;
+          if (plan.better) breakerSaving.push({ n: plan.better.n, saving: plan.better.boards });
+          const aligned = !!plan.extra;
+          let cursor = x0;
+          for (let k = 0; k < plan.n; k++) {
+            cursor += plan.pieces[k];
+            bandBreakers.push({ xc: cursor + strip / 2, y0, y1, aligned, id: '', manual: false });
+            cursor += strip;
           }
         }
-        if (aligned !== null) {
-          bandBreakers.push({ xc: aligned, y0, y1, aligned: true, id: '', manual: false });
-          continue;
-        }
-        const n = nWanted;
-        const bay = (len - n * strip) / (n + 1);
-        for (let k = 1; k <= n; k++) bandBreakers.push({ xc: x0 + k * bay + (k - 1) * strip + strip / 2, y0, y1, aligned: false, id: '', manual: false });
       }
+      // a breaker carries on across the shorter rows beside it, on to the edge board, wherever that buys no more
+      // decking: it ends at an edge board rather than in the middle of the floor, and short runs it splits often
+      // nest better (a 2.9 m run takes a whole board; 1.4 and 1.3 m pieces go three and four to a board)
+      extendBreakers(bandBreakers, bands, strip, maxBoard, rules.minBoardPiece, deckStocks, rules.boardEndAllowance, ctx.kerf);
+      if (autoBreakerCache.size > 200) autoBreakerCache.clear();
+      autoBreakerCache.set(autoKey, { breakers: bandBreakers.map((b) => ({ ...b })), saving: breakerSaving.map((x) => ({ ...x })) });
     }
   }
   if (breakerSaving.length) {

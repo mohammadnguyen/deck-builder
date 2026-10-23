@@ -16,7 +16,11 @@ owner can change rather than a hidden constant.
 - Composite decking: joists set out at 400 centres from the start of each bay, the short space last.
   Timber decking: joist spacing evened out per bay.
 - Picture-frame edge boards priced separately, 45 degree mitres; double joists under edge board joints.
-- Composite 5.4 m boards: symmetric breaker boards that stop at the edge board, two joists under each.
+- The frame follows the boards, and boards are not wasted unless there is no other way. Composite boards
+  are 5.4 m at most: a run that fits one board gets no breaker; a longer run gets symmetric breaker boards
+  that stop at the edge board, placed where the boards waste least (2.7 | 5.4 | 2.7, halves, thirds,
+  quarters), one more breaker only when it saves at least the boards the owner sets (rule, default 2), and a
+  breaker line carries on to the edge board wherever that wastes nothing. Two joists under each breaker.
   Breakers can be moved, resized, added and deleted by hand; no limit on the distance between breakers.
 - Stumps 200 diameter x 500 deep. The stump at a house wall stays clear of the house footing.
 - Every bearer end sits fully on a stump; bearers join only over a stump, each piece taking half;

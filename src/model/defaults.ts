@@ -96,6 +96,8 @@ export function defaultRules(): RuleSet {
     frameSizes: ['tp-90x45', 'tp-140x45'],
     // what the yard usually has; a 2.5 m joist comes from half a 5.4
     timberLengths: [3600, 4800, 5400, 6000],
+    // breakers go where the boards waste least; one more only when it saves this many boards
+    breakerMinSaving: 2,
   };
 }
 

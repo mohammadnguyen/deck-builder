@@ -257,6 +257,7 @@ function setup(project: Project) {
     kerf: rules.kerf,
     deckingMaxJoistSpacing: maxTreadSpan,
     deckingMaxStock: maxStock(decking.id, rules),
+    deckingStockLengths: stockLengthsOf(decking, rules),
     edgeBoardMaxStock: maxStock(edgeBoardProductId, rules),
     joistMaxStock: maxStock(joist.id, rules),
     bearerMaxStock: maxStock(bearer.id, rules),

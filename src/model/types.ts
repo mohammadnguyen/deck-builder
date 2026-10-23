@@ -177,6 +177,8 @@ export interface RuleSet {
   frameSizes?: string[];
   /** lengths framing pine is bought in (mm), what the yard usually has; a cut list may mix them */
   timberLengths?: number[];
+  /** a breaker beyond the fewest a long run needs is laid only when it saves at least this many boards */
+  breakerMinSaving?: number;
 }
 
 export interface FrameSizes {

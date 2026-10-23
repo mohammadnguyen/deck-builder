@@ -489,7 +489,7 @@ function RulesPanel() {
   const miscKeys: (keyof RuleSet)[] = [
     'elevatedFactor', 'bearerEdgeInset', 'houseBearerInset', 'postEndSetback', 'minBearerGap', 'braceHeight', 'engineerHeight',
     'lowDeckClearance', 'minGroundClearance', 'balustradeTriggerHeight', 'handrailTriggerRise', 'exemptMaxArea', 'exemptMaxHeight',
-    'kerf', 'staggerOffset', 'minBoardPiece', 'boardEndAllowance', 'joistEndAllowance', 'screwsPerCrossing', 'boltsPerPost',
+    'kerf', 'staggerOffset', 'minBoardPiece', 'breakerMinSaving', 'boardEndAllowance', 'joistEndAllowance', 'screwsPerCrossing', 'boltsPerPost',
     'ledgerBoltSpacing', 'oilCoverage', 'oilCoats', 'stirrupLift', 'concreteBagYield', 'flushHouseInset', 'battenScrewsPerPost',
     'hangerNails', 'skewNailsPerCrossing', 'joistSpacingTarget',
   ];

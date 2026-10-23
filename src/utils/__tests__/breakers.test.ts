@@ -24,11 +24,13 @@ const runsAt = (l: LayoutResult, c: number) =>
     .flatMap((r) => r.runs.map((u) => [Math.round(Math.min(u.seg.a.x, u.seg.b.x)), Math.round(Math.max(u.seg.a.x, u.seg.b.x))]));
 
 describe('breakers placed by hand', () => {
-  it('stops an automatic breaker at the leg instead of poking one row into it', () => {
+  it('lays the automatic breakers 2.7 | 5.4 | 2.7 and carries one on through the leg to the edge board', () => {
     const p = shopDeck();
+    // B1 ends at the strip's own edge board; B2, over the leg, runs on to the bottom edge board, which also splits
+    // the leg's 4.5 m rows into pieces that nest
     expect(spans(p)).toEqual([
-      ['B1', 3790, 0, 2205],
-      ['B2', 7510, 0, 2175],
+      ['B1', 2885, 0, 2205],
+      ['B2', 8415, 0, 7655],
     ]);
     expect(lay(p).breakerMode).toBe('auto');
   });
@@ -39,8 +41,8 @@ describe('breakers placed by hand', () => {
     const frozen = freezeBreakers(before);
     expect(frozen.axis).toBe('x');
     expect(frozen.items).toEqual([
-      { id: 'B1', pos: 3790, from: null, to: null },
-      { id: 'B2', pos: 7510, from: null, to: 2175 },
+      { id: 'B1', pos: 2885, from: null, to: null },
+      { id: 'B2', pos: 8415, from: null, to: null },
     ]);
     const after = lay({ ...p, breakers: frozen });
     expect(after.breakerMode).toBe('manual');
@@ -59,7 +61,7 @@ describe('breakers placed by hand', () => {
     expect(frames.some((x) => Math.abs(x - (3000 - 72.5)) < 1)).toBe(true);
     expect(frames.some((x) => Math.abs(x - (3000 + 72.5)) < 1)).toBe(true);
     // the rows of the top band stop either side of it
-    expect(runsAt(l, 1000)).toEqual([[145, 2925], [3075, 7435], [7585, 11155]]);
+    expect(runsAt(l, 1000)).toEqual([[145, 2925], [3075, 8340], [8490, 11155]]);
   });
 
   it('keeps a breaker its length when it is moved over the leg', () => {
@@ -79,24 +81,25 @@ describe('breakers placed by hand', () => {
     const p = shopDeck();
     const bl = updateBreaker(freezeBreakers(lay(p)), 'B2', { from: null, to: null });
     const l = lay({ ...p, breakers: bl });
-    expect(spans({ ...p, breakers: bl })[1]).toEqual(['B2', 7510, 0, 7655]);
-    expect(runsAt(l, 5000)).toEqual([[6645, 7435], [7585, 11155]]);
+    expect(spans({ ...p, breakers: bl })[1]).toEqual(['B2', 8415, 0, 7655]);
+    expect(runsAt(l, 5000)).toEqual([[6645, 8340], [8490, 11155]]);
   });
 
   it('shortens a breaker to a row edge', () => {
     const p = shopDeck();
     const l0 = lay(p);
-    const to = snapBreakerEnd(l0, 3790, 1200, 'to', 0);
+    const b1pos = breakerSpans(l0)[0].pos;
+    const to = snapBreakerEnd(l0, b1pos, 1200, 'to', 0);
     expect(to).not.toBeNull();
     // a row's far edge: 140 wide rows at a 145 pitch from the house
     expect(((to as number) + 5) % 145).toBeCloseTo(0, 6);
     const bl = updateBreaker(freezeBreakers(l0), 'B1', { to });
     const l = lay({ ...p, breakers: bl });
-    expect(spans({ ...p, breakers: bl })[0]).toEqual(['B1', 3790, 0, Math.round(to as number)]);
+    expect(spans({ ...p, breakers: bl })[0]).toEqual(['B1', b1pos, 0, Math.round(to as number)]);
     // below its end the rows run through (with joins, as the run is longer than a board)
     expect(runsAt(l, (to as number) + 300).length).toBe(2);
     // at the field edge the end is stored as "to the edge"
-    expect(snapBreakerEnd(l0, 3790, 2190, 'to', 0)).toBeNull();
+    expect(snapBreakerEnd(l0, b1pos, 2190, 'to', 0)).toBeNull();
   });
 
   it('warns about joins when a deleted breaker leaves runs longer than a board', () => {
@@ -123,7 +126,7 @@ describe('breakers placed by hand', () => {
     const p = shopDeck();
     const bl = updateBreaker(freezeBreakers(lay(p)), 'B2', { from: null, to: null });
     const longer = { ...p, breakers: bl, deck: p.deck.map((q) => (q.y === 7800 ? { ...q, y: 9000 } : q)) };
-    expect(spans(longer)[1]).toEqual(['B2', 7510, 0, 8855]);
+    expect(spans(longer)[1]).toEqual(['B2', 8415, 0, 8855]);
   });
 
   it('adds a breaker across the middle of the longest run', () => {
@@ -140,13 +143,14 @@ describe('breakers placed by hand', () => {
     expect(id).toBe('B1');
     const l = lay({ ...p, breakers: { ...base, items: [...base.items, { id, ...s }] } });
     expect(breakerSpans(l)).toEqual([{ id: 'B1', pos: 2400, c0: 0, c1: 3455 }]);
-    // on the L the longest run is the leg's 4.5 m; the new breaker covers the leg's rows only
+    // on the L the longest run is now the 5.4 m middle of the strip, between the breakers; the new breaker covers
+    // the strip's rows only
     const shop = shopDeck();
     const sl = lay(shop);
     const sug = suggestBreaker(sl)!;
-    expect(sug.pos).toBe(8900);
-    expect(sug.from).toBe(2175);
-    expect(sug.to).toBeNull();
+    expect(sug.pos).toBe(5650);
+    expect(sug.from).toBeNull();
+    expect(sug.to).toBe(2170);
   });
 
   it('lets a breaker go anywhere inside the field, up to the next breaker but not onto it', () => {
@@ -165,15 +169,15 @@ describe('breakers placed by hand', () => {
     const bands = breakerBays(l, b1.id, b1.pos, b1.c0, b1.c1);
     expect(bands.length).toBe(1);
     const main = mainBay(bands)!;
-    expect(Math.round(main.before[1] - main.before[0])).toBe(3570);
-    expect(Math.round(main.after[1] - main.after[0])).toBe(3570);
+    expect(Math.round(main.before[1] - main.before[0])).toBe(2665);
+    expect(Math.round(main.after[1] - main.after[0])).toBe(5380);
   });
 
   it('mirrors hand-placed breakers with the deck', () => {
     const p = shopDeck();
     const bl = updateBreaker(freezeBreakers(lay(p)), 'B1', { pos: 3000 });
     const m = mirrorProject({ ...p, breakers: bl });
-    expect(m.breakers!.items.map((it) => it.pos)).toEqual([11300 - 3000, 11300 - 7510]);
+    expect(m.breakers!.items.map((it) => it.pos)).toEqual([11300 - 3000, 11300 - 8415]);
     expect(lay(m).breakerMode).toBe('manual');
   });
 
@@ -255,7 +259,8 @@ function coverage(l: LayoutResult): { holes: string[]; overlaps: string[] } {
 }
 const clean = (l: LayoutResult) => expect(coverage(l)).toEqual({ holes: [], overlaps: [] });
 
-/** a U deck whose boards run along its legs: each leg gets its own breaker on the same line */
+/** a U deck whose boards run along its legs: the 5.9 m runs are split 1.4 | 2.7 | 1.4, so one breaker crosses the
+ *  base from edge to edge and each leg gets its own on the same line */
 function uDeck(): Project {
   const p = newProject('u', true);
   p.deck = makeShape('U', { w: 10800, d: 6000, nw: 3000, nd: 3000 });
@@ -271,38 +276,41 @@ describe('breakers on decks with legs, and at notches', () => {
     const p = uDeck();
     const l = lay(p);
     const auto = breakerSpans(l);
-    expect(auto.length).toBe(2);
-    expect(auto[0].pos).toBe(auto[1].pos);
+    expect(auto.length).toBe(3);
+    // the base breaker runs edge board to edge board, carried across the base's shorter middle rows
+    expect([auto[0].c0, auto[0].c1]).toEqual([145, 10655]);
+    // the two leg breakers share a line
+    expect(auto[1].pos).toBe(auto[2].pos);
     clean(l);
     const frozen = freezeBreakers(l);
     // the outer end of each leg runs to the edge; the inner end is a number, or it would reach into the other leg
-    expect(frozen.items.map((it) => [it.from === null, it.to === null])).toEqual([[true, false], [false, true]]);
+    expect(frozen.items.map((it) => [it.from === null, it.to === null])).toEqual([[true, true], [true, false], [false, true]]);
     const lf = lay({ ...p, breakers: frozen });
     expect(breakerSpans(lf)).toEqual(auto);
     expect(lf.totals.breakerLm).toBeCloseTo(l.totals.breakerLm, 6);
-    // delete one: the other leg keeps its breaker, this leg has none
-    const del = lay({ ...p, breakers: removeBreaker(frozen, 'B1') });
-    expect(breakerSpans(del)).toEqual([auto[1]]);
+    // delete one leg's: the other leg keeps its breaker, this leg has none
+    const del = lay({ ...p, breakers: removeBreaker(frozen, 'B2') });
+    expect(breakerSpans(del)).toEqual([auto[0], auto[2]]);
     // nudge one: only that one moves
-    const moved = updateBreaker(frozen, 'B1', movedBreaker(l, frozen.items[0], auto[0], auto[0].pos + 10));
+    const moved = updateBreaker(frozen, 'B2', movedBreaker(l, frozen.items[1], auto[1], auto[1].pos + 10));
     const lm = lay({ ...p, breakers: moved });
-    expect(breakerSpans(lm).sort((a, b) => a.id.localeCompare(b.id))).toEqual([{ ...auto[0], pos: auto[0].pos + 10 }, auto[1]]);
+    expect(breakerSpans(lm).sort((a, b) => a.id.localeCompare(b.id))).toEqual([auto[0], { ...auto[1], pos: auto[1].pos + 10 }, auto[2]]);
     clean(lm);
   });
 
   it('keeps end drags, "Run to the edges" and "+ Add one" inside their own leg', () => {
     const p = uDeck();
     const l = lay(p);
-    const [b1] = breakerSpans(l);
+    const [, b2] = breakerSpans(l);
     const frozen = freezeBreakers(l);
-    // dragging B1's inner end back to the leg's edge gives a number, not "to the edge"
-    const to = snapBreakerEnd(l, b1.pos, b1.c1 + 500, 'to', b1.c0, 'B1');
-    expect(to).toBeCloseTo(b1.c1, 6);
+    // dragging the leg breaker's inner end back to the leg's edge gives a number, not "to the edge"
+    const to = snapBreakerEnd(l, b2.pos, b2.c1 + 500, 'to', b2.c0, 'B2');
+    expect(to).toBeCloseTo(b2.c1, 6);
     // "Run to the edges" runs to the ends of its own leg
-    const ext = extendedBreaker(l, b1);
-    expect(ext).toEqual({ from: null, to: b1.c1 });
-    expect(breakerSpans(lay({ ...p, breakers: updateBreaker(frozen, 'B1', ext) }))).toEqual(breakerSpans(l));
-    // with both deleted, "+ Add one" puts one breaker in one leg
+    const ext = extendedBreaker(l, b2);
+    expect(ext).toEqual({ from: null, to: b2.c1 });
+    expect(breakerSpans(lay({ ...p, breakers: updateBreaker(frozen, 'B2', ext) }))).toEqual(breakerSpans(l));
+    // with all deleted, "+ Add one" puts one breaker in one place
     const none = { ...p, breakers: { axis: frozen.axis, items: [] } };
     const s = suggestBreaker(lay(none))!;
     const added = lay({ ...none, breakers: { axis: frozen.axis, items: [{ id: 'B1', ...s }] } });
@@ -327,7 +335,7 @@ describe('breakers on decks with legs, and at notches', () => {
     // B1 shortened to about 1 m: "+ Add one" covers the rows below it, not the ones B1 already cuts
     const p = shopDeck();
     const l0 = lay(p);
-    const to = snapBreakerEnd(l0, 3790, 1000, 'to', 0, 'B1');
+    const to = snapBreakerEnd(l0, breakerSpans(l0)[0].pos, 1000, 'to', 0, 'B1');
     const bl = updateBreaker(freezeBreakers(l0), 'B1', { to });
     const l1 = lay({ ...p, breakers: bl });
     const s = suggestBreaker(l1)!;
@@ -348,12 +356,13 @@ describe('breakers on decks with legs, and at notches', () => {
   });
 
   it('never leaves a hole or a board under a breaker that ends at a notch', () => {
-    // the sample L: its breaker continues the inside-corner edge board; moved a little either way
+    // the sample L with a breaker set by hand to continue the inside-corner edge board; moved a little either way
     const p = newProject('l', true);
-    const l = lay(p);
+    clean(lay(p));
+    const base = { axis: 'x' as const, items: [{ id: 'B1', pos: 3530, from: null, to: 2255 }] };
+    const l = lay({ ...p, breakers: base });
     clean(l);
     const [b1] = breakerSpans(l);
-    const base = freezeBreakers(l);
     for (const dx of [-140, -70, -10, 10, 40, 70]) {
       const lm = lay({ ...p, breakers: updateBreaker(base, b1.id, movedBreaker(l, base.items[0], b1, b1.pos + dx)) });
       expect(coverage(lm)).toEqual({ holes: [], overlaps: [] });

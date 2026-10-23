@@ -51,7 +51,8 @@ export interface DesignResult {
   postLength: number;
   stairs: StairDesign[];
   balustrade: BalustradeDesign;
-  braces: { count: number; length: number };
+  /** diagonal braces: how many, how long, and where on the plan (from stump to stump, or a stump to the wall bearer) */
+  braces: { count: number; length: number; lines: { a: Pt; b: Pt }[] };
   footings: FootingInfo;
   fascia: FasciaRun[];
   fasciaProductId: string;
@@ -292,7 +293,7 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
     return {
       ok: false, problem: valid.problem, poly, edges: [], areaM2: 0, perimeterM: 0, bb: bbox(poly), datum: { x: 0, y: 0 },
       layout: null, levels, postProductId: 'post-90x90-h4', postLength: 0, stairs: [], balustrade: emptyBal,
-      braces: { count: 0, length: 0 }, footings: { count: 0, type: params.footingType, depth: params.footingDepth, diameter: params.footingDiameter, padSize: params.padSize, padDepth: params.padDepth, concreteM3: 0, bags: 0 },
+      braces: { count: 0, length: 0, lines: [] }, footings: { count: 0, type: params.footingType, depth: params.footingDepth, diameter: params.footingDiameter, padSize: params.padSize, padDepth: params.padDepth, concreteM3: 0, bags: 0 },
       fascia: [], fasciaProductId: decking.fasciaProductId ?? decking.id, edgeBoardProductId: decking.edgeBoardProductId ?? decking.id,
       joistSpacingText: String(Math.round(joistSetout ? joistSetoutSpacing : joistSpacingTarget)), joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, breakersOn, frame, bom: emptyBom,
       warnings: [{ severity: 'error', key: `polygon.${valid.problem}` }], pathway: 'approvalRequired', method: [],
@@ -331,10 +332,32 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
   // ---- bracing ----
   let braceCount = 0;
   let braceLength = 0;
+  const braceLines: { a: Pt; b: Pt }[] = [];
   if (postTop > rules.braceHeight) {
-    const along = layout.bearers.reduce((s, b) => s + Math.max(0, Math.ceil((b.posts.length - 1) / 2)), 0);
-    const lineCount = new Set(layout.bearers.map((b) => b.lineIndex)).size;
-    braceCount = along + Math.max(0, lineCount - 1);
+    // along each bearer, every other bay between its stumps; across, one between each pair of bearer lines (from a
+    // stump to the next line's nearest stump, or to the wall bearer)
+    const alongOf = (b: (typeof layout.bearers)[number]) => (q: Pt) => (Math.abs(b.seg.a.y - b.seg.b.y) < 0.5 ? q.x : q.y);
+    for (const b of layout.bearers) {
+      const at = alongOf(b);
+      const posts = [...b.posts].sort((p, q) => at(p) - at(q));
+      for (let i = 0; i + 1 < posts.length; i += 2) braceLines.push({ a: posts[i], b: posts[i + 1] });
+    }
+    const lines = [...new Set(layout.bearers.map((b) => b.lineIndex))].sort((p, q) => p - q);
+    for (let k = 0; k + 1 < lines.length; k++) {
+      const here = layout.bearers.filter((b) => b.lineIndex === lines[k]);
+      const next = layout.bearers.filter((b) => b.lineIndex === lines[k + 1]);
+      const from = [...next.flatMap((b) => b.posts), ...here.flatMap((b) => b.posts)][0];
+      if (!from) continue;
+      const other = next.some((b) => b.posts.includes(from)) ? here : next;
+      const posts = other.flatMap((b) => b.posts);
+      const b0 = other[0];
+      if (!b0) continue;
+      const near = posts.length
+        ? posts.reduce((m, q) => (Math.hypot(q.x - from.x, q.y - from.y) < Math.hypot(m.x - from.x, m.y - from.y) ? q : m))
+        : Math.abs(b0.seg.a.y - b0.seg.b.y) < 0.5 ? { x: from.x, y: b0.seg.a.y } : { x: b0.seg.a.x, y: from.y };
+      braceLines.push({ a: from, b: near });
+    }
+    braceCount = braceLines.length;
     const bay = layout.maxBearerSpanUsed > 0 ? Math.min(1800, layout.maxBearerSpanUsed) : 1800;
     braceLength = Math.ceil((Math.hypot(bay, postTop) + 200) / 10) * 10;
   }
@@ -488,6 +511,8 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
   if (flush) compliance.warnings.push({ severity: 'info', key: 'compliance.flushNotes' });
   if (!flush && params.joistFixing === 'skewNails') compliance.warnings.push({ severity: 'info', key: 'compliance.skewNails', params: { n: rules.skewNailsPerCrossing } });
   if (layout.ledgers.length) compliance.warnings.push({ severity: 'info', key: params.wallFixing === 'dynabolt' ? 'compliance.wallBearerMasonry' : 'compliance.wallBearerTimber', params: { n: wallAnchors } });
+  // AS 3660.1: a deck against the house must not hide or bridge the house's termite management
+  if (houseEdges.length) compliance.warnings.push({ severity: 'info', key: 'compliance.termite' });
 
   const method = buildMethod({
     params, rules, layout, areaM2, postCount, postTop, postLength, postName: postProductId, concreteM3, bags,
@@ -495,11 +520,12 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
     bearerDepth: bearerD, balustrade, stairs, braceCount, pathway: compliance.pathway,
     clips: clipId ? clipCount : undefined, composite: decking.family === 'composite',
     joistSpacingText, joistSpacingCap, joistSetout, joistSetoutSpacing, edgeBoardName: edgeBoardProductId, houseSide: layout.startsAtHouse,
+    againstHouse: houseEdges.length > 0,
   });
 
   return {
     ok: true, poly, edges: E, areaM2, perimeterM, bb, datum: { x: bb.minX, y: bb.minY }, layout, levels, postProductId, postLength,
-    stairs, balustrade, braces: { count: braceCount, length: braceLength }, footings, fascia, fasciaProductId, edgeBoardProductId, joistSpacingText, joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, breakersOn, frame, bom,
+    stairs, balustrade, braces: { count: braceCount, length: braceLength, lines: braceLines }, footings, fascia, fasciaProductId, edgeBoardProductId, joistSpacingText, joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, breakersOn, frame, bom,
     warnings: compliance.warnings, pathway: compliance.pathway, method,
   };
 }

@@ -96,6 +96,8 @@ export function CanvasEditor() {
   const lenRef = useRef<HTMLInputElement>(null);
   const coordRef = useRef<HTMLSpanElement>(null);
   const [size, setSize] = useState({ w: 800, h: 600 });
+  // on a phone the layer pills fold behind one button
+  const [layersOpen, setLayersOpen] = useState(false);
   const [view, setView] = useState<View>({ ox: -1500, oy: -2500, scale: 0.09 });
   const [draft, setDraft] = useState<Pt[]>([]);
   const [cursor, setCursor] = useState<Pt | null>(null);
@@ -980,7 +982,10 @@ export function CanvasEditor() {
           </>
         ) : (
           <>
-            <span className="layers">
+            <button type="button" className={`tool layers-toggle ${layersOpen ? 'on' : ''}`} onClick={() => setLayersOpen((v) => !v)} aria-expanded={layersOpen}>
+              ☰ {t('layer.title')}
+            </button>
+            <span className={`layers ${layersOpen ? 'open' : ''}`}>
               {(['frame', 'cuts', 'boards', 'posts', 'balustrade', 'dims', 'house'] as const).map((k) => (
                 <button key={k} type="button" className={`pill ${ui.layers[k] ? 'on' : ''}`} onClick={() => setUi({ layers: { ...ui.layers, [k]: !ui.layers[k] } })} aria-pressed={ui.layers[k]}>
                   {t(`layer.${k}`)}

@@ -63,6 +63,7 @@ export const COLORS = {
   edgeBoardStroke: '#7c4a1d',
   breaker: '#d8b07a',
   splice: '#b91c1c',
+  brace: '#6d28d9',
   frameJoist: '#7c4a1d',
   join: '#7c2d12',
   balPost: '#0f766e',
@@ -365,6 +366,28 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
           {lay.ledgers.map((l, i) => {
             const r = segRect(l.seg, jw);
             return <rect key={`ledger${i}`} x={r.x} y={r.y} width={r.w} height={r.h} fill={COLORS.ledger} />;
+          })}
+        </g>
+      )}
+
+      {/* diagonal braces under a high deck: beside the bearer between two stumps, or from one bearer line to the next */}
+      {L.frame && L.posts && lay && design.braces.lines.length > 0 && (
+        <g>
+          {design.braces.lines.map((br, i) => {
+            const alongX = Math.abs(br.a.y - br.b.y) < 0.5;
+            const alongY = Math.abs(br.a.x - br.b.x) < 0.5;
+            // beside the bearer it runs under, so the bearer does not hide it
+            const off = bw / 2 + 60;
+            const [ox, oy] = alongX ? [0, off] : alongY ? [off, 0] : [0, 0];
+            const a = { x: br.a.x + ox, y: br.a.y + oy };
+            const b = { x: br.b.x + ox, y: br.b.y + oy };
+            return (
+              <g key={`brace${i}`}>
+                <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={COLORS.brace} strokeWidth={sw * 2} strokeDasharray={`${sw * 8} ${sw * 4}`} />
+                <circle cx={a.x} cy={a.y} r={sw * 3} fill={COLORS.brace} />
+                <circle cx={b.x} cy={b.y} r={sw * 3} fill={COLORS.brace} />
+              </g>
+            );
           })}
         </g>
       )}

@@ -53,7 +53,10 @@ Drawings are for the crew to build from, read by the client and the owner too: t
 in the simplest form, the small details left to the crew on site. Joists and bearers look clearly different;
 every cut of framing timber gets a letter on the framing plan, and the cutting diagrams draw which stick each
 letter comes from (lengths within 5 mm share a letter, cut to the longer); the set-out sheet works from string
-lines and a datum; standard details show the joins, edge boards and breakers the deck actually has.
+lines and a datum; standard details show the joins, edge boards and breakers the deck actually has; the
+framing plan draws the braces a high deck needs. A deck against the house carries the AS 3660.1 reminder to
+keep the house's termite management clear. When editing stops, the results panel prices ways to save (the
+boards the other way, a nudge that drops a breaker or the ripped row) for the counter to offer.
 
 ## Working in this repo
 

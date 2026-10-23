@@ -1,13 +1,23 @@
+import { useEffect, useState } from 'react';
 import { useT } from '../i18n';
 import { PRODUCT_MAP, sizeLabel } from '../model/catalog';
 import { useApp } from '../state';
 import { money } from '../utils/format';
+import { savingTips, type SavingTip } from '../utils/tips';
 
 /** Quantities, price and the three things people do next. Updates with every edit. */
 export function ResultsBar() {
-  const { project, design, setUi } = useApp();
+  const { project, design, setUi, updateProject } = useApp();
   const { t, lang } = useT();
   const p = project.params;
+  // ways to save: priced by designing them, once editing has stopped (never while a corner is dragged)
+  const [tips, setTips] = useState<SavingTip[]>([]);
+  useEffect(() => {
+    setTips([]);
+    if (!design.ok) return;
+    const id = window.setTimeout(() => setTips(savingTips(project, design)), 700);
+    return () => window.clearTimeout(id);
+  }, [project, design]);
 
   if (!design.ok || !design.layout) {
     return (
@@ -38,6 +48,19 @@ export function ResultsBar() {
     ...(clipLine ? [{ v: t('res.kpi.boxes', { n: boxes(clipLine.qty, clipLine.productId) }), k: t('res.kpi.clips', { n: clipLine.qty }) }] : []),
     ...(screwLine ? [{ v: t('res.kpi.boxes', { n: boxes(screwLine.qty, screwLine.productId) }), k: t('res.kpi.screws', { n: screwLine.qty }) }] : []),
   ];
+
+  const tipText = (tip: SavingTip): string => {
+    const price = Math.abs(tip.saving) < 1 ? t('tip.same') : tip.saving > 0 ? t('tip.less', { money: money(tip.saving) }) : t('tip.more', { money: money(-tip.saving) });
+    if (tip.kind === 'axis') return t('tip.axis', { dir: t(`p.boardAxis.${tip.axis}`), price });
+    const [a, b] = [tip.from!, tip.to!];
+    const area = (b[0] * b[1] - a[0] * a[1]) / 1e6;
+    return t(tip.kind === 'breaker' ? 'tip.breaker' : tip.kind === 'nest' ? 'tip.nest' : 'tip.rip', {
+      from: `${a[0]} × ${a[1]}`,
+      to: `${b[0]} × ${b[1]}`,
+      price,
+      area: t('tip.area', { m2: `${area > 0 ? '+' : '−'}${Math.abs(area).toFixed(2)}` }),
+    });
+  };
 
   const print = () => {
     setUi({ mode: 'sheets' });
@@ -86,6 +109,20 @@ export function ResultsBar() {
         </div>
         <p className="hint">{t('res.priceHint')}</p>
       </div>
+
+      {tips.length > 0 && (
+        <div className="card tips">
+          <b>{t('tip.title')}</b>
+          {tips.map((tip, i) => (
+            <div className="tip" key={i}>
+              <span>{tipText(tip)}</span>
+              <button type="button" className="btn" onClick={() => updateProject(tip.apply, 'h.tip')}>
+                {t('tip.apply')}
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       <button className="btn primary big" onClick={print}>
         {t('res.printSheets')}

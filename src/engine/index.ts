@@ -463,7 +463,11 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
   if (decking.family === 'hardwood') count('end-seal', Math.max(1, Math.ceil(areaM2 / 60)), 'finish');
   count(concreteId, bags, 'footing');
 
-  const bom = buildBom(pieces, counts, project.prices, rules, params.wasteDeckingPct, params.wasteFramingPct, params.gstPct, {
+  // spare boards on top of the cut list (the company's habit): the decking, and each edge board or fascia product
+  const boardSpares: Record<string, number> = { [decking.id]: params.spareDeckingBoards ?? 3 };
+  const edgeProducts = new Set<string>([...(layout.edgeBoards.length ? [edgeBoardProductId] : []), ...(fascia.length ? [fasciaProductId] : [])]);
+  for (const id of edgeProducts) boardSpares[id] = (boardSpares[id] ?? 0) + (params.spareEdgeBoards ?? 1);
+  const bom = buildBom(pieces, counts, project.prices, rules, boardSpares, params.wasteFramingPct, params.gstPct, {
     pricesIncludeGst: params.pricesIncludeGst,
     supplierDiscountPct: params.supplierDiscountPct,
     deliveryFee: params.deliveryFee,

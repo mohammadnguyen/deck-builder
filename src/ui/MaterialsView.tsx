@@ -66,7 +66,7 @@ export function MaterialsView() {
       <details className="card details-card">
         <summary>{t('mat.cut')}</summary>
         <p className="hint">{t('cut.introDrawn')}</p>
-        {design.layout?.rips.length ? <p className="hint">{design.layout.rips.map((r) => t('cut.rip', { n: r.boards, width: r.width })).join(t('list.sep'))}</p> : null}
+        {design.layout?.rips.length ? <p className="hint">{design.layout.rips.map((r) => t(r.notched ? 'cut.notch' : 'cut.rip', { n: r.boards, width: r.width })).join(t('list.sep'))}</p> : null}
         <CutDiagrams design={design} project={project} />
       </details>
       <details className="card details-card">

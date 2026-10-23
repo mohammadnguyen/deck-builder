@@ -140,7 +140,7 @@ export function buildMethod(m: MethodInput): MethodStep[] {
         : []),
       { key: m.layout.breakers.length && m.layout.totals.boardJoins === 0 ? (m.clips ? 'm.decking.clips.n1.nojoins' : 'm.decking.n1.nojoins') : m.clips ? 'm.decking.clips.n1' : 'm.decking.n1', params: { side: m.houseSide ? 'house' : 'edge' } },
       { key: m.layout.breakers.length ? 'm.decking.n2.breaker' : 'm.decking.n2' },
-      ...m.layout.rips.map((r) => ({ key: 'm.decking.rip', params: { row: r.row, width: r.width, n: r.boards } })),
+      ...m.layout.rips.map((r) => ({ key: r.notched ? 'm.decking.notch' : r.atHouse ? 'm.decking.rip.house' : 'm.decking.rip', params: { row: r.row, width: r.width, n: r.boards } })),
       { key: 'm.decking.n3' },
       ...(m.composite ? [{ key: 'm.decking.composite' }] : []),
       ...(p.fascia ? [{ key: 'm.decking.fascia' }] : []),

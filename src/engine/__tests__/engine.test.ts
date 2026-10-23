@@ -166,13 +166,14 @@ describe('design', () => {
     // two breakers (at 1996 and 4004, symmetric on the 6 m strip)
     expect(lay.totals.frameJoists).toBe(10);
     expect(lay.joists.filter((j) => j.kind === 'frame').map((j) => Math.round(j.pos * 10) / 10)).toEqual([122.5, 167.5, 1923.5, 2068.5, 3432.5, 3477.5, 3931.5, 4076.5, 5832.5, 5877.5]);
-    // 4055 of field is exactly 28 rows, but row 16 (2175-2315) crosses the notch line at 2255:
-    // right of the notch that row is an 80 mm strip against the notch edge board, in two pieces either side of
-    // the breaker; left of it full boards either side of the other breaker
-    expect(lay.rips).toEqual([{ row: 16, width: 80, boards: 2 }]);
-    const row16 = lay.boards[15];
-    expect(row16.runs.filter((r) => r.ripped).map((r) => [Math.round(r.seg.a.x), Math.round(r.seg.b.x), Math.round(r.width)])).toEqual([[3455, 3929, 80], [4079, 5855, 80]]);
-    expect(row16.runs.filter((r) => !r.ripped).map((r) => [Math.round(r.seg.a.x), Math.round(r.seg.b.x), Math.round(r.width)])).toEqual([[145, 1921, 140], [2071, 3455, 140]]);
+    // 4055 of field is exactly 28 rows, laid from the far edge: row 13 (2175-2315) crosses the notch line at
+    // 2255. Past the corner it is an 80 mm strip against the notch edge board: the strip next to the corner is
+    // notched out of the board beside it (one 1.86 m board), the one past the breaker is ripped on its own
+    expect(lay.rips).toEqual([{ row: 13, width: 80, boards: 1 }, { row: 13, width: 80, boards: 1, notched: true }]);
+    const notchRow = lay.boards[12];
+    expect(notchRow.runs.filter((r) => r.ripped).map((r) => [Math.round(r.seg.a.x), Math.round(r.seg.b.x), Math.round(r.width)])).toEqual([[3455, 3929, 80], [4079, 5855, 80]]);
+    expect(notchRow.runs.filter((r) => !r.ripped).map((r) => [Math.round(r.seg.a.x), Math.round(r.seg.b.x), Math.round(r.width)])).toEqual([[145, 1921, 140], [2071, 3455, 140]]);
+    expect(notchRow.runs.map((r) => [r.pieces.map(Math.round), !!r.notched])).toEqual([[[1796], false], [[1858 + 20], false], [[], true], [[1796], false]]);
     expect(d.footings.diameter).toBe(200);
     expect(d.footings.bags).toBeLessThan(30);
     expect(d.edgeBoardProductId).toBe('modelo-endboard-140x23');
@@ -182,9 +183,10 @@ describe('design', () => {
     // notch line
     expect(lay.breakers.map((b) => [b.seg.a.x, b.seg.a.y, b.seg.b.y, b.aligned])).toEqual([[1996, 0, 4055, false], [4004, 0, 2255, false]]);
     expect(lay.totals.boardJoins).toBe(0);
-    for (const row of lay.boards) for (const run of row.runs) expect(run.pieces.length).toBe(1);
-    expect(lay.boards[0].runs.map((r) => Math.round(r.length))).toEqual([1776, 1858, 1776]);
-    expect(lay.boards[20].runs.map((r) => Math.round(r.length))).toEqual([1776, 1384]);
+    for (const row of lay.boards) for (const run of row.runs) expect(run.pieces.length).toBe(run.notched ? 0 : 1);
+    // laid from the far edge of the leg; the last row is against the house
+    expect(lay.boards[0].runs.map((r) => Math.round(r.length))).toEqual([1776, 1384]);
+    expect(lay.boards[lay.boards.length - 1].runs.map((r) => Math.round(r.length))).toEqual([1776, 1858, 1776]);
     expect(d.bom.lines.find((l) => l.productId === 'modelo-140x23')!.tags).toContain('breaker');
     const eb = d.bom.lines.find((l) => l.productId === 'modelo-endboard-140x23');
     expect(eb && eb.tags).toEqual(['edgeBoard']);
@@ -320,8 +322,8 @@ describe('design', () => {
     // one joist under each breaker joint, centred on the gap so it carries both the breaker and the board ends
     const frames = lay.joists.filter((j) => j.kind === 'frame').map((j) => Math.round(j.pos * 10) / 10);
     expect(frames).toEqual([122.5, 167.5, 1462.5, 1607.5, 2927.5, 3072.5, 4392.5, 4537.5, 5832.5, 5877.5]);
-    // 3455 of field = 23 full rows + 120: the last row is ripped and reported
-    expect(lay.rips).toEqual([{ row: 24, width: 120, boards: 4 }]);
+    // 3455 of field = 23 full rows + 120: the last row, against the house, is ripped and reported
+    expect(lay.rips).toEqual([{ row: 24, width: 120, boards: 4, atHouse: true }]);
     expect(d.warnings.some((w) => w.key === 'layout.rip')).toBe(true);
     expect(d.warnings.some((w) => w.key === 'layout.breakerSaving')).toBe(false);
     // one breaker set by hand: in the middle, and the tool says three would save boards
@@ -363,7 +365,7 @@ describe('design', () => {
     const xs = d.layout!.breakers.map((b) => b.seg.a.x);
     expect(xs.length).toBe(2);
     expect(xs[0] + xs[1]).toBeCloseTo(11300, 0); // symmetric
-    expect(d.layout!.boards[0].runs.map((r) => Math.round(r.length))).toEqual([2665, 5380, 2665]);
+    expect(d.layout!.boards[d.layout!.boards.length - 1].runs.map((r) => Math.round(r.length))).toEqual([2665, 5380, 2665]);
   });
   it('lays boards to the edge when the picture frame is off', () => {
     const p = newProject('plain', true);
@@ -374,7 +376,7 @@ describe('design', () => {
     expect(lay.fieldPoly).toEqual(d.poly);
     // composite still gets its breakers: the 6 m run split 1.5 | 2.7 | 1.5, symmetric
     expect(lay.breakers.map((b) => b.seg.a.x)).toEqual([1586.5, 4413.5]);
-    expect(lay.boards[0].runs.map((r) => Math.round(r.length))).toEqual([1512, 2677, 1512]);
+    expect(lay.boards[lay.boards.length - 1].runs.map((r) => Math.round(r.length))).toEqual([1512, 2677, 1512]);
     expect(lay.totals.frameJoists).toBe(4); // the breakers' own joists
     expect(d.bom.lines.some((l) => l.productId === 'modelo-endboard-140x23')).toBe(false);
   });
@@ -764,5 +766,53 @@ describe('joins as the crew makes them', () => {
     const hw = computeDesign(rect(9000, 7000, 'hw-86x19')).layout!;
     expect(hw.joistSpacingUsed).toBeGreaterThan(400);
     expect(hw.joistSpacingUsed).toBeLessThanOrEqual(450);
+  });
+});
+
+describe('boards as the crew lays them', () => {
+  const rect = (w: number, h: number) => {
+    const p = newProject('r', true);
+    p.deck = [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }];
+    p.houseEdges = [0];
+    p.house = [[{ x: -500, y: 0 }, { x: w + 500, y: 0 }]];
+    p.stairs = [];
+    return p;
+  };
+  it('lays the boards from the far edge so the ripped row goes against the house, or from the house by rule', () => {
+    const p = rect(6000, 3600);
+    const d = computeDesign(p);
+    const lay = d.layout!;
+    expect(lay.startsAtHouse).toBe(false);
+    // 3455 of field: 23 full rows from the far edge board, the last one ripped to 120 against the wall at y 0
+    const last = lay.boards[lay.boards.length - 1];
+    expect(last.width).toBeCloseTo(120, 6);
+    expect(last.pos).toBeCloseTo(60, 6);
+    expect(lay.rips).toEqual([{ row: 24, width: 120, boards: 4, atHouse: true }]);
+    expect(d.method.some((s) => s.notes.some((n) => n.key === 'm.decking.rip.house'))).toBe(true);
+    // the owner's rule the other way: laid from the house, the rip at the far edge board
+    p.rules.ripAtHouse = false;
+    const edge = computeDesign(p).layout!;
+    expect(edge.startsAtHouse).toBe(true);
+    expect(edge.boards[0].pos).toBeCloseTo(70, 6);
+    expect(edge.boards[edge.boards.length - 1].pos).toBeGreaterThan(3300);
+    expect(edge.rips).toEqual([{ row: 24, width: 120, boards: 4 }]);
+  });
+  it('orders the spare boards the company adds: 3 decking, 1 of each edge board product', () => {
+    const p = rect(6000, 3600);
+    const line = (q: Project, id: string) => computeDesign(q).bom.lines.find((l) => l.productId === id)!;
+    const deck = line(p, 'modelo-140x23');
+    expect(deck.extraCount).toBe(3);
+    expect(line(p, 'modelo-endboard-140x23').extraCount).toBe(1);
+    // framing keeps its allowance in per cent
+    const joists = line(p, 'tp-90x45');
+    expect(joists.extraCount).toBe(Math.round(((joists.qty - joists.extraCount!) * p.params.wasteFramingPct) / 100));
+    p.params.spareDeckingBoards = 0;
+    p.params.spareEdgeBoards = 2;
+    expect(line(p, 'modelo-140x23').qty).toBe(deck.qty - 3);
+    expect(line(p, 'modelo-endboard-140x23').extraCount).toBe(2);
+    // timber decking edged in its own boards: one product, both spares
+    const hw = rect(6000, 3600);
+    hw.params.deckingProductId = 'hw-86x19';
+    expect(line(hw, 'hw-86x19').extraCount).toBe(4);
   });
 });

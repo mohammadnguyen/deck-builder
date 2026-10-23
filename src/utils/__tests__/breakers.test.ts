@@ -72,7 +72,7 @@ describe('breakers placed by hand', () => {
     // B1 runs the depth of the top band; moved to x 9000 it must not grow down the leg
     const bl = updateBreaker(base, 'B1', movedBreaker(l, base.items[0], b1, 9000));
     expect(bl.items[0]).toEqual({ id: 'B1', pos: 9000, from: null, to: 2205 });
-    expect(spans({ ...p, breakers: bl }).find((s) => s[0] === 'B1')).toEqual(['B1', 9000, 0, 2175]);
+    expect(spans({ ...p, breakers: bl }).find((s) => s[0] === 'B1')).toEqual(['B1', 9000, 0, 2150]);
     // moved within the top band it keeps running to the edge boards
     expect(updateBreaker(base, 'B1', movedBreaker(l, base.items[0], b1, 3000)).items[0]).toEqual({ id: 'B1', pos: 3000, from: null, to: null });
   });
@@ -91,8 +91,8 @@ describe('breakers placed by hand', () => {
     const b1pos = breakerSpans(l0)[0].pos;
     const to = snapBreakerEnd(l0, b1pos, 1200, 'to', 0);
     expect(to).not.toBeNull();
-    // a row's far edge: 140 wide rows at a 145 pitch from the house
-    expect(((to as number) + 5) % 145).toBeCloseTo(0, 6);
+    // a row's edge: 140 wide rows at a 145 pitch from the far edge board (the rows are laid from there)
+    expect((7655 - (to as number)) % 145).toBeCloseTo(0, 6);
     const bl = updateBreaker(freezeBreakers(l0), 'B1', { to });
     const l = lay({ ...p, breakers: bl });
     expect(spans({ ...p, breakers: bl })[0]).toEqual(['B1', b1pos, 0, Math.round(to as number)]);
@@ -150,7 +150,7 @@ describe('breakers placed by hand', () => {
     const sug = suggestBreaker(sl)!;
     expect(sug.pos).toBe(5650);
     expect(sug.from).toBeNull();
-    expect(sug.to).toBe(2170);
+    expect(sug.to).toBe(2145);
   });
 
   it('lets a breaker go anywhere inside the field, up to the next breaker but not onto it', () => {
@@ -324,7 +324,7 @@ describe('breakers on decks with legs, and at notches', () => {
     const l = lay({ ...p, breakers: bl });
     const b1 = breakerSpans(l).find((b) => b.id === 'B1')!;
     const ext = extendedBreaker(l, b1);
-    expect(ext).toEqual({ from: null, to: 1160 });
+    expect(ext).toEqual({ from: null, to: 1135 });
     const l2 = lay({ ...p, breakers: updateBreaker(bl, 'B1', ext) });
     expect(coverage(l2).overlaps).toEqual([]);
     // and an end dragged towards it stops short of it
@@ -380,7 +380,8 @@ describe('breakers on decks with legs, and at notches', () => {
     p.stairs = [];
     p.params = { ...p.params, deckingProductId: 'hw-86x19', boardGap: 4, breakerBoards: 'on' };
     const one = lay({ ...p, breakers: { axis: 'x', items: [{ id: 'B1', pos: 4000, from: null, to: 86 }] } });
-    expect(breakerSpans(one)).toEqual([{ id: 'B1', pos: 4000, c0: 0, c1: 86 }]);
+    // rows are laid from the far edge: the row at the house runs to 120 (a 34 mm sliver at the wall is taken up)
+    expect(breakerSpans(one)).toEqual([{ id: 'B1', pos: 4000, c0: 0, c1: 120 }]);
     expect(one.totals.breakerPieces).toBe(1);
     clean(one);
     const nothing = lay({ ...p, breakers: { axis: 'x', items: [{ id: 'B1', pos: 4000, from: 0, to: 30 }] } });

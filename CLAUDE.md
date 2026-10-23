@@ -41,6 +41,10 @@ owner can change rather than a hidden constant.
 - Standard frame: 90x45 joists on single 140x45 bearers, stumps at about 1.5 m. The frame is sized
   automatically from the stocked sizes and kept standard unless another frame is clearly cheaper once
   stump labour is counted (rules: labour per stump, switch margin, sizes to choose from).
+- Boards are laid from the far edge board so the ripped last row goes against the house (a rule the owner can
+  switch); a board running on past an inside corner is notched round it when the strip past the corner is too
+  short to lay on its own.
+- Spares on the order: 3 decking boards and 1 of each edge board / fascia product (per job); framing by per cent.
 - Stairs to the NCC from the deck height; the last ripped board row is marked; the order list is editable.
 
 ## Drawings (owner's ask)

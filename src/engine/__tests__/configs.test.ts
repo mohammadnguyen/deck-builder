@@ -21,7 +21,7 @@ function check(p: Project) {
   }
   for (const br of lay.breakers) expect(br.length).toBeGreaterThan(0);
   // every field run fits one stock board when breakers are on
-  if (lay.breakers.length) for (const row of lay.boards) for (const run of row.runs) expect(run.pieces.length).toBe(1);
+  if (lay.breakers.length) for (const row of lay.boards) for (const run of row.runs) expect(run.pieces.length).toBe(run.notched ? 0 : 1);
   // joist spacing within the cap in every real bay
   for (const b of lay.joistBays) expect(b.spacing).toBeLessThanOrEqual(Math.min(p.params.joistSpacingMax, 500) + 0.01);
   return d;

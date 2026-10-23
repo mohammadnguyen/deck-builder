@@ -1,7 +1,7 @@
 import type { Axis, BreakerLayout, DeckParams, Pt, RuleSet, Seg } from '../model/types';
 import { bbox, clipHorizontal, clipVertical, edges, pointInPolygon, swapPoly, swapPt, validatePolygon, type Edge } from './geometry';
 import { bestBreakerSplit } from './breakerplan';
-import { packedLength, splitRun, splitRunStocked } from './cutlist';
+import { packedLength, runOn, splitRun, splitRunStocked } from './cutlist';
 import type { WarningItem } from './warnings';
 
 /** Decks at or above this height are designed for balcony loads (reduced spans). */
@@ -46,6 +46,9 @@ export interface JoistRun {
   hangers: number;
   isEdge: boolean;
   kind: JoistKind;
+  /** a field joist joined over a bearer is lapped side by side: every second piece sits this far over, across the
+   *  joists (toward the start of its bay), each lapped end running on to the bearer's far face */
+  lap?: number;
 }
 
 /** a run of evenly spaced joists between two fixed (edge or frame) joists, positions along the board axis */
@@ -202,6 +205,9 @@ export interface LayoutResult {
     edgeBoardScrews: number;
     mitres: number;
     frameJoists: number;
+    /** field joist joins lapped side by side over a bearer, and bearer joins scarfed over a stump */
+    joistLaps: number;
+    bearerScarfs: number;
     breakerLm: number;
     breakerPieces: number;
     breakerScrews: number;
@@ -212,8 +218,9 @@ export interface LayoutContext {
   boardWidth: number;
   boardGap: number;
   joistThickness: number;
-  /** total bearer width across laminations */
+  /** total bearer width across laminations, and its depth (a scarf runs as far as the bearer is deep) */
   bearerWidth: number;
+  bearerDepth?: number;
   /** joists hung flush between bearers (joist supports) instead of sitting on top */
   flush: boolean;
   /** picture-frame edge boards around the exposed edges */
@@ -701,6 +708,12 @@ function layoutImpl(
   }
   const joistXs: { x: number; kind: JoistKind }[] = [];
   const joistBays: JoistBay[] = [];
+  // a field joist longer than a stick is lapped side by side over a bearer: every second piece sits a joist's
+  // thickness toward the start of its bay, which opens the bay's last space by as much; such a bay is spaced so that
+  // space stays within the decking's limit
+  const jStocks = [...new Set(ctx.joistStockLengths?.length ? ctx.joistStockLengths : [ctx.joistMaxStock])].sort((p, q) => p - q);
+  const jMaxLen = jStocks[jStocks.length - 1] - rules.joistEndAllowance;
+  const lappedBay = (x0: number, x1: number): boolean => !ctx.flush && clipVertical(poly, (x0 + x1) / 2).some(([a, b]) => b - a > jMaxLen + 0.5);
   for (let i = 0; i < fixedSorted.length; i++) {
     joistXs.push(fixedSorted[i]);
     if (i + 1 < fixedSorted.length) {
@@ -708,13 +721,16 @@ function layoutImpl(
       const x1 = fixedSorted[i + 1].x;
       const w = x1 - x0;
       const xs: number[] = [];
+      const lapped = lappedBay(x0, x1);
       if (ctx.joistSetout) {
         // set out at exact centres from the start of the bay; whatever is left over is the last space
         for (let x = x0 + setoutSpacing; x < x1 - 0.5; x += setoutSpacing) xs.push(x);
         // a mark that lands on the next joist cannot take a joist of its own: that one goes hard against it
         if (xs.length && x1 - xs[xs.length - 1] < jt) xs[xs.length - 1] = x1 - jt;
+        // a joist more where the laps would open the last space past the limit
+        if (lapped && xs.length && x1 - xs[xs.length - 1] + jt > spacingCap + 0.5) xs.push((xs[xs.length - 1] + x1) / 2);
       } else {
-        const n = joistSpaces(w, params, rules, spacingCap);
+        const n = joistSpaces(w, params, rules, lapped ? spacingCap - jt : spacingCap);
         for (let k = 1; k < n; k++) xs.push(x0 + (w * k) / n);
       }
       for (const x of xs) joistXs.push({ x, kind: 'field' });
@@ -722,7 +738,9 @@ function layoutImpl(
       if (w > 200) {
         const pts = [x0, ...xs, x1];
         const spaces = pts.slice(1).map((x, k) => x - pts[k]);
-        joistBays.push({ from: x0, to: x1, count: spaces.length, spacing: Math.max(...spaces), spaces });
+        // the laps open the last space by a joist's thickness
+        const widest = lapped && xs.length ? Math.max(...spaces.slice(0, -1), spaces[spaces.length - 1] + jt) : Math.max(...spaces);
+        joistBays.push({ from: x0, to: x1, count: spaces.length, spacing: widest, spaces });
       }
     }
   }
@@ -942,6 +960,9 @@ function layoutImpl(
   //      different stumps. The fewest joins (pieces up to the longest stick), at the stumps whose pieces cut
   //      cleanly from the stocked lengths; the cut list may mix lengths ----
   const allowance = rules.joistEndAllowance;
+  // a join over a stump is a 45° scarf through the bearer's depth, centred over the stump: each piece runs on past
+  // the stump's centre by half the depth (a wall bearer, bolted along the wall, is butted)
+  const scarf = (ctx.bearerDepth ?? 140) / 2;
   const bStocks = [...new Set(ctx.bearerStockLengths?.length ? ctx.bearerStockLengths : [ctx.bearerMaxStock])].sort((p, q) => p - q);
   const bMaxLen = bStocks[bStocks.length - 1] - allowance;
   type Ply = { pieces: number[]; joins: number[]; off: boolean };
@@ -959,10 +980,11 @@ function layoutImpl(
   const splitBearer = (job: (typeof bearerJobs)[number], mode: 'stocked' | number): Ply[] => {
     const sup = job.onWall ? [] : job.postXs;
     const maxLen = mode === 'stocked' ? bMaxLen : mode;
+    const ext = job.onWall ? 0 : scarf;
     const a =
-      (mode === 'stocked' ? splitRunStocked(job.xs, job.xe, job.onWall ? wallSpots(job.xs, job.xe) : sup, bStocks, allowance, rules.kerf, 600) : null) ??
-      splitRun(job.xs, job.xe, sup, maxLen, 600);
-    const plies: Ply[] = [{ pieces: a.pieces, joins: a.joins, off: a.offSupport && !job.onWall }];
+      (mode === 'stocked' ? splitRunStocked(job.xs, job.xe, job.onWall ? wallSpots(job.xs, job.xe) : sup, bStocks, allowance, rules.kerf, 600, undefined, ext) : null) ??
+      splitRun(job.xs, job.xe, sup, maxLen - 2 * ext, 600);
+    const plies: Ply[] = [{ pieces: runOn(a.pieces, ext), joins: a.joins, off: a.offSupport && !job.onWall }];
     if (params.bearerLaminations === 2) {
       const len = job.xe - job.xs;
       // the second lamination is listed from the bearer's far end
@@ -973,22 +995,22 @@ function layoutImpl(
       const clash = (r: { joins: number[] }) => r.joins.some((j) => a.joins.some((k) => Math.abs(j - k) < apart));
       if (mode === 'stocked') {
         const spots = job.onWall ? [...wallSpots(0, len), ...a.joins.flatMap((k) => [job.xe - k - apart - 1, job.xe - k + apart + 1])] : fromEnd;
-        const r = splitRunStocked(0, len, spots, bStocks, allowance, rules.kerf, 600, (d) => a.joins.some((k) => Math.abs(job.xe - d - k) < apart));
+        const r = splitRunStocked(0, len, spots, bStocks, allowance, rules.kerf, 600, (d) => a.joins.some((k) => Math.abs(job.xe - d - k) < apart), ext);
         if (r) {
-          plies.push({ pieces: r.pieces, joins: r.joins.map((j) => job.xe - j), off: false });
+          plies.push({ pieces: runOn(r.pieces, ext), joins: r.joins.map((j) => job.xe - j), off: false });
           return plies;
         }
       }
       const rev = (firstTarget?: number) => {
-        const r = splitRun(0, len, fromEnd, maxLen, 600, firstTarget);
-        return { pieces: r.pieces, joins: r.joins.map((j) => job.xe - j), off: r.offSupport && !job.onWall };
+        const r = splitRun(0, len, fromEnd, maxLen - 2 * ext, 600, firstTarget);
+        return { pieces: runOn(r.pieces, ext), joins: r.joins.map((j) => job.xe - j), off: r.offSupport && !job.onWall };
       };
       let b = rev();
       if (clash(b)) {
         // the second lamination's first join moves back a stump (on the wall: to clear the first's joins) until
         // no join is too close to one of the first's
         const firsts = job.onWall ? a.joins.flatMap((k) => [job.xe - k - apart - 1, job.xe - k + apart + 1]) : fromEnd;
-        for (const dist of firsts.filter((x) => x > 600 && x <= maxLen).sort((p, q) => q - p)) {
+        for (const dist of firsts.filter((x) => x > 600 && x <= maxLen - ext).sort((p, q) => q - p)) {
           const r = rev(dist + 0.5);
           if (!clash(r) && !r.off) {
             b = r;
@@ -1028,11 +1050,13 @@ function layoutImpl(
     }
   }
   let bearerJoinOffPost = false;
+  let bearerScarfs = 0;
   for (const job of bearerJobs) {
     const plies = splitBearer(job, bearerMode);
     bearers[job.index].pieces = plies.map((p) => p.pieces.map((x) => x + rules.joistEndAllowance));
     bearers[job.index].splices = plies.map((p) => p.joins);
     if (plies.some((p) => p.off)) bearerJoinOffPost = true;
+    if (!job.onWall) bearerScarfs += plies.reduce((n, p) => n + p.joins.length, 0);
   }
   if (bearerJoinOffPost) warnings.push({ severity: 'warn', key: 'layout.bearerJoinOffPost' });
 
@@ -1047,18 +1071,23 @@ function layoutImpl(
   let offSupportJoins = false;
   let joistJoinOffBearer = false;
   let frameJoists = 0;
+  let joistLaps = 0;
   // joist runs; outside flush framing a run longer than a stick is joined only over a bearer (the two pieces
   // half each), every end landing on a bearer: the fewest joins (pieces up to the longest stick), over the
   // bearers whose pieces cut cleanly from the stocked lengths (two 2.5 m joists from a 5.4)
   const jruns: { c: { x: number; kind: JoistKind }; y0: number; y1: number }[] = [];
   for (const c of joistXs) for (const [y0, y1] of clipVertical(poly, c.x)) if (y1 - y0 >= 100) jruns.push({ c, y0, y1 });
-  const jStocks = [...new Set(ctx.joistStockLengths?.length ? ctx.joistStockLengths : [ctx.joistMaxStock])].sort((p, q) => p - q);
-  const jMaxLen = jStocks[jStocks.length - 1] - rules.joistEndAllowance;
+  // a field joist is lapped side by side over the bearer, each lapped end running on to the bearer's far face (fully
+  // on the bearer); the joists under the edge boards and the breakers stay in line under the board joints, butted
+  const lapRun = ctx.bearerWidth / 2;
+  const lapOf = (kind: JoistKind): number => (kind === 'field' ? lapRun : 0);
   /** a joist run's pieces: 'stocked' as a carpenter would (above), or greedily with the longest pieces up to maxLen */
-  const splitJoist = (y0: number, y1: number, mode: 'stocked' | number) => {
+  const splitJoist = (y0: number, y1: number, mode: 'stocked' | number, ext: number) => {
     const sup = bearerPositions.filter((p) => p > y0 && p < y1);
-    if (mode === 'stocked') return splitRunStocked(y0, y1, sup, jStocks, rules.joistEndAllowance, rules.kerf, 600) ?? splitRun(y0, y1, sup, jMaxLen, 600);
-    return splitRun(y0, y1, sup, mode, 600);
+    const r =
+      (mode === 'stocked' ? splitRunStocked(y0, y1, sup, jStocks, rules.joistEndAllowance, rules.kerf, 600, undefined, ext) : null) ??
+      splitRun(y0, y1, sup, (mode === 'stocked' ? jMaxLen : mode) - 2 * ext, 600);
+    return { ...r, pieces: runOn(r.pieces, ext) };
   };
   let joistMode: 'stocked' | number = jMaxLen;
   if (!ctx.flush) {
@@ -1072,7 +1101,7 @@ function layoutImpl(
       let joins = 0;
       const key: string[] = [];
       for (const r of jruns) {
-        const s = splitJoist(r.y0, r.y1, mode);
+        const s = splitJoist(r.y0, r.y1, mode, lapOf(r.c.kind));
         if (s.offSupport) {
           ok = false;
           break;
@@ -1125,9 +1154,12 @@ function layoutImpl(
       }
       const crossings = bearerPositions.filter((p) => p > y0 + 1 && p < y1 - 1).length;
       const hangers = ledgerPositions.filter((p) => Math.abs(p - y0) < 1 || Math.abs(p - y1) < 1).length;
-      const split = splitJoist(y0, y1, joistMode);
+      const split = splitJoist(y0, y1, joistMode, lapOf(c.kind));
       if (split.offSupport) joistJoinOffBearer = true;
-      joistBearerCrossings += crossings;
+      // both pieces of a lap sit on the bearer
+      const laps = lapOf(c.kind) ? split.joins.length : 0;
+      joistLaps += laps;
+      joistBearerCrossings += crossings + laps;
       totalHangers += hangers;
       joists.push({
         id: `J${++joistCounter}`,
@@ -1136,10 +1168,11 @@ function layoutImpl(
         length,
         pieces: split.pieces.map((p) => p + rules.joistEndAllowance),
         splices: split.joins,
-        bearerCrossings: crossings,
+        bearerCrossings: crossings + laps,
         hangers,
         isEdge: c.kind === 'edge',
         kind: c.kind,
+        ...(laps ? { lap: -jt } : {}),
       });
     }
   }
@@ -1436,6 +1469,8 @@ function layoutImpl(
       edgeBoardScrews,
       mitres,
       frameJoists,
+      joistLaps,
+      bearerScarfs,
       breakerLm,
       breakerPieces,
       breakerScrews,

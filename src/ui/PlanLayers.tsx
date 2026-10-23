@@ -278,21 +278,33 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
 
       {L.frame && lay && (
         <g>
-          {lay.joists.map((j) => {
-            const r = segRect(j.seg, jw);
-            return (
-              <rect
-                key={j.id}
-                x={r.x}
-                y={r.y}
-                width={r.w}
-                height={r.h}
-                fill={COLORS.joist}
-                stroke={j.kind === 'frame' ? COLORS.frameJoist : COLORS.joistStroke}
-                strokeWidth={j.kind === 'frame' ? sw * 1.2 : sw * 0.5}
-                strokeDasharray={j.kind === 'frame' ? `${sw * 6} ${sw * 4}` : undefined}
-              />
-            );
+          {lay.joists.flatMap((j) => {
+            const look = {
+              fill: COLORS.joist,
+              stroke: j.kind === 'frame' ? COLORS.frameJoist : COLORS.joistStroke,
+              strokeWidth: j.kind === 'frame' ? sw * 1.2 : sw * 0.5,
+              strokeDasharray: j.kind === 'frame' ? `${sw * 6} ${sw * 4}` : undefined,
+            };
+            if (!j.lap || !j.splices.length) {
+              const r = segRect(j.seg, jw);
+              return [<rect key={j.id} x={r.x} y={r.y} width={r.w} height={r.h} {...look} />];
+            }
+            // lapped over the bearers: each piece runs on to the bearer's far face, every second one beside the line
+            const horizontal = Math.abs(j.seg.a.y - j.seg.b.y) < 0.5;
+            const lo = horizontal ? Math.min(j.seg.a.x, j.seg.b.x) : Math.min(j.seg.a.y, j.seg.b.y);
+            const hi = horizontal ? Math.max(j.seg.a.x, j.seg.b.x) : Math.max(j.seg.a.y, j.seg.b.y);
+            const joins = [...j.splices].sort((p, q) => p - q);
+            const pts = [lo, ...joins, hi];
+            return pts.slice(1).map((to, k) => {
+              const from = k === 0 ? lo : pts[k] - bw / 2;
+              const end = k === pts.length - 2 ? hi : to + bw / 2;
+              const off = k % 2 ? j.lap! : 0;
+              const seg = horizontal
+                ? { a: { x: from, y: j.seg.a.y + off }, b: { x: end, y: j.seg.a.y + off } }
+                : { a: { x: j.seg.a.x + off, y: from }, b: { x: j.seg.a.x + off, y: end } };
+              const r = segRect(seg, jw);
+              return <rect key={`${j.id}-${k}`} x={r.x} y={r.y} width={r.w} height={r.h} {...look} />;
+            });
           })}
           {L.joistLabels &&
             lay.joists.map((j) => {
@@ -371,8 +383,8 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
           </g>
         ))}
 
-      {/* joins, drawn over the bearers and stumps: every bearer join over a stump and every joist join over a
-          bearer, the two pieces half each */}
+      {/* joins, drawn over the bearers and stumps: every bearer join scarfed over a stump and every joist join over
+          a bearer (lapped, or in line under the board joints) */}
       {L.frame && lay && (
         <g>
           {lay.bearers.flatMap((b) => {

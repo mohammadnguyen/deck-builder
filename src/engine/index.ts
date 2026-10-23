@@ -247,6 +247,7 @@ function setup(project: Project) {
     boardGap: params.boardGap,
     joistThickness: joist.width ?? 45,
     bearerWidth,
+    bearerDepth: bearerD,
     flush,
     edgeBoard: params.edgeBoard,
     edgeBoardWidth: PRODUCT_MAP[edgeBoardProductId]?.width ?? decking.width ?? 86,
@@ -445,6 +446,8 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
     } else {
       count('nail-75x3.05', layout.totals.joistBearerCrossings * rules.skewNailsPerCrossing, 'joist');
     }
+    // two field joists lapped over a bearer are nailed together
+    count('nail-75x3.05', layout.totals.joistLaps * (rules.lapNails ?? 3), 'joist');
   }
   // ---- bearer to post ----
   if (params.bearerToPost === 'bolted') count('bolt-m12-hdg', postCount * rules.boltsPerPost, 'bearer');

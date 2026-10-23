@@ -51,6 +51,7 @@ export function defaultRules(): RuleSet {
     battenScrewsPerPost: 4,
     hangerNails: 6,
     skewNailsPerCrossing: 3,
+    lapNails: 3,
     // end stumps sit under the bearer ends (0 = the stump's outer face under the bearer end)
     postEndSetback: 0,
     minBearerGap: 300,

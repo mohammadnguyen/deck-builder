@@ -25,10 +25,14 @@ owner can change rather than a hidden constant.
   wastes nothing. Two joists under each breaker.
   Breakers can be moved, resized, added and deleted by hand; no limit on the distance between breakers.
 - Stumps 200 diameter x 500 deep. The stump at a house wall stays clear of the house footing.
-- Every bearer end sits fully on a stump; bearers join only over a stump, each piece taking half;
-  double bearers join over different stumps (a double wall bearer's joins at least a bolt spacing apart).
-- Every joist end sits on a bearer; joists join only over a bearer, half each; only the perimeter ends
-  under the edge boards overhang. A run that fits one stick is never joined.
+- Every bearer end sits fully on a stump; bearers join only over a stump with a 45° scarf through the
+  depth, centred on the stump (a wall bearer, bolted along the wall, is butted); double bearers join over
+  different stumps (a double wall bearer's joins at least a bolt spacing apart).
+- Every joist end sits on a bearer; joists join only over a bearer. Field joists are lapped side by side,
+  each end running on to the bearer's far face, nailed together (rule); the lapped piece sits one joist over
+  toward the start of its bay, and such a bay is spaced so the space it opens stays within the decking's
+  limit. Joists under the edge boards and breakers stay in line under the board joints, butted. Only the
+  perimeter ends under the edge boards overhang. A run that fits one stick is never joined.
 - Framing pine (H3 MGP10 / F7) is bought in the lengths the yard usually has: 3.6, 4.8, 5.4 and 6.0 m (a
   rule the owner can change). One cut list may mix lengths, cut the way a carpenter would: the cheapest mix
   wins, e.g. 2.5 m joists come from 5.4 m sticks cut in half.

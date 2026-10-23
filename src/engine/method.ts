@@ -13,6 +13,8 @@ export interface MethodInput {
   params: DeckParams;
   rules: RuleSet;
   layout: LayoutResult;
+  /** the deck runs against the house (keep its termite management clear) */
+  againstHouse?: boolean;
   areaM2: number;
   postCount: number;
   postTop: number;
@@ -57,7 +59,7 @@ export function buildMethod(m: MethodInput): MethodStep[] {
   steps.push({
     key: 'm.setout',
     params: { posts: m.postCount },
-    notes: [{ key: 'm.setout.n1' }, { key: 'm.setout.n2' }, ...(p.weedMat ? [{ key: 'm.setout.weedMat' }] : [])],
+    notes: [{ key: 'm.setout.n1' }, { key: 'm.setout.n2' }, ...(p.weedMat ? [{ key: 'm.setout.weedMat' }] : []), ...(m.againstHouse ? [{ key: 'm.setout.termite' }] : [])],
   });
   if (p.footingType === 'slab') {
     steps.push({

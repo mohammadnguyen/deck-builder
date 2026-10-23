@@ -264,7 +264,7 @@ export function SheetsView() {
             <p>{t(joistsToWall ? 'sheet.framingNote3' : 'sheet.framingNote3.free')}</p>
             {lay.totals.frameJoists > 0 && <p>{t('sheet.framingNote4')}</p>}
             {design.braces.count > 0 && <p>{t('m.bracing', { count: design.braces.count })}</p>}
-            <Legend items={[{ color: COLORS.bearer, label: t('legend.bearer') }, { color: COLORS.joist, label: t('legend.joist') }, { color: COLORS.frameJoist, label: t('legend.frameJoist') }, { color: COLORS.post, label: t('legend.post') }, { color: COLORS.ledger, label: t('legend.wall') }, { color: COLORS.splice, label: t('legend.splice'), shape: 'ring' }, { color: COLORS.mark, label: t('legend.mark'), shape: 'tag' }, ...(project.house.length ? [{ color: COLORS.house, label: t('legend.house'), shape: 'dash' as const }] : [])]} />
+            <Legend items={[{ color: COLORS.bearer, label: t('legend.bearer') }, { color: COLORS.joist, label: t('legend.joist') }, { color: COLORS.frameJoist, label: t('legend.frameJoist') }, { color: COLORS.post, label: t('legend.post') }, { color: COLORS.ledger, label: t('legend.wall') }, { color: COLORS.splice, label: t('legend.splice'), shape: 'ring' }, ...(design.braces.count ? [{ color: COLORS.brace, label: t('legend.brace', { len: design.braces.length }), shape: 'line' as const }] : []), { color: COLORS.mark, label: t('legend.mark'), shape: 'tag' }, ...(project.house.length ? [{ color: COLORS.house, label: t('legend.house'), shape: 'dash' as const }] : [])]} />
           </div>
         </Sheet>
 

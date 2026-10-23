@@ -816,3 +816,32 @@ describe('boards as the crew lays them', () => {
     expect(line(hw, 'hw-86x19').extraCount).toBe(4);
   });
 });
+
+describe('bracing on the plan, termites at the wall', () => {
+  it('places every brace it orders: every other bay along each bearer, and one between bearer lines', () => {
+    const p = newProject('high', true);
+    p.params.deckHeight = 1500;
+    const d = computeDesign(p);
+    const lay = d.layout!;
+    expect(d.braces.count).toBeGreaterThan(0);
+    expect(d.braces.lines.length).toBe(d.braces.count);
+    // along a bearer: from one of its stumps to the next
+    const on = (b: (typeof lay.bearers)[number], q: { x: number; y: number }) => b.posts.some((s) => Math.hypot(s.x - q.x, s.y - q.y) < 1);
+    const along = d.braces.lines.filter((l) => lay.bearers.some((b) => on(b, l.a) && on(b, l.b)));
+    expect(along.length).toBe(lay.bearers.reduce((n, b) => n + Math.ceil(Math.max(0, b.posts.length - 1) / 2), 0));
+    // across: one between each pair of bearer lines
+    const lines = new Set(lay.bearers.map((b) => b.lineIndex)).size;
+    expect(d.braces.count).toBe(along.length + lines - 1);
+    expect(d.bom.lines.find((l) => l.tags.includes('brace'))).toBeDefined();
+    // a low deck needs none
+    expect(computeDesign(newProject('low', true)).braces).toEqual({ count: 0, length: 0, lines: [] });
+  });
+  it('reminds of the termite management at the house wall (AS 3660.1)', () => {
+    const p = newProject('t', true);
+    const d = computeDesign(p);
+    expect(d.warnings.some((w) => w.key === 'compliance.termite')).toBe(true);
+    expect(d.method.some((s) => s.notes.some((n) => n.key === 'm.setout.termite'))).toBe(true);
+    const free = { ...p, houseEdges: [], params: { ...p.params, attachment: 'freestanding' as const } };
+    expect(computeDesign(free).warnings.some((w) => w.key === 'compliance.termite')).toBe(false);
+  });
+});

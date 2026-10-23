@@ -290,7 +290,8 @@ function ParamsPanel() {
       </Group>
       <Group title={t('p.group.cost')}>
         <div className="row">
-          <Num label={t('p.wasteDecking')} value={p.wasteDeckingPct} onChange={(v) => set('wasteDeckingPct', v)} min={0} max={50} />
+          <Num label={t('p.spareDecking')} value={p.spareDeckingBoards} onChange={(v) => set('spareDeckingBoards', v)} min={0} max={50} />
+          <Num label={t('p.spareEdge')} value={p.spareEdgeBoards} onChange={(v) => set('spareEdgeBoards', v)} min={0} max={20} />
           <Num label={t('p.wasteFraming')} value={p.wasteFramingPct} onChange={(v) => set('wasteFramingPct', v)} min={0} max={50} />
           <Num label={t('p.gst')} value={p.gstPct} onChange={(v) => set('gstPct', v)} min={0} max={30} />
         </div>
@@ -654,6 +655,7 @@ function RulesPanel() {
       <Group title={t('r.misc')}>
         <Chk label={t('r.frameJoist')} checked={r.frameJoist} onChange={(v) => setRules((rr) => ({ ...rr, frameJoist: v }))} />
         <Chk label={t('r.compositeJoistSetout')} checked={r.compositeJoistSetout !== false} onChange={(v) => setRules((rr) => ({ ...rr, compositeJoistSetout: v }))} />
+        <Chk label={t('r.ripAtHouse')} checked={r.ripAtHouse !== false} onChange={(v) => setRules((rr) => ({ ...rr, ripAtHouse: v }))} />
         {miscKeys.map((k) => (
           <Num key={k} label={t(`r.${k}`)} value={r[k] as number} step={k === 'elevatedFactor' || k === 'concreteBagYield' ? 0.01 : 1} onChange={(v) => setRules((rr) => ({ ...rr, [k]: v }))} />
         ))}

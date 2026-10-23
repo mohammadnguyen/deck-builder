@@ -51,6 +51,7 @@ export function defaultRules(): RuleSet {
     battenScrewsPerPost: 4,
     hangerNails: 6,
     skewNailsPerCrossing: 3,
+    ripAtHouse: true,
     lapNails: 3,
     // end stumps sit under the bearer ends (0 = the stump's outer face under the bearer end)
     postEndSetback: 0,
@@ -146,7 +147,8 @@ export function defaultParams(): DeckParams {
       edgeOverride: {},
     },
     stairWidth: 1000,
-    wasteDeckingPct: 5,
+    spareDeckingBoards: 3,
+    spareEdgeBoards: 1,
     wasteFramingPct: 5,
     gstPct: 10,
     pricesIncludeGst: true,

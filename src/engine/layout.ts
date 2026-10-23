@@ -85,6 +85,8 @@ export interface BoardRun {
   /** visible width when this run is narrower than the row (ripped along a notch or the far edge) */
   width: number;
   ripped: boolean;
+  /** the strip past an inside corner, cut from the board beside it (notched round the corner): no piece of its own */
+  notched?: boolean;
 }
 
 /** boards ripped to a width, grouped for the notes and the cut list */
@@ -92,6 +94,10 @@ export interface RipInfo {
   row: number;
   width: number;
   boards: number;
+  /** boards notched round an inside corner, this wide past it */
+  notched?: boolean;
+  /** the last row, against the house */
+  atHouse?: boolean;
 }
 
 export interface BoardRow {
@@ -591,12 +597,17 @@ function layoutImpl(
   const pitch = bw + gap;
   const fbb = bbox(fieldPoly);
   const houseAtBottom = houseX.length > 0 && Math.abs(E[houseX[0]].a.y - bb.maxY) < 1;
-  // row 1 starts at the house wall when the boards are laid from it, else at the far edge board
-  const startsAtHouse = houseAtBottom || houseX.some((i) => Math.abs(E[i].a.y - bb.minY) < 1);
+  const houseAtTop = houseX.some((i) => Math.abs(E[i].a.y - bb.minY) < 1);
+  // the boards are laid from the far edge board so the ripped last row goes against the house, where it hides (the
+  // company's rule; else laid from the house, the rip at the far edge)
+  const ripAtHouse = rules.ripAtHouse !== false;
+  const fromBottom = ripAtHouse ? houseAtTop && !houseAtBottom : houseAtBottom;
+  // row 1 is at the house wall when the boards are laid from it, else at the far edge board
+  const startsAtHouse = !ripAtHouse && (houseAtBottom || houseAtTop);
   const rowBounds = (y: number): [number, number] | null => {
     let top: number;
     let bot: number;
-    if (!houseAtBottom) {
+    if (!fromBottom) {
       top = fbb.minY + Math.floor((y - fbb.minY) / pitch) * pitch;
       bot = Math.min(top + bw, fbb.maxY);
     } else {
@@ -1249,7 +1260,7 @@ function layoutImpl(
   for (let k = 0; k < 2000; k++) {
     let top: number;
     let visible: number;
-    if (!houseAtBottom) {
+    if (!fromBottom) {
       top = fbb.minY + k * pitch;
       if (top >= fbb.maxY - 1) break;
       visible = Math.min(bw, fbb.maxY - top);
@@ -1297,6 +1308,21 @@ function layoutImpl(
           if (r) runs.push(r);
         }
       }
+      // a board that runs on past an inside corner is notched round it, one board where it fits, when the strip past
+      // the corner is too short to lay on its own (a longer strip is its own piece and may come out of an offcut)
+      const span = (r: BoardRun): [number, number] => [Math.min(r.seg.a.x, r.seg.b.x), Math.max(r.seg.a.x, r.seg.b.x)];
+      const whole = new Map<BoardRun, number>();
+      for (const s of runs.filter((r) => r.ripped && r.pieces.length === 1 && r.length < rules.minBoardPiece)) {
+        const [s0, s1] = span(s);
+        const f = runs.find((r) => !r.ripped && r.pieces.length === 1 && (Math.abs(span(r)[1] - s0) < 1 || Math.abs(span(r)[0] - s1) < 1));
+        if (!f) continue;
+        const len = (whole.get(f) ?? f.length) + s.length;
+        if (len > maxBoard + 0.5) continue;
+        whole.set(f, len);
+        f.pieces = [len + rules.boardEndAllowance];
+        s.pieces = [];
+        s.notched = true;
+      }
     }
     if (!runs.length) continue;
     boards.push({ index: k, pos: yc, width: visible, ripped: rowRipped, runs });
@@ -1322,16 +1348,17 @@ function layoutImpl(
   // hand-placed breakers that leave a run longer than one board: those rows need joins
   if (manualItems && boardJoins > 0) warnings.push({ severity: 'warn', key: 'layout.breakerJoins', params: { n: boardJoins } });
   const ripMap = new Map<string, RipInfo>();
+  const lastAtHouse = ripAtHouse && (houseAtTop || houseAtBottom);
   for (const row of boards) for (const run of row.runs) {
     if (!run.ripped) continue;
     const w = Math.round(run.width);
-    const key = `${row.index}|${w}`;
-    const cur = ripMap.get(key) ?? { row: row.index + 1, width: w, boards: 0 };
-    cur.boards += run.pieces.length;
+    const key = `${row.index}|${w}|${run.notched ? 'notch' : 'rip'}`;
+    const cur = ripMap.get(key) ?? { row: row.index + 1, width: w, boards: 0, ...(run.notched ? { notched: true } : {}), ...(row.ripped && lastAtHouse ? { atHouse: true } : {}) };
+    cur.boards += run.notched ? 1 : run.pieces.length;
     ripMap.set(key, cur);
   }
-  const rips = [...ripMap.values()].sort((p, q) => p.row - q.row);
-  for (const r of rips) warnings.push({ severity: 'info', key: 'layout.rip', params: { row: r.row, width: r.width, n: r.boards } });
+  const rips = [...ripMap.values()].sort((p, q) => p.row - q.row || Number(!!p.notched) - Number(!!q.notched));
+  for (const r of rips) warnings.push({ severity: 'info', key: r.notched ? 'layout.notch' : 'layout.rip', params: { row: r.row, width: r.width, n: r.boards } });
   const lastRow = boards[boards.length - 1];
   if (lastRow && lastRow.ripped && lastRow.width < bw / 2) warnings.push({ severity: 'warn', key: 'layout.narrowRip', params: { width: Math.round(lastRow.width) } });
 

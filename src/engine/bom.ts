@@ -94,7 +94,8 @@ export function buildBom(
   counts: CountItem[],
   prices: Record<string, number>,
   rules: RuleSet,
-  wasteDeckingPct: number,
+  /** spare boards per decking, edge board and fascia product (framing and posts take wasteFramingPct) */
+  boardSpares: Record<string, number>,
   wasteFramingPct: number,
   gstPct: number,
   opts: BomOptions = { pricesIncludeGst: false, supplierDiscountPct: 0, deliveryFee: 0 },
@@ -120,9 +121,9 @@ export function buildBom(
     const stock = stockLengthsOf(prod, rules);
     const pack = packPieces(list.map((p) => p.length), stock, rules.kerf);
     const requiredLm = pack.totalPieceLength / 1000;
-    const pct = prod.category === 'decking' ? wasteDeckingPct : wasteFramingPct;
+    const pct = prod.category === 'decking' ? undefined : wasteFramingPct;
     const count = pack.bins.length;
-    const extraCount = Math.round((count * pct) / 100);
+    const extraCount = pct === undefined ? Math.max(0, Math.round(boardSpares[productId] ?? 0)) : Math.round((count * pct) / 100);
     const breakdown = pack.stockCount.map((s) => ({ ...s }));
     if (extraCount > 0 && breakdown.length) {
       const common = [...breakdown].sort((p, q) => q.count - p.count)[0];

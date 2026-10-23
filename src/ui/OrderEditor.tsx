@@ -150,6 +150,7 @@ function OrderRow({ n, line, flash }: { n: number; line: BomLine; flash: boolean
         <div className="sub">
           {line.tags.map((x) => t(`tag.${x}`)).join(', ')}
           {!line.edited && !line.addedId && timber && line.requiredLm !== undefined ? ` · ${t('ord.need', { m: line.requiredLm.toFixed(1), waste: (line.cutWastePct ?? 0).toFixed(0) })}` : ''}
+          {!line.edited && !line.addedId && line.extraCount ? ` · ${t('bom.extra', { n: line.extraCount })}` : ''}
           {line.edited && (
             <>
               {' · '}

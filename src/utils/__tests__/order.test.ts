@@ -23,12 +23,13 @@ describe('order list edits', () => {
   it('changes the pieces of a stock length, and adds another length', () => {
     let p = newProject('s', true);
     const deck = line(p, 'modelo-140x23');
-    expect(deck.stockBreakdown).toEqual([{ length: 5400, count: 27 }]);
+    // 26 boards cut, and the 3 spare boards the company adds
+    expect(deck.stockBreakdown).toEqual([{ length: 5400, count: 29 }]);
     p = apply(p, { order: withStock(p, deck, 5400, 42) });
     let l = line(p, 'modelo-140x23');
     expect(l.edited).toBe(true);
-    expect(l.calcQty).toBe(27);
-    expect(l.calcStock).toEqual([{ length: 5400, count: 27 }]);
+    expect(l.calcQty).toBe(29);
+    expect(l.calcStock).toEqual([{ length: 5400, count: 29 }]);
     expect(l.qty).toBe(42);
     expect(l.purchasedLm).toBeCloseTo(42 * 5.4, 6);
     expect(l.total).toBeCloseTo(42 * 5.4 * l.unitPrice, 6);
@@ -97,10 +98,10 @@ describe('order list edits', () => {
     p = apply(p, { order: r.order });
     expect(r.key).toBe('modelo-140x23');
     l = line(p, 'modelo-140x23');
-    expect(l.qty).toBe(29);
-    expect(l.calcQty).toBe(27);
+    expect(l.qty).toBe(31);
+    expect(l.calcQty).toBe(29);
     const text = supplierOrderText(p, computeDesign(p), 'en');
-    expect(text).toMatch(/5\.4m x 29/);
+    expect(text).toMatch(/5\.4m x 31/);
     expect(text).toMatch(/4\.2m x 3/);
   });
 

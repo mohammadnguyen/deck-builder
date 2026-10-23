@@ -93,7 +93,9 @@ export interface DeckParams {
   weedMat: boolean;
   balustrade: BalustradeParams;
   stairWidth: number;
-  wasteDeckingPct: number;
+  /** spare boards on top of the cut list: decking, and each edge board or fascia product */
+  spareDeckingBoards: number;
+  spareEdgeBoards: number;
   wasteFramingPct: number;
   gstPct: number;
   /** supplier prices are quoted GST inclusive (Square invoices) */
@@ -142,6 +144,8 @@ export interface RuleSet {
   battenScrewsPerPost: number;
   hangerNails: number;
   skewNailsPerCrossing: number;
+  /** the ripped last board row goes against the house (else at the far edge board) */
+  ripAtHouse?: boolean;
   /** nails through two field joists lapped side by side over a bearer */
   lapNails?: number;
   postEndSetback: number;

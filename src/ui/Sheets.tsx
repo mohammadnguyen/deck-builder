@@ -282,7 +282,7 @@ export function SheetsView() {
             <p>{t(lay.breakers.length && !lay.totals.boardJoins ? 'sheet.deckingNote2.breaker' : 'sheet.deckingNote2')}</p>
             {lay.rips.length ? (
               <p>
-                <b>{t(houseSide ? 'sheet.rows.house' : 'sheet.rows.edge')} {lay.rips.map((r) => t('sheet.ripRow', { row: r.row, width: r.width, n: r.boards })).join(t('list.sep'))}</b>
+                <b>{t(houseSide ? 'sheet.rows.house' : 'sheet.rows.edge')} {lay.rips.map((r) => t(r.notched ? 'sheet.notchRow' : 'sheet.ripRow', { row: r.row, width: r.width, n: r.boards })).join(t('list.sep'))}</b>
               </p>
             ) : (
               lastRow && <p>{t(houseSide ? 'sheet.rows.house' : 'sheet.rows.edge')} {t('sheet.deckingNote5', { last: Math.round(lastRow.width) })}</p>

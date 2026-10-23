@@ -151,9 +151,9 @@ describe('design', () => {
     expect(d.joistSetout).toBe(true);
     expect(d.joistSpacingText).toBe('400');
     expect(lay.joistSpacingUsed).toBeLessThanOrEqual(400);
-    // the 6 m strip is split 1.4 | 2.7 | 1.4 by two breakers (thirds and halves of 5.4 m boards); the notch edge
-    // at 3.6 m splits the middle bay
-    expect(lay.joistBays.map((b) => bayLabel(b))).toEqual(['3 x @400 + 147', '4 x @400 + 174', '400 + 364', '3 x @400 + 147']);
+    // the 6 m strip is split 1.78 | 1.86 | 1.78 by two breakers (thirds of 5.4 m boards at the ends); the notch
+    // edge at 3.6 m splits the middle bay
+    expect(lay.joistBays.map((b) => bayLabel(b))).toEqual(['4 x @400 + 156', '3 x @400 + 164', '354', '4 x @400 + 156']);
     expect(d.method.some((s) => s.notes.some((n) => n.key === 'm.joists.setout'))).toBe(true);
     // picture frame: one edge board per exposed edge, four mitred corners, field inset by board + gap
     expect(lay.edgeBoards.length).toBe(5);
@@ -163,25 +163,28 @@ describe('design', () => {
     expect(lay.edgeBoards.find((e) => e.edgeIndex === 2)!.length).toBeCloseTo(2400 + 140, 3);
     expect(lay.fieldPoly).toEqual([{ x: 145, y: 0 }, { x: 5855, y: 0 }, { x: 5855, y: 2255 }, { x: 3455, y: 2255 }, { x: 3455, y: 4055 }, { x: 145, y: 4055 }]);
     // a touching pair under each of the three exposed joist-parallel edges, and one joist under each joint of the
-    // two breakers (at 1586.5 and 4413.5, symmetric on the 6 m strip)
+    // two breakers (at 1996 and 4004, symmetric on the 6 m strip)
     expect(lay.totals.frameJoists).toBe(10);
-    expect(lay.joists.filter((j) => j.kind === 'frame').map((j) => Math.round(j.pos * 10) / 10)).toEqual([122.5, 167.5, 1514, 1659, 3432.5, 3477.5, 4341, 4486, 5832.5, 5877.5]);
+    expect(lay.joists.filter((j) => j.kind === 'frame').map((j) => Math.round(j.pos * 10) / 10)).toEqual([122.5, 167.5, 1923.5, 2068.5, 3432.5, 3477.5, 3931.5, 4076.5, 5832.5, 5877.5]);
     // 4055 of field is exactly 28 rows, but row 16 (2175-2315) crosses the notch line at 2255:
     // right of the notch that row is an 80 mm strip against the notch edge board, in two pieces either side of
-    // the breaker
+    // the breaker; left of it full boards either side of the other breaker
     expect(lay.rips).toEqual([{ row: 16, width: 80, boards: 2 }]);
     const row16 = lay.boards[15];
-    expect(row16.runs.filter((r) => r.ripped).map((r) => [Math.round(r.seg.a.x), Math.round(r.seg.b.x), Math.round(r.width)])).toEqual([[3455, 4339, 80], [4489, 5855, 80]]);
-    expect(row16.runs.filter((r) => !r.ripped).map((r) => Math.round(r.width))).toEqual([140]);
+    expect(row16.runs.filter((r) => r.ripped).map((r) => [Math.round(r.seg.a.x), Math.round(r.seg.b.x), Math.round(r.width)])).toEqual([[3455, 3929, 80], [4079, 5855, 80]]);
+    expect(row16.runs.filter((r) => !r.ripped).map((r) => [Math.round(r.seg.a.x), Math.round(r.seg.b.x), Math.round(r.width)])).toEqual([[145, 1921, 140], [2071, 3455, 140]]);
     expect(d.footings.diameter).toBe(200);
     expect(d.footings.bags).toBeLessThan(30);
     expect(d.edgeBoardProductId).toBe('modelo-endboard-140x23');
-    // composite: the 5710 run above the notch is split 1.37 | 2.68 | 1.37 by two symmetric breakers (thirds and
-    // halves of a 5.4 m board); the one over the leg stops at the leg's rows, the other at the notch line
-    expect(lay.breakers.map((b) => [b.seg.a.x, b.seg.a.y, b.seg.b.y, b.aligned])).toEqual([[1586.5, 0, 2175, false], [4413.5, 0, 2255, false]]);
+    // composite: the 5710 run above the notch is split 1.78 | 1.86 | 1.78 by two symmetric breakers (thirds of a
+    // 5.4 m board at the ends); the one over the leg carries on through the leg to the far edge board (its 1.78 and
+    // 1.38 m pieces go three to a board, where a whole 3.31 m run takes a board of its own), the other stops at the
+    // notch line
+    expect(lay.breakers.map((b) => [b.seg.a.x, b.seg.a.y, b.seg.b.y, b.aligned])).toEqual([[1996, 0, 4055, false], [4004, 0, 2255, false]]);
     expect(lay.totals.boardJoins).toBe(0);
     for (const row of lay.boards) for (const run of row.runs) expect(run.pieces.length).toBe(1);
-    expect(lay.boards[0].runs.map((r) => Math.round(r.length))).toEqual([1367, 2677, 1367]);
+    expect(lay.boards[0].runs.map((r) => Math.round(r.length))).toEqual([1776, 1858, 1776]);
+    expect(lay.boards[20].runs.map((r) => Math.round(r.length))).toEqual([1776, 1384]);
     expect(d.bom.lines.find((l) => l.productId === 'modelo-140x23')!.tags).toContain('breaker');
     const eb = d.bom.lines.find((l) => l.productId === 'modelo-endboard-140x23');
     expect(eb && eb.tags).toEqual(['edgeBoard']);
@@ -270,7 +273,7 @@ describe('design', () => {
     even.rules.compositeJoistSetout = false;
     const de = computeDesign(even);
     expect(de.joistSetout).toBe(false);
-    expect(de.layout!.joistBays.map((b) => bayLabel(b))).toEqual(['4 x @337', '5 x @355', '2 x @382', '4 x @337']);
+    expect(de.layout!.joistBays.map((b) => bayLabel(b))).toEqual(['5 x @351', '4 x @341', '354', '5 x @351']);
   });
   it('puts the last set-out joist hard against a fixed joist it would land on', () => {
     // 2055 wide, no edge boards: edge joists at 22.5 and 2032.5, a 2010 bay; the 5th mark at 2022.5 sits on the edge joist
@@ -654,8 +657,8 @@ describe('the most practical frame', () => {
 
 
 describe('breakers for the least board waste', () => {
-  const run = (len: number, rows: number, bandWidth: number, extraBreakerBoards = 2) =>
-    bestBreakerSplit({ len, rows, bandWidth, strip: 150, stocks: [5400], allowance: 20, kerf: 5, minPiece: 600, count: 'auto', extraBreakerBoards });
+  const run = (len: number, rows: number, bandWidth: number, extraBreakerBoards = 2, joistSpacing?: number) =>
+    bestBreakerSplit({ len, rows, bandWidth, strip: 150, stocks: [5400], allowance: 20, kerf: 5, minPiece: 600, count: 'auto', extraBreakerBoards, joistSpacing });
   it('knows the lengths that nest into a 5.4 m board: whole, halves, thirds, quarters, fifths', () => {
     expect(nestingLengths([5400], 5, 20, 600, 5380)).toEqual([5380, 2677, 1776, 1326, 1056]);
   });
@@ -684,9 +687,26 @@ describe('breakers for the least board waste', () => {
     p.stairs = [];
     const xs = (q: Project) => computeDesign(q).layout!.breakers.map((b) => b.seg.a.x);
     expect(xs(p).length).toBe(3);
+    // two breakers: thirds at the ends, 1.78 | 1.86 | 1.78
     p.rules.breakerMinSaving = 5;
-    expect(xs(p)).toEqual([1586.5, 4413.5]);
+    expect(xs(p)).toEqual([1996, 4004]);
     p.rules.breakerMinSaving = 50;
     expect(xs(p)).toEqual([3000]);
+  });
+  it('of the splits that buy the same boards, takes the one with fewer joists, then the one without short pieces', () => {
+    // a 7.2 m deck (a 6.91 m run): 2.64 | 1.33 | 2.64 (halves and a quarter) buys what 0.62 | 5.38 | 0.62 does
+    expect(run(6910, 28, 4055)!.pieces).toEqual([2642, 1326, 2642]);
+    const p = newProject('r72', true);
+    p.deck = [{ x: 0, y: 0 }, { x: 7200, y: 0 }, { x: 7200, y: 4200 }, { x: 0, y: 4200 }];
+    p.stairs = [];
+    const d = computeDesign(p);
+    expect(d.layout!.breakers.map((b) => b.seg.a.x)).toEqual([2862, 4338]);
+    const boards = (q: Project) => computeDesign(q).bom.lines.find((l) => l.productId === 'modelo-140x23')!.qty;
+    const shortEnds: Project = { ...p, breakers: { axis: 'x', items: [{ id: 'B1', pos: 835, from: null, to: null }, { id: 'B2', pos: 6365, from: null, to: null }] } };
+    expect(computeDesign(shortEnds).layout!.boards[2].runs.map((r) => Math.round(r.length))).toEqual([615, 5380, 615]);
+    expect(boards(p)).toBe(boards(shortEnds));
+    // a 9 m deck: 1.52 | 5.38 | 1.52 and 1.78 | 4.86 | 1.78 buy the same boards, but the longer pieces need a joist more
+    expect(run(8710, 20, 2855, 2, 400)!.pieces).toEqual([1515, 5380, 1515]);
+    expect(run(8710, 20, 2855)!.pieces).toEqual([1776, 4858, 1776]);
   });
 });

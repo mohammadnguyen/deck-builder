@@ -4,8 +4,9 @@ import { packedLength } from './cutlist';
  * Where the breaker boards go on a run longer than one board: always symmetric, and of the symmetric ways the one
  * that wastes the least decking, the way a carpenter lays out 5.4 m boards: 2.7 | 5.4 | 2.7 rather than three
  * equal 3.6 m pieces that each leave 1.8 m. The pieces are taken from lengths that nest into whole boards
- * (a whole board, halves, thirds ...), one of them taking up the rest. A breaker beyond the fewest that fit is
- * added only when it saves at least `extraBreakerBoards` boards.
+ * (a whole board, halves, thirds ...), one of them taking up the rest; of the splits that buy the same boards, the
+ * one that needs the fewest joists, then the one whose shortest piece is longest. A breaker beyond the fewest that
+ * fit is added only when it saves at least `extraBreakerBoards` boards.
  */
 export interface BreakerSplitInput {
   /** run length between the edge boards (mm) */
@@ -23,6 +24,8 @@ export interface BreakerSplitInput {
   /** a set number of breakers (else the count that wastes least) */
   count: 'auto' | number;
   extraBreakerBoards: number;
+  /** joist centres between the breakers (to weigh splits that buy the same boards) */
+  joistSpacing?: number;
 }
 
 export interface BreakerSplit {
@@ -87,6 +90,8 @@ export function symmetricSplits(len: number, n: number, strip: number, nice: num
 }
 
 const cache = new Map<string, BreakerSplit | null>();
+/** how much longer a shortest piece must be to count (a few mm either way is no different on site) */
+const CLEARLY_LONGER = 100;
 
 /** the decking a band needs with these pieces in every row and n breaker boards across it (mm bought) */
 function bandBoards(pieces: number[], n: number, inp: BreakerSplitInput, maxPiece: number): number {
@@ -122,20 +127,30 @@ export function bestBreakerSplit(inp: BreakerSplitInput, extra: { pieces: number
         for (const st of inp.stocks) if (st >= cut) best = Math.min(best, st / Math.floor((st + inp.kerf) / (cut + inp.kerf)));
         return s + best;
       }, 0);
+    // the joists between the breakers, each bay as long as its piece
+    const spacing = inp.joistSpacing ?? 0;
+    const joists = (pieces: number[]): number => (spacing > 0 ? pieces.reduce((s, p) => s + Math.max(0, Math.ceil(p / spacing - 1e-9) - 1), 0) : 0);
+    type Cand = { pieces: number[]; extra: boolean; q: number; joists: number; shortest: number };
+    const describe = (pieces: number[], offered: boolean): Cand => ({ pieces, extra: offered, q: quick(pieces), joists: joists(pieces), shortest: Math.min(...pieces) });
+    // of two splits that buy the same boards: the one that nests better row by row (the sample rounds), then the one
+    // that needs fewer joists, then the one whose shortest piece is clearly longer (2.64 | 1.33 | 2.64 rather than
+    // 0.62 | 5.38 | 0.62)
+    const finer = (a: Cand, b: Cand): boolean =>
+      Math.abs(a.q - b.q) > 1 ? a.q < b.q : a.joists !== b.joists ? a.joists < b.joists : a.shortest > b.shortest + CLEARLY_LONGER;
     const weigh = (n: number, nFrom: number) => {
-      let best: { pieces: number[]; bought: number; cost: number; extra: boolean } | null = null;
+      let best: (Cand & { bought: number; cost: number }) | null = null;
       const all = [
-        ...symmetricSplits(inp.len, n, inp.strip, nice, inp.minPiece, maxPiece).map((pieces) => ({ pieces, extra: false })),
-        ...extra.filter((e) => e.n === n).map((e) => ({ pieces: e.pieces, extra: true })),
+        ...symmetricSplits(inp.len, n, inp.strip, nice, inp.minPiece, maxPiece).map((pieces) => describe(pieces, false)),
+        ...extra.filter((e) => e.n === n).map((e) => describe(e.pieces, true)),
       ];
       // the even split and the offered ones always, then the six that measure best
-      const ranked = all.slice(1).filter((c) => !c.extra).map((c) => ({ c, q: quick(c.pieces) })).sort((a, b) => a.q - b.q).slice(0, 6).map((x) => x.c);
+      const ranked = all.slice(1).filter((c) => !c.extra).sort((a, b) => (finer(a, b) ? -1 : finer(b, a) ? 1 : 0)).slice(0, 6);
       const cands = [all[0], ...ranked, ...all.filter((c) => c.extra)];
       for (const c of cands) {
         const bought = bandBoards(c.pieces, n, inp, maxPiece);
         const cost = bought + (n - nFrom) * penalty;
-        // ties go to the earlier candidate: the even split first, then the symmetric ones, then those offered
-        if (!best || cost < best.cost - 1) best = { pieces: c.pieces, bought, cost, extra: c.extra };
+        // fewer boards first (an edge board line from an inside corner wins only so), then the finer split
+        if (!best || cost < best.cost - 1 || (!c.extra && cost <= best.cost + 1 && finer(c, best))) best = { ...c, bought, cost };
       }
       return best;
     };

@@ -710,3 +710,59 @@ describe('breakers for the least board waste', () => {
     expect(run(8710, 20, 2855)!.pieces).toEqual([1776, 4858, 1776]);
   });
 });
+
+describe('joins as the crew makes them', () => {
+  const rect = (w: number, h: number, decking = 'modelo-140x23') => {
+    const p = newProject('r', true);
+    p.deck = [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }];
+    p.houseEdges = [0];
+    p.house = [[{ x: -500, y: 0 }, { x: w + 500, y: 0 }]];
+    p.stairs = [];
+    p.params.deckingProductId = decking;
+    return p;
+  };
+  it('scarfs a bearer join over a stump: each piece runs on half the bearer depth past the stump centre', () => {
+    const lay = computeDesign(rect(9000, 7000)).layout!;
+    const b = lay.bearers.find((x) => !x.onWall && x.splices[0].length)!;
+    expect(b.splices).toEqual([[4500]]);
+    // 4500 to the stump's centre, 70 on (half the 140 depth), 20 end allowance
+    expect(b.pieces).toEqual([[4590, 4590]]);
+    expect(b.posts.some((pt) => Math.abs(pt.x - 4500) < 1)).toBe(true);
+    // the wall bearer is bolted along the wall: butted
+    const wall = lay.bearers.find((x) => x.onWall)!;
+    expect(wall.splices).toEqual([[3020]]);
+    expect(wall.pieces).toEqual([[3040, 6000]]);
+    expect(lay.totals.bearerScarfs).toBe(5);
+  });
+  it('laps field joists side by side over a bearer, each end on to its far face; joists under the board joints stay in line', () => {
+    const p = rect(5500, 7000);
+    const d = computeDesign(p);
+    const lay = d.layout!;
+    const field = lay.joists.find((j) => j.kind === 'field')!;
+    expect(field.splices).toEqual([1413]);
+    // on to the far face of the 45 bearer (22.5 past its centre), and the end allowance
+    expect(field.pieces).toEqual([1413 + 22.5 + 20, 7000 - 1413 + 22.5 + 20]);
+    expect(field.lap).toBe(-45);
+    // both pieces sit on the bearer
+    expect(field.bearerCrossings).toBe(7);
+    const edge = lay.joists.find((j) => j.kind === 'edge' && j.splices.length)!;
+    expect(edge.lap).toBeUndefined();
+    expect(edge.pieces.reduce((a, b) => a + b, 0)).toBeCloseTo(7000 + 2 * 20, 6);
+    const laps = lay.joists.filter((j) => j.lap).reduce((n, j) => n + j.splices.length, 0);
+    expect(lay.totals.joistLaps).toBe(laps);
+    // three nails through each lap, on top of the skew nails at every crossing
+    const nails = d.bom.lines.find((l) => l.productId === 'nail-75x3.05')!;
+    expect(nails.qty).toBe(lay.totals.joistBearerCrossings * p.rules.skewNailsPerCrossing + laps * 3);
+  });
+  it('keeps the space a lap opens within the decking limit: a joist more where it would pass 400', () => {
+    // a 5.5 m deck is 12 x 400 and a 365 space; a lap opens the last space by 45, so a lapped deck splits it
+    expect(computeDesign(rect(5500, 5000)).layout!.joistBays.map((b) => bayLabel(b))).toEqual(['12 x @400 + 365']);
+    const lapped = computeDesign(rect(5500, 7000)).layout!;
+    expect(lapped.joistBays.map((b) => bayLabel(b))).toEqual(['12 x @400 + 2 x @183']);
+    expect(lapped.joistSpacingUsed).toBeLessThanOrEqual(400);
+    // timber decking evened out: spaced for the 45 so the opened space stays within its 450
+    const hw = computeDesign(rect(9000, 7000, 'hw-86x19')).layout!;
+    expect(hw.joistSpacingUsed).toBeGreaterThan(400);
+    expect(hw.joistSpacingUsed).toBeLessThanOrEqual(450);
+  });
+});

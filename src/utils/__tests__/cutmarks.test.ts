@@ -65,7 +65,7 @@ describe('piece marks', () => {
     const groups = joistGroups(d.layout!, d.frame.joistProductId, cm);
     expect(groups.reduce((n, g) => n + g.joists.length, 0)).toBe(d.layout!.joists.length);
     const leg = groups.find((g) => g.joists.length === 17)!;
-    expect(leg.pieces.map((pc) => `${pc.mark?.mark} ${pc.mark?.length}`)).toEqual(['C 4800']);
+    expect(leg.pieces.map((pc) => `${pc.mark?.mark} ${pc.mark?.length}`)).toEqual(['D 4800']);
     // the label sits between two bearers, not on one
     const at = leg.pieces[0].labelAt;
     expect(d.layout!.supports.every((s) => Math.abs(s.pos - at) > 100)).toBe(true);
@@ -73,7 +73,8 @@ describe('piece marks', () => {
     expect(long.length).toBe(4);
     for (const b of long) {
       const [ply] = bearerPieces(b, d.frame.bearerProductId, cm);
-      expect(ply.map((pc) => `${pc.mark?.mark} ${pc.mark?.length}`)).toEqual(['B 5234', 'E 2567']);
+      // scarfed over the stump: each piece runs on 70 past the stump's centre (half the 140 bearer's depth)
+      expect(ply.map((pc) => `${pc.mark?.mark} ${pc.mark?.length}`)).toEqual(['C 5304', 'G 2637']);
       // the join over a stump, the labels between stumps
       const stumps = b.posts.map((s) => s.y === b.seg.a.y ? s.x : s.y);
       expect(stumps.some((s) => Math.abs(s - ply[0].to) < 1)).toBe(true);
@@ -117,14 +118,15 @@ describe('piece marks', () => {
     p.house = [[{ x: -500, y: 0 }, { x: 14500, y: 0 }]];
     p.stairs = [];
     const { d, cm } = marked(p);
-    const joistCuts = new Set(d.layout!.joists.flatMap((j) => j.pieces.map((x) => Math.ceil(x))));
-    expect(joistCuts.size).toBeGreaterThan(1);
-    const joistMarks = new Set([...joistCuts].map((c) => cm.of(d.frame.joistProductId, c)?.mark));
-    expect(joistMarks.size).toBe(1);
-    const [m] = cm.marks.filter((x) => x.tags.includes('joist'));
-    expect(m.count).toBe(d.layout!.joists.reduce((n, j) => n + j.pieces.length, 0));
+    // the joists in line under the edge boards and breakers are cut 4519 and 4522; the lapped field joists run on to
+    // the bearer's far face, 22.5 longer: 4542 and 4544. Each pair a few mm apart shares a letter, cut to the longer
+    const joistCuts = [...new Set(d.layout!.joists.flatMap((j) => j.pieces.map((x) => Math.ceil(x))))].sort((a, b) => a - b);
+    expect(joistCuts).toEqual([4519, 4522, 4542, 4544]);
+    const marks = joistCuts.map((c) => cm.of(d.frame.joistProductId, c)!);
+    expect(marks.map((m) => `${m.mark} ${m.length}`)).toEqual(['G 4502', 'G 4502', 'F 4524', 'F 4524']);
+    expect(marks[0].count + marks[2].count).toBe(d.layout!.joists.reduce((n, j) => n + j.pieces.length, 0));
     for (const g of joistGroups(d.layout!, d.frame.joistProductId, cm)) {
-      for (const pc of g.pieces) expect(m.length - (pc.to - pc.from)).toBeGreaterThanOrEqual(-1);
+      for (const pc of g.pieces) expect(pc.mark!.length - (pc.to - pc.from)).toBeGreaterThanOrEqual(-1);
     }
   });
 

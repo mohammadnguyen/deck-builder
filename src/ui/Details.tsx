@@ -95,6 +95,9 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
   // details for what this deck has: joins in the joists or the bearers, edge boards, breaker boards
   // (joists hung flush are cut between the bearers: the post section shows them)
   const joistJoins = !flush && !!lay && lay.joists.some((j) => j.splices.length > 0);
+  // field joists lap side by side over the bearer; joists under the board joints stay in line
+  const laps = !flush && !!lay && lay.totals.joistLaps > 0;
+  const L = fr.bearerLaminations;
   const bearerJoins = !!lay && lay.bearers.some((b) => !b.onWall && b.splices.some((s) => s.length > 0));
   const edgeBoards = !!lay && lay.edgeBoards.length > 0;
   const breakers = !!lay && lay.breakers.length > 0;
@@ -400,7 +403,35 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
         </Frame>
       )}
 
-      {joistJoins && (
+      {joistJoins && laps && (
+        <Frame title={t('detail.joistLap')}>
+          {/* from above: the bearer across, a joist running on to its far face and the next piece lapped beside it */}
+          <rect x={150 - 10 * L} y={40} width={20 * L} height={112} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
+          {L === 2 && <line x1={150} y1={40} x2={150} y2={152} stroke={INK} strokeWidth={0.4} />}
+          <rect x={24} y={74} width={126 + 10 * L} height={18} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+          <rect x={150 - 10 * L} y={92} width={126 + 10 * L} height={18} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
+          {/* nails through the lap */}
+          {(() => {
+            const n = Math.max(1, project.rules.lapNails ?? 3);
+            return Array.from({ length: n }, (_, k) => {
+              const x = n === 1 ? 150 : 150 - 10 * L + 4 + (k * (20 * L - 8)) / (n - 1);
+              return <circle key={k} cx={x} cy={k % 2 ? 87 : 79} r={1.6} fill={INK} />;
+            });
+          })()}
+          <Lbl x={150} y={34} anchor="middle">{`${t('d.bearer')} ${L}/${sizeOf(bearer)}`}</Lbl>
+          <Lbl x={26} y={68}>{`${t('d.joist')} ${sizeOf(joist)}`}</Lbl>
+          <Lbl x={274} y={124} anchor="end" size={7}>{t('d.lapBeside')}</Lbl>
+          <Leader from={[150 + 10 * L, 83]} to={[196, 60]} />
+          <Leader from={[150 - 10 * L, 101]} to={[104, 128]} />
+          <Lbl x={198} y={58} size={7}>{t('d.lapToFace')}</Lbl>
+          <Lbl x={102} y={138} anchor="end" size={7}>{t('d.lapToFace')}</Lbl>
+          <Lbl x={26} y={104} size={7}>{t('d.lapNails', { n: project.rules.lapNails ?? 3 })}</Lbl>
+          <Leader from={[96, 101]} to={[140, 85]} />
+          <Notes y={168} texts={[t('d.joistLapNote'), t('d.joistLapNote2')]} />
+        </Frame>
+      )}
+
+      {joistJoins && !laps && (
         <Frame title={t('detail.joistJoin')}>
           {/* decking */}
           {[30, 58, 86, 114, 142, 170, 198, 226, 254].map((x) => (
@@ -437,10 +468,11 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
           {[34, 74, 114, 154, 194, 234].map((x) => (
             <rect key={x} x={x} y={44} width={10} height={24} fill={TIMBER} stroke={INK} strokeWidth={0.5} />
           ))}
-          {/* two bearer pieces butting over the stump */}
-          <rect x={20} y={68} width={130} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
-          <rect x={150} y={68} width={130} height={30} fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
-          <line x1={150} y1={64} x2={150} y2={102} stroke="#b91c1c" strokeWidth={1.6} />
+          {/* two bearer pieces scarfed at 45° through the depth, centred over the stump */}
+          <polygon points="20,68 165,68 135,98 20,98" fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
+          <polygon points="165,68 280,68 280,98 135,98" fill={TIMBER2} stroke={INK} strokeWidth={0.6} />
+          <line x1={133} y1={100} x2={167} y2={66} stroke="#b91c1c" strokeWidth={1.6} />
+          <Lbl x={172} y={64} size={7}>45°</Lbl>
           {/* the stump under the join */}
           <rect x={138} y={98} width={24} height={62} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
           {checked && <rect x={138} y={68} width={6} height={30} fill={TIMBER} stroke={INK} strokeWidth={0.5} />}
@@ -458,7 +490,7 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
           <rect x={128} y={160} width={44} height={22} fill={CONCRETE} stroke={INK} strokeWidth={0.6} />
           <rect x={138} y={160} width={24} height={20} fill={TIMBER} stroke={INK} strokeWidth={0.6} />
           <Leader from={[150, 66]} to={[150, 30]} />
-          <Lbl x={150} y={26} anchor="middle">{t('d.bearerJoinAt')}</Lbl>
+          <Lbl x={150} y={26} anchor="middle">{t('d.bearerScarfAt')}</Lbl>
           <Lbl x={22} y={114}>{`${t('d.bearer')} ${fr.bearerLaminations}/${sizeOf(bearer)}`}</Lbl>
           <Lbl x={168} y={114}>{`${t('d.post')} ${sizeOf(post)}`}</Lbl>
           <Leader from={[166, 111]} to={[162, 111]} />
@@ -475,7 +507,7 @@ export function DetailsGrid({ project, design }: { project: Project; design: Des
               <Lbl x={238} y={155} anchor="middle" size={6.5}>{t('d.pliesStagger')}</Lbl>
             </g>
           )}
-          <Notes y={194} texts={[t('d.bearerJoinNote')]} />
+          <Notes y={194} texts={[t('d.bearerScarfNote', { mm: Math.round((bearer?.depth ?? 140) / 2) })]} />
         </Frame>
       )}
 

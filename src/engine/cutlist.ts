@@ -245,11 +245,17 @@ export function pieceWaste(cut: number, stocks: number[], kerf: number): number 
   return best;
 }
 
+/** cut lengths of the pieces of a split whose pieces run on past each join by `ext` (a lap or a scarf) */
+export function runOn(pieces: number[], ext: number): number[] {
+  return ext ? pieces.map((p, k) => p + ext * ((k > 0 ? 1 : 0) + (k < pieces.length - 1 ? 1 : 0))) : pieces;
+}
+
 /**
  * Split a run the way a carpenter does: the fewest joins (pieces up to the longest stick), every join over a
  * support, and of the ways to do that, the one whose pieces come most cleanly out of the stocked lengths.
- * `avoid` rules supports out (a second ply never joins where the first does). Returns null when the supports
- * leave no way; the caller falls back to `splitRun`.
+ * `avoid` rules supports out (a second ply never joins where the first does). `joinExt` is how far a piece runs
+ * on past each join it makes (a lap or a scarf); the pieces returned are the distances between the joins, without
+ * it. Returns null when the supports leave no way; the caller falls back to `splitRun`.
  */
 export function splitRunStocked(
   start: number,
@@ -260,6 +266,7 @@ export function splitRunStocked(
   kerf: number,
   minPiece: number,
   avoid?: (pos: number) => boolean,
+  joinExt = 0,
 ): { pieces: number[]; joins: number[]; offSupport: boolean } | null {
   if (!stocks.length) return null;
   const maxLen = Math.max(...stocks) - allowance;
@@ -277,10 +284,11 @@ export function splitRunStocked(
     for (let i = 0; i < j; i++) {
       if (!Number.isFinite(joins[i])) continue;
       const len = pts[j] - pts[i];
-      if (len > maxLen + 0.5) continue;
+      const cut = len + joinExt * ((i > 0 ? 1 : 0) + (j < n - 1 ? 1 : 0));
+      if (cut > maxLen + 0.5) continue;
       if (len < minPiece - 0.5 && !(i === 0 && j === n - 1)) continue;
       const jn = joins[i] + (j < n - 1 ? 1 : 0);
-      const w = waste[i] + pieceWaste(Math.ceil(len + allowance), stocks, kerf);
+      const w = waste[i] + pieceWaste(Math.ceil(cut + allowance), stocks, kerf);
       if (jn < joins[j] || (jn === joins[j] && w < waste[j] - 0.5)) {
         joins[j] = jn;
         waste[j] = w;

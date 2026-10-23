@@ -142,6 +142,8 @@ export interface RuleSet {
   battenScrewsPerPost: number;
   hangerNails: number;
   skewNailsPerCrossing: number;
+  /** nails through two field joists lapped side by side over a bearer */
+  lapNails?: number;
   postEndSetback: number;
   minBearerGap: number;
   bearerEndInset: number;

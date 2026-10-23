@@ -463,6 +463,10 @@ function layoutImpl(
   //      least board ----
   const maxBoard = ctx.deckingMaxStock - rules.boardEndAllowance;
   const strip = bw + 2 * gap;
+  // joist centres: set out from the start of each bay, or spread evenly up to the cap
+  const spacingCap = Math.min(params.joistSpacingMax || 500, ctx.deckingMaxJoistSpacing || 500);
+  const setoutSpacing = Math.max(100, ctx.joistSetoutSpacing || params.joistSpacing || 400);
+  const bayJoistSpacing = ctx.joistSetout ? setoutSpacing : spacingCap;
   interface BandBreaker { xc: number; y0: number; y1: number; aligned: boolean; id: string; manual: boolean }
   const bandBreakers: BandBreaker[] = [];
   const breakerSaving: { n: number; saving: number }[] = [];
@@ -489,7 +493,7 @@ function layoutImpl(
       }
     }
   } else if (ctx.breakerBoards) {
-    const autoKey = JSON.stringify([fieldPoly, strip, bw, gap, maxBoard, ctx.deckingStockLengths, ctx.deckingMaxStock, ctx.kerf, rules.boardEndAllowance, rules.minBoardPiece, rules.breakerMinSaving, params.breakerCount]);
+    const autoKey = JSON.stringify([fieldPoly, strip, bw, gap, maxBoard, ctx.deckingStockLengths, ctx.deckingMaxStock, ctx.kerf, rules.boardEndAllowance, rules.minBoardPiece, rules.breakerMinSaving, params.breakerCount, bayJoistSpacing]);
     const known = autoBreakerCache.get(autoKey);
     if (known) {
       for (const b of known.breakers) bandBreakers.push({ ...b });
@@ -527,7 +531,7 @@ function layoutImpl(
               len, rows: Math.max(1, Math.round((y1 - y0) / (bw + gap))), bandWidth: y1 - y0, strip,
               stocks: deckStocks,
               allowance: rules.boardEndAllowance, kerf: ctx.kerf, minPiece: rules.minBoardPiece,
-              count: params.breakerCount, extraBreakerBoards: rules.breakerMinSaving ?? 2,
+              count: params.breakerCount, extraBreakerBoards: rules.breakerMinSaving ?? 2, joistSpacing: bayJoistSpacing,
             },
             extra,
           );
@@ -695,10 +699,8 @@ function layoutImpl(
     }
     fixedSorted.push({ ...f });
   }
-  const spacingCap = Math.min(params.joistSpacingMax || 500, ctx.deckingMaxJoistSpacing || 500);
   const joistXs: { x: number; kind: JoistKind }[] = [];
   const joistBays: JoistBay[] = [];
-  const setoutSpacing = Math.max(100, ctx.joistSetoutSpacing || params.joistSpacing || 400);
   for (let i = 0; i < fixedSorted.length; i++) {
     joistXs.push(fixedSorted[i]);
     if (i + 1 < fixedSorted.length) {

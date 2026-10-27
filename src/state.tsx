@@ -5,6 +5,7 @@ import { defaultParams, defaultRules, newProject } from './model/defaults';
 import { PRODUCT_MAP, resolveProductId, CATALOG } from './model/catalog';
 import type { DeckParams, Lang, OrderEdits, Project, RuleSet } from './model/types';
 import { canRedo as hCanRedo, canUndo as hCanUndo, currentState, initHistory, jumpHistory, pushHistory, redoHistory, undoHistory, type History } from './utils/history';
+import { isShareHash, sharedProject } from './utils/share';
 
 export type Tool = 'select' | 'deck' | 'house' | 'stair' | 'pan';
 export type Selection =
@@ -161,6 +162,34 @@ export function isProjectLike(x: unknown): x is Partial<Project> {
   return !!x && typeof x === 'object' && Array.isArray((x as Project).deck) && typeof (x as Project).params === 'object';
 }
 
+/**
+ * A project from a share link among the ones stored here: new here, it is added; the same job, not changed here
+ * since the link was made, is replaced; one changed here since is kept, and the link's copy saved beside it (once:
+ * the same link again opens that copy).
+ */
+export function receiveShared(list: Project[], shared: Project, copyName: (name: string) => string): { projects: Project[]; id: string; copy: boolean } {
+  const here = list.find((p) => p.id === shared.id);
+  if (!here) return { projects: [...list, shared], id: shared.id, copy: false };
+  if (!(here.updatedAt > shared.updatedAt)) return { projects: list.map((p) => (p.id === shared.id ? shared : p)), id: shared.id, copy: false };
+  const content = (p: Project) => JSON.stringify({ ...p, id: '', name: '' });
+  const saved = list.find((p) => p.id !== shared.id && content(p) === content(shared));
+  if (saved) return { projects: list, id: saved.id, copy: true };
+  const copy = { ...shared, id: newProject('x').id, name: copyName(shared.name) };
+  return { projects: [...list, copy], id: copy.id, copy: true };
+}
+
+/** a project that came in by a share link: named in a notice, saved beside one changed here (copy); a link that
+ *  could not be read (cut short on the way) is said so */
+export interface Arrival {
+  name: string;
+  copy: boolean;
+  at: number;
+  broken?: boolean;
+}
+
+/** the share link leaves the address once its project is stored, so a reload does not bring it again */
+const clearShareHash = () => window.history.replaceState(null, '', window.location.pathname + window.location.search);
+
 interface Store {
   projects: Project[];
   /** edit history per project id; the entry at index holds the project as it is now */
@@ -177,6 +206,8 @@ interface AppCtx {
   canRedo: boolean;
   /** false when the browser refused to store the projects (private mode, quota) */
   saveOk: boolean;
+  /** the project a share link just brought */
+  arrival: Arrival | null;
   /** labels and times of every step for the history list */
   history: { label: string; at: number }[];
   historyIndex: number;
@@ -215,17 +246,32 @@ const DISCRETE = new Set([
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(() => loadJSON<Lang>(LS.lang, 'zh'));
-  const [store, setStore] = useState<Store>(() => {
+  // the projects stored here, and the one a share link brings (opened, and no sample made for it)
+  const [boot] = useState(() => {
     const stored = loadJSON<Partial<Project>[]>(LS.projects, []);
     let list = stored.filter(isProjectLike).map(migrateProject);
+    let current = loadJSON<string>(LS.current, '');
+    let arrival: Arrival | null = null;
+    const histories: Store['histories'] = {};
+    const shared = sharedProject(window.location.hash);
+    if (shared && isProjectLike(shared)) {
+      const r = receiveShared(list, migrateProject(shared), (name) => translate(lang, 'share.copyName', { name }));
+      const p = r.projects.find((x) => x.id === r.id)!;
+      list = r.projects;
+      current = r.id;
+      histories[r.id] = initHistory(p, 'h.shared');
+      arrival = { name: p.name, copy: r.copy, at: Date.now() };
+    } else if (isShareHash(window.location.hash)) arrival = { name: '', copy: false, at: Date.now(), broken: true };
     if (!list.length) {
       const rules = loadJSON<RuleSet | null>(LS.rules, null);
       const prices = loadJSON<Record<string, number> | null>(LS.prices, null);
       list = [newProject(lang === 'zh' ? '示例 deck' : 'Sample deck', true, rules ?? undefined, prices ?? undefined)];
     }
-    return { projects: list, histories: {} };
+    return { store: { projects: list, histories }, current, arrival };
   });
-  const [currentId, setCurrentId] = useState<string>(() => loadJSON<string>(LS.current, ''));
+  const [store, setStore] = useState<Store>(boot.store);
+  const [currentId, setCurrentId] = useState<string>(boot.current);
+  const [arrival, setArrival] = useState<Arrival | null>(boot.arrival);
   const [ui, setUiState] = useState<UIState>({
     tool: 'select',
     selection: null,
@@ -322,6 +368,34 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return r ? migrateProject({ rules: r } as Partial<Project>).rules : defaultRules();
   }, []);
 
+  // a share link opened while the app is open: the same as at the start
+  const receive = useCallback(
+    (hash: string) => {
+      if (!isShareHash(hash)) return;
+      clearShareHash();
+      const shared = sharedProject(hash);
+      if (!shared || !isProjectLike(shared)) {
+        setArrival({ name: '', copy: false, at: Date.now(), broken: true });
+        return;
+      }
+      const r = receiveShared(store.projects, migrateProject(shared), (name) => translate(lang, 'share.copyName', { name }));
+      const p = r.projects.find((x) => x.id === r.id)!;
+      setStore({ projects: r.projects, histories: { ...store.histories, [r.id]: initHistory(p, 'h.shared') } });
+      setCurrentId(r.id);
+      setUiState((u) => ({ ...u, selection: null, tool: 'select', mode: 'design', drawMode: false }));
+      setArrival({ name: p.name, copy: r.copy, at: Date.now() });
+    },
+    [store, lang],
+  );
+  useEffect(() => {
+    if (isShareHash(window.location.hash)) clearShareHash();
+  }, []);
+  useEffect(() => {
+    const onHash = () => receive(window.location.hash);
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, [receive]);
+
   const addProject = useCallback((p: Project) => {
     setStore((s) => ({ projects: [...s.projects, p], histories: { ...s.histories, [p.id]: initHistory(p, 'h.open') } }));
     setCurrentId(p.id);
@@ -378,7 +452,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const t = useCallback((key: string, params?: Record<string, string | number>) => translate(lang, key, params), [lang]);
 
   const value: AppCtx = {
-    project, projects, design, lang, ui, canUndo, canRedo, saveOk, history, historyIndex, lastHistoryAction,
+    project, projects, design, lang, ui, canUndo, canRedo, saveOk, arrival, history, historyIndex, lastHistoryAction,
     setLang, setUi, updateProject, undo, redo, jumpTo, createProject, openProject,
     duplicateProject, deleteProject, importProject, saveDefaultRules, saveDefaultPrices, defaultRulesForNew,
   };

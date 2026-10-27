@@ -57,6 +57,8 @@ export const COLORS = {
   gridLine: '#0e7490',
   ledger: '#c0392b',
   post: '#1f2937',
+  slab: '#94a3b8',
+  pedestal: '#475569',
   board: '#e9d2a8',
   boardStroke: '#c9a874',
   edgeBoard: '#c98f4f',
@@ -181,6 +183,23 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
         ))}
 
       {L.outline && path && <path d={path} fill={COLORS.deckFill} stroke={COLORS.deckStroke} strokeWidth={sw * 2} />}
+
+      {/* existing concrete under the deck (the joists on pedestals there): stippled under the frame */}
+      {L.outline && (project.slabs ?? []).length > 0 && (
+        <g>
+          <defs>
+            <pattern id={`slab-${hatchId}`} patternUnits="userSpaceOnUse" width={240} height={240}>
+              <rect width={240} height={240} fill="#e5e7eb" />
+              <circle cx={60} cy={60} r={14} fill={COLORS.slab} />
+              <circle cx={180} cy={150} r={10} fill={COLORS.slab} />
+              <circle cx={110} cy={200} r={8} fill={COLORS.slab} />
+            </pattern>
+          </defs>
+          {(project.slabs ?? []).map((s) => (
+            <polygon key={s.id} points={s.poly.map((p) => `${p.x},${p.y}`).join(' ')} fill={`url(#slab-${hatchId})`} opacity={0.9} />
+          ))}
+        </g>
+      )}
 
       {L.boards && lay &&
         lay.boards.map((row) =>
@@ -392,6 +411,18 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
         </g>
       )}
 
+      {/* pedestals on the slab, one under each joist at each row (on a pad poured beside the slab: in a square) */}
+      {L.posts && lay &&
+        lay.pedestals.map((p, i) => (
+          <g key={`ped${i}`}>
+            {p.pad && (() => {
+              const half = (project.rules.slabPadSize ?? 300) / 2;
+              return <rect x={p.pt.x - half} y={p.pt.y - half} width={half * 2} height={half * 2} fill="#e5e7eb" stroke={COLORS.pedestal} strokeWidth={sw * 1.2} />;
+            })()}
+            <circle cx={p.pt.x} cy={p.pt.y} r={Math.max(postW * 0.55, sw * 3)} fill="#fff" stroke={COLORS.pedestal} strokeWidth={sw * 1.2} />
+            <circle cx={p.pt.x} cy={p.pt.y} r={Math.max(postW * 0.18, sw)} fill={COLORS.pedestal} />
+          </g>
+        ))}
       {L.posts && lay &&
         lay.posts.map((p) => (
           <g key={p.id}>
@@ -554,6 +585,41 @@ export function DesignLayers({ project, design, layers, fs, sw }: {
           </g>
         </g>
       )}
+
+      {/* the slab's outline over everything, named with the deck's level above it */}
+      {L.outline &&
+        (project.slabs ?? []).map((s) => {
+          if (s.poly.length < 3) return null;
+          const xs = s.poly.map((p) => p.x);
+          const ys = s.poly.map((p) => p.y);
+          const info = design.slabs.find((x) => x.id === s.id);
+          const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+          let cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+          // the name between two rows of pedestals (rows across y), not over one
+          if (lay && lay.supportAxis === 'y') {
+            const rows = [...new Set(lay.pedestals.map((p) => Math.round(p.pt.y)))].filter((y) => y > Math.min(...ys) && y < Math.max(...ys));
+            const stops = [Math.min(...ys), ...rows.sort((a, b) => a - b), Math.max(...ys)];
+            const mids = stops.slice(1).map((y, k) => (y + stops[k]) / 2);
+            if (mids.length) cy = mids.reduce((best, m) => (Math.abs(m - cy) < Math.abs(best - cy) ? m : best), mids[0]);
+          }
+          // the full name where it fits across the slab, else the short one, else none (zoom in to read it)
+          const fits = (text: string) => text.length * fs * 0.8 * 0.56 + fs * 0.6 < Math.max(...xs) - Math.min(...xs);
+          const name = [t('slab.tag', { height: s.height, h: Math.round(info?.pedestalHeight ?? 0) }), t('slab.tagShort', { height: s.height })].find(fits);
+          return (
+            <g key={`slab-${s.id}`}>
+              <polygon points={s.poly.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke={COLORS.pedestal} strokeWidth={sw * 2.2} strokeDasharray={`${sw * 10} ${sw * 5}`} />
+              {name && <Tag
+                x={cx}
+                y={cy}
+                text={name}
+                fs={fs * 0.8}
+                sw={sw}
+                color={COLORS.pedestal}
+                bold={false}
+              />}
+            </g>
+          );
+        })}
     </g>
   );
 }

@@ -1,10 +1,10 @@
-import { PRODUCT_MAP, POST_PRODUCTS, hangerFor, product, resolveProductId, stockLengthsOf } from '../model/catalog';
+import { PEDESTAL_PRODUCTS, PRODUCT_MAP, POST_PRODUCTS, hangerFor, product, resolveProductId, stockLengthsOf } from '../model/catalog';
 import type { FrameSizes, Product, Project, Pt, RuleSet } from '../model/types';
 import { designBalustrade, type BalustradeDesign } from './balustrade';
 import { buildBom, type BomResult, type CountItem, type Piece } from './bom';
 import { assessCompliance, type Pathway } from './compliance';
 import { splitRun } from './cutlist';
-import { bbox, edges, normalizePolygon, perimeter, polygonAreaMm2, validatePolygon, type BBox, type Edge, type PolygonProblem } from './geometry';
+import { bbox, clipHorizontal, edges, normalizePolygon, perimeter, polygonAreaMm2, validatePolygon, type BBox, type Edge, type PolygonProblem } from './geometry';
 import { computeLayout, planFrame, type LayoutContext, type LayoutResult } from './layout';
 import { buildMethod, type MethodStep } from './method';
 import { designStair, type StairDesign } from './stairs';
@@ -31,6 +31,44 @@ export interface FootingInfo {
   bags: number;
 }
 
+/** a slab under part of the deck: the deck's level above it, the pedestals' height under the joists, the pedestal that
+ *  sets to it (null: none does) and how many */
+export interface SlabInfo {
+  id: string;
+  height: number;
+  pedestalHeight: number;
+  productId: string | null;
+  count: number;
+  /** of them, on pads poured beside the slab (the deck runs past it by too little for a stump) */
+  pads: number;
+}
+
+/** how much of the deck is over the slabs (m²): their outlines clipped to the deck, strip by strip */
+function slabUnderDeck(poly: Pt[], slabs: Pt[][]): number {
+  if (!slabs.length) return 0;
+  const bb = bbox(poly);
+  const step = 10;
+  let mm2 = 0;
+  for (let y = bb.minY + step / 2; y < bb.maxY; y += step) {
+    const deck = clipHorizontal(poly, y);
+    for (const s of slabs) for (const [a, b] of clipHorizontal(s, y)) for (const [c, d] of deck) mm2 += Math.max(0, Math.min(b, d) - Math.max(a, c)) * step;
+  }
+  return mm2 / 1e6;
+}
+
+/** one pad poured beside a slab for a pedestal (m³) */
+const padVolume = (rules: RuleSet): number => ((rules.slabPadSize ?? 300) ** 2 * (rules.slabPadDepth ?? 200)) / 1e9;
+
+/** the pedestal that sets to a height with the most room either way; null when none reaches it */
+export function pedestalFor(height: number): string | null {
+  let best: { id: string; room: number } | null = null;
+  for (const p of PEDESTAL_PRODUCTS) {
+    const room = Math.min(height - p.pedestal![0], p.pedestal![1] - height);
+    if (room >= 0 && (!best || room > best.room)) best = { id: p.id, room };
+  }
+  return best?.id ?? null;
+}
+
 export interface FasciaRun {
   edgeIndex: number;
   length: number;
@@ -54,6 +92,8 @@ export interface DesignResult {
   /** diagonal braces: how many, how long, and where on the plan (from stump to stump, or a stump to the wall bearer) */
   braces: { count: number; length: number; lines: { a: Pt; b: Pt }[] };
   footings: FootingInfo;
+  /** the slabs under the deck, with their pedestals */
+  slabs: SlabInfo[];
   fascia: FasciaRun[];
   fasciaProductId: string;
   /** product used for the picture-frame edge boards */
@@ -169,6 +209,9 @@ function autoFrame(project: Project): DesignResult {
 function estimateFrame(project: Project, labour: number): number | null {
   const s = setup(project);
   if (!s.valid.ok || s.levels.groundClearance < s.rules.minGroundClearance) return null;
+  // over a slab the joists stand on pedestals: a frame whose joists leave no pedestal height there does not fit
+  const pedestalIds = (project.slabs ?? []).map((slab) => pedestalFor(slab.height - s.boardT - s.joistD));
+  if (pedestalIds.some((id) => !id)) return null;
   const { params, rules } = s;
   const E = edges(s.poly);
   const houseEdges = project.houseEdges.filter((i) => i >= 0 && i < E.length);
@@ -193,6 +236,8 @@ function estimateFrame(project: Project, labour: number): number | null {
     const bay = plan.maxBearerSpanUsed > 0 ? Math.min(1800, plan.maxBearerSpanUsed) : 1800;
     cost += plan.braceUnits * (((Math.hypot(bay, s.levels.postTop) + 200) / 1000) * price('tp-90x45') * waste + 2 * price('bolt-m12-hdg'));
   }
+  plan.pedestals.forEach((n, k) => (cost += n * (price(pedestalIds[k]!) + (rules.pedestalScrews ?? 2) * price('screw-deck-10gx50'))));
+  cost += ((plan.pads * padVolume(rules)) / rules.concreteBagYield) * price(s.concreteId);
   if (s.flush) cost += plan.crossings * 2 * (price(hangerFor(s.joist.id)) + rules.hangerNails * price('nail-75x3.05'));
   else if (params.joistFixing === 'tripleGrip') cost += plan.crossings * (price('triple-grip') + 6 * price('nail-30x2.8-galv'));
   else cost += plan.crossings * rules.skewNailsPerCrossing * price('nail-75x3.05');
@@ -274,6 +319,7 @@ function setup(project: Project) {
     sameTimber: joist.id === bearer.id,
     postWidth: postW,
     simpleCutting: rules.cutting === 'cheapest' ? undefined : { joist: extraLength(joist), bearer: extraLength(bearer) },
+    slabs: (project.slabs ?? []).map((s) => normalizePolygon(s.poly)),
   };
   return {
     params, rules, poly, valid, decking, joist, bearer, flush, boardT, joistD, bearerD, levels, concreteId,
@@ -300,7 +346,7 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
     return {
       ok: false, problem: valid.problem, poly, edges: [], areaM2: 0, perimeterM: 0, bb: bbox(poly), datum: { x: 0, y: 0 },
       layout: null, levels, postProductId: 'post-90x90-h4', postLength: 0, stairs: [], balustrade: emptyBal,
-      braces: { count: 0, length: 0, lines: [] }, footings: { count: 0, type: params.footingType, depth: params.footingDepth, diameter: params.footingDiameter, padSize: params.padSize, padDepth: params.padDepth, concreteM3: 0, bags: 0 },
+      braces: { count: 0, length: 0, lines: [] }, slabs: [], footings: { count: 0, type: params.footingType, depth: params.footingDepth, diameter: params.footingDiameter, padSize: params.padSize, padDepth: params.padDepth, concreteM3: 0, bags: 0 },
       fascia: [], fasciaProductId: decking.fasciaProductId ?? decking.id, edgeBoardProductId: decking.edgeBoardProductId ?? decking.id,
       joistSpacingText: String(Math.round(joistSetout ? joistSetoutSpacing : joistSpacingTarget)), joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, breakersOn, frame, bom: emptyBom,
       warnings: [{ severity: 'error', key: `polygon.${valid.problem}` }], pathway: 'approvalRequired', method: [],
@@ -380,11 +426,18 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
     concreteM3 = (postCount * params.padSize * params.padSize * params.padDepth) / 1e9;
   }
   if (params.footingType !== 'slab') concreteM3 += stairs.reduce((s, st) => s + st.padVolumeM3, 0);
+  // the pads beside a slab for the pedestals where the deck runs past it by too little for a stump
+  concreteM3 += layout.totals.pads * padVolume(rules);
   const bags = Math.ceil(concreteM3 / rules.concreteBagYield);
   const footings: FootingInfo = {
     count: postCount, type: params.footingType, depth: params.footingDepth, diameter: params.footingDiameter,
     padSize: params.padSize, padDepth: params.padDepth, concreteM3, bags,
   };
+  // ---- pedestals on the slabs, each set to the slab's level under the joists ----
+  const slabs: SlabInfo[] = (project.slabs ?? []).map((s, k) => {
+    const pedestalHeight = s.height - boardT - joistD;
+    return { id: s.id, height: s.height, pedestalHeight, productId: pedestalFor(pedestalHeight), count: layout.pedestals.filter((p) => p.slab === k).length, pads: layout.pedestals.filter((p) => p.slab === k && p.pad).length };
+  });
 
   // ---- fascia ----
   const fasciaProductId = decking.fasciaProductId && PRODUCT_MAP[decking.fasciaProductId] ? decking.fasciaProductId : decking.id;
@@ -486,7 +539,10 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
   if (params.footingType === 'stirrup') count('stirrup-hdg', postCount, 'footing');
   count('bolt-m12-hdg', braceCount * 2, 'brace');
   if (params.joistTape) count('tape-joist', Math.ceil(layout.totals.joistLm / rules.joistTapeRoll), 'joist');
-  if (params.weedMat) count('weed-mat', areaM2 * 1.1, 'ground');
+  for (const s of slabs) if (s.productId) count(s.productId, s.count, 'pedestal');
+  count('screw-deck-10gx50', slabs.reduce((n, s) => n + (s.productId ? s.count : 0), 0) * (rules.pedestalScrews ?? 2), 'pedestal');
+  // weed mat on the ground, not over a slab
+  if (params.weedMat) count('weed-mat', Math.max(0, areaM2 - slabUnderDeck(poly, ctx.slabs ?? [])) * 1.1, 'ground');
   if (params.oil && decking.family !== 'composite') {
     count('oil-decking', (areaM2 * rules.oilCoats) / rules.oilCoverage, 'finish');
   }
@@ -520,6 +576,16 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
   if (layout.ledgers.length) compliance.warnings.push({ severity: 'info', key: params.wallFixing === 'dynabolt' ? 'compliance.wallBearerMasonry' : 'compliance.wallBearerTimber', params: { n: wallAnchors } });
   // AS 3660.1: a deck against the house must not hide or bridge the house's termite management
   if (houseEdges.length) compliance.warnings.push({ severity: 'info', key: 'compliance.termite' });
+  // over a slab: the joists on pedestals, set to the slab's level; a slab too close to the deck (or too far below it)
+  // for the pedestals is said so
+  for (const s of slabs) {
+    if (s.productId) {
+      if (s.count) compliance.warnings.push({ severity: 'info', key: 'compliance.pedestals', params: { n: s.count, h: Math.round(s.pedestalHeight), height: s.height } });
+    } else {
+      const low = s.pedestalHeight < Math.min(...PEDESTAL_PRODUCTS.map((p) => p.pedestal![0]));
+      compliance.warnings.unshift({ severity: 'error', key: low ? 'compliance.slabTooLow' : 'compliance.slabTooHigh', params: { h: Math.round(s.pedestalHeight), height: s.height, joist: joistD } });
+    }
+  }
 
   const method = buildMethod({
     params, rules, layout, areaM2, postCount, postTop, postLength, postName: postProductId, concreteM3, bags,
@@ -528,11 +594,12 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
     clips: clipId ? clipCount : undefined, composite: decking.family === 'composite',
     joistSpacingText, joistSpacingCap, joistSetout, joistSetoutSpacing, edgeBoardName: edgeBoardProductId, houseSide: layout.startsAtHouse,
     againstHouse: houseEdges.length > 0,
+    pedestals: slabs.filter((s) => s.count > 0),
   });
 
   return {
     ok: true, poly, edges: E, areaM2, perimeterM, bb, datum: { x: bb.minX, y: bb.minY }, layout, levels, postProductId, postLength,
-    stairs, balustrade, braces: { count: braceCount, length: braceLength, lines: braceLines }, footings, fascia, fasciaProductId, edgeBoardProductId, joistSpacingText, joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, breakersOn, frame, bom,
+    stairs, balustrade, braces: { count: braceCount, length: braceLength, lines: braceLines }, footings, slabs, fascia, fasciaProductId, edgeBoardProductId, joistSpacingText, joistSpacingCap, joistSpacingTarget, joistSetout, joistSetoutSpacing, breakersOn, frame, bom,
     warnings: compliance.warnings, pathway: compliance.pathway, method,
   };
 }

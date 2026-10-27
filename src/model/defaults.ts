@@ -58,6 +58,11 @@ export function defaultRules(): RuleSet {
     minBearerGap: 300,
     // bearers run out to the deck edge, under the edge joists
     bearerEndInset: 0,
+    slabEdgeInset: 75,
+    slabStumpClear: 50,
+    pedestalScrews: 2,
+    slabPadSize: 300,
+    slabPadDepth: 200,
     braceHeight: 1200,
     engineerHeight: 3000,
     lowDeckClearance: 400,

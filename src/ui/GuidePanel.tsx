@@ -1,7 +1,8 @@
 import { edges as polyEdges } from '../engine/geometry';
 import { productName, useT } from '../i18n';
 import { DECKING_PRODUCTS, PRODUCT_MAP } from '../model/catalog';
-import type { Project } from '../model/types';
+import { newId } from '../model/defaults';
+import type { Project, Pt, SlabArea } from '../model/types';
 import { useApp } from '../state';
 import { money } from '../utils/format';
 import { breakersForAxis, currentBreakers, nextBreakerId, suggestBreaker } from '../utils/breakers';
@@ -211,6 +212,7 @@ export function GuidePanel() {
           onChange={(v) => setParam('footingType', v)}
         />
         <p className="hint">{p.footingType === 'slab' ? t('g.groundHint.slab') : t('g.groundHint.stump', { dia: p.footingDiameter, depth: p.footingDepth })}</p>
+        {p.footingType !== 'slab' && <SlabAreas />}
       </section>
 
       <section className="gstep">
@@ -326,6 +328,61 @@ export function GuidePanel() {
       <button type="button" className="more" onClick={() => setUi({ advanced: true, panelTab: 'params' })}>
         {t('g.more')}
         <small>{t('g.moreHint')}</small>
+      </button>
+    </div>
+  );
+}
+
+/**
+ * Existing concrete under part of the deck (a patio slab): no stumps or bearers over it, the joists on pedestals.
+ * Each slab a rectangle measured from the deck's top left corner, with the deck's level above it.
+ */
+function SlabAreas() {
+  const { project, design, updateProject } = useApp();
+  const { t } = useT();
+  const slabs = project.slabs ?? [];
+  const o = design.bb;
+  const rectOf = (s: SlabArea) => {
+    const xs = s.poly.map((q) => q.x);
+    const ys = s.poly.map((q) => q.y);
+    return { x: Math.min(...xs) - o.minX, y: Math.min(...ys) - o.minY, w: Math.max(...xs) - Math.min(...xs), d: Math.max(...ys) - Math.min(...ys) };
+  };
+  const polyOf = (r: { x: number; y: number; w: number; d: number }): Pt[] => {
+    const x0 = o.minX + r.x;
+    const y0 = o.minY + r.y;
+    return [{ x: x0, y: y0 }, { x: x0 + r.w, y: y0 }, { x: x0 + r.w, y: y0 + r.d }, { x: x0, y: y0 + r.d }];
+  };
+  const change = (id: string, patch: Partial<SlabArea>) => updateProject((p) => ({ ...p, slabs: (p.slabs ?? []).map((s) => (s.id === id ? { ...s, ...patch } : s)) }), 'h.slab');
+  const add = () =>
+    updateProject(
+      (p) => ({ ...p, slabs: [...(p.slabs ?? []), { id: newId('S'), height: Math.min(p.params.deckHeight, 170), poly: polyOf({ x: 0, y: 0, w: Math.min(3000, o.width), d: Math.min(3000, o.height) }) }] }),
+      'h.slab',
+    );
+  return (
+    <div className="slabs">
+      <b>{t('g.slab.title')}</b>
+      <p className="hint">{t('g.slab.hint')}</p>
+      {slabs.map((s) => {
+        const r = rectOf(s);
+        const info = design.slabs.find((x) => x.id === s.id);
+        return (
+          <div key={s.id} className="slab-row">
+            <Num label={t('g.slab.x')} value={Math.round(r.x)} step={10} onChange={(v) => change(s.id, { poly: polyOf({ ...r, x: v }) })} />
+            <Num label={t('g.slab.y')} value={Math.round(r.y)} step={10} onChange={(v) => change(s.id, { poly: polyOf({ ...r, y: v }) })} />
+            <Num label={t('g.slab.w')} value={Math.round(r.w)} step={10} min={100} onChange={(v) => change(s.id, { poly: polyOf({ ...r, w: Math.max(100, v) }) })} />
+            <Num label={t('g.slab.d')} value={Math.round(r.d)} step={10} min={100} onChange={(v) => change(s.id, { poly: polyOf({ ...r, d: Math.max(100, v) }) })} />
+            <Num label={t('g.slab.height')} value={s.height} step={5} min={50} onChange={(v) => change(s.id, { height: Math.max(50, v) })} />
+            <div className="slab-foot">
+              <small>{info ? (info.productId ? t(info.pads ? 'g.slab.infoPads' : 'g.slab.info', { n: info.count, pads: info.pads, h: Math.round(info.pedestalHeight) }) : t(info.pedestalHeight < 30 ? 'compliance.slabTooLow' : 'compliance.slabTooHigh', { h: Math.round(info.pedestalHeight), height: s.height, joist: design.levels.joistD })) : ''}</small>
+              <button type="button" className="linkish" onClick={() => updateProject((p) => ({ ...p, slabs: (p.slabs ?? []).filter((x) => x.id !== s.id) }), 'h.slab')}>
+                {t('g.slab.remove')}
+              </button>
+            </div>
+          </div>
+        );
+      })}
+      <button type="button" className="btn" onClick={add}>
+        {t('g.slab.add')}
       </button>
     </div>
   );

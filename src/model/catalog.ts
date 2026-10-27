@@ -146,6 +146,11 @@ export const CATALOG: Product[] = [
   { id: 'triple-grip', category: 'hardware', name: { zh: 'Triple grip 框架连接件 HDG，估价', en: 'Triple grip framing anchor HDG, estimate' }, unit: 'ea', defaultPrice: 0.9 },
   { id: 'stirrup-hdg', category: 'hardware', name: { zh: '柱脚 stirrup HDG，估价', en: 'Post stirrup HDG, estimate' }, unit: 'ea', defaultPrice: 13.0 },
   { id: 'post-cap-hdg', category: 'hardware', name: { zh: '柱顶 bearer 连接件 HDG，估价', en: 'Post cap / bearer connector HDG, estimate' }, unit: 'ea', defaultPrice: 9.5 },
+  // adjustable deck pedestals standing on an existing slab, one under each joist at each row (the joist screwed to its head)
+  { id: 'pedestal-30-50', category: 'hardware', pedestal: [30, 50], name: { zh: '可调垫脚 pedestal 30–50 mm，估价', en: 'Adjustable deck pedestal 30–50 mm, estimate' }, unit: 'ea', defaultPrice: 3.9 },
+  { id: 'pedestal-45-75', category: 'hardware', pedestal: [45, 75], name: { zh: '可调垫脚 pedestal 45–75 mm，估价', en: 'Adjustable deck pedestal 45–75 mm, estimate' }, unit: 'ea', defaultPrice: 4.6 },
+  { id: 'pedestal-70-120', category: 'hardware', pedestal: [70, 120], name: { zh: '可调垫脚 pedestal 70–120 mm，估价', en: 'Adjustable deck pedestal 70–120 mm, estimate' }, unit: 'ea', defaultPrice: 5.9 },
+  { id: 'pedestal-115-200', category: 'hardware', pedestal: [115, 200], name: { zh: '可调垫脚 pedestal 115–200 mm，估价', en: 'Adjustable deck pedestal 115–200 mm, estimate' }, unit: 'ea', defaultPrice: 8.5 },
   { id: 'wire-kit', category: 'balustrade', name: { zh: '不锈钢拉线套件（每道线），估价', en: 'SS wire run kit (tensioner + terminals per run), estimate' }, unit: 'ea', defaultPrice: 28.0 },
   { id: 'wire-3.2-316', category: 'balustrade', name: { zh: '316 不锈钢钢丝 3.2mm，估价', en: '316 SS wire 3.2 mm, estimate' }, unit: 'm', defaultPrice: 2.4 },
   { id: 'weed-mat', category: 'consumable', name: { zh: '黑色防草布 / 地膜（按 m²），估价', en: 'Black weed mat / ground film (per m²), estimate' }, unit: 'm2', defaultPrice: 1.8 },
@@ -206,4 +211,5 @@ export function stockLengthsOf(prod: Product | undefined, rules?: { timberLength
 export const DECKING_PRODUCTS = CATALOG.filter((p) => p.isDecking);
 export const FRAMING_PRODUCTS = CATALOG.filter((p) => p.isFraming);
 export const POST_PRODUCTS = CATALOG.filter((p) => p.isPost);
+export const PEDESTAL_PRODUCTS = CATALOG.filter((p) => p.pedestal);
 export const CONCRETE_PRODUCTS = CATALOG.filter((p) => p.category === 'concrete');

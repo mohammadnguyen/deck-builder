@@ -887,3 +887,188 @@ describe('simple cutting, for a crew without a cut list', () => {
     expect(bearerLengths(p)).toBeGreaterThan(1);
   });
 });
+
+describe('existing concrete under part of the deck', () => {
+  /** the stepped job from the sketch: the 2900 and 11150 sides on brick walls, a slab in the corner (2.9 x 5.6 m)
+   *  170 below the deck, the ground off it about 300 below, joists hung flush there */
+  function sketch(): Project {
+    const across = 8610;
+    const p = newProject('sketch', false);
+    p.deck = normalizePolygon([
+      { x: 5710, y: 0 }, { x: across, y: 0 }, { x: across, y: 11150 }, { x: 0, y: 11150 },
+      { x: 0, y: 7620 }, { x: 2980, y: 7620 }, { x: 2980, y: 6940 }, { x: 5710, y: 6940 },
+    ]);
+    p.house = [[{ x: 5210, y: 0 }, { x: across, y: 0 }, { x: across, y: 11650 }]];
+    p.houseEdges = detectHouseEdges(p.deck, p.house);
+    p.slabs = [{ id: 'S1', height: 170, poly: [{ x: 5710, y: 0 }, { x: across, y: 0 }, { x: across, y: 5600 }, { x: 5710, y: 5600 }] }];
+    p.params.deckHeight = 300;
+    p.params.joistConnection = 'flush';
+    return p;
+  }
+  const inSlab = (q: { x: number; y: number }) => q.x > 5710 - 1 && q.x < 8610 + 1 && q.y > -1 && q.y < 5600 + 1;
+
+  it('puts no stump or bearer on the slab: the joists there stand on pedestals', () => {
+    const d = computeDesign(sketch());
+    const lay = d.layout!;
+    expect(d.ok).toBe(true);
+    expect(lay.posts.length).toBeGreaterThan(0);
+    expect(lay.posts.some((q) => inSlab(q.pt))).toBe(false);
+    for (const b of lay.bearers.filter((x) => !x.onWall)) expect(inSlab(b.seg.a) && inSlab(b.seg.b)).toBe(false);
+    // the deck stays bolted to the 2900 wall over the slab too: its wall bearer runs the whole wall
+    expect(lay.ledgers.map((l) => Math.round(l.length))).toEqual([2900]);
+    // a pedestal under every joist over the slab at every row, all of them on it
+    expect(lay.pedestals.length).toBeGreaterThan(0);
+    expect(lay.pedestals.every((q) => inSlab(q.pt))).toBe(true);
+    const rows = new Set(lay.pedestals.map((q) => Math.round(q.pt.y))).size;
+    const overSlab = lay.joists.filter((j) => j.seg.a.x > 5710 && j.seg.a.x < 8610);
+    expect(lay.pedestals.length).toBeGreaterThanOrEqual(overSlab.length * rows);
+    // the rows no further apart than a joist spans, the last one on the slab by its edge
+    const ys = [...new Set(lay.pedestals.map((q) => Math.round(q.pt.y)))].sort((a, b) => a - b);
+    for (let i = 1; i < ys.length; i++) expect(ys[i] - ys[i - 1]).toBeLessThanOrEqual(lay.maxJoistSpan);
+    expect(ys[ys.length - 1]).toBe(5600 - 75);
+  });
+
+  it('runs the joists on over the pedestals, hung only where they meet a bearer', () => {
+    const d = computeDesign(sketch());
+    const lay = d.layout!;
+    const j = lay.joists.find((x) => x.seg.a.x > 6000 && x.seg.a.x < 8000)!;
+    // from the wall bearer to the first bearer past the slab in pieces up to a stick, joined over a pedestal row
+    const firstBearer = Math.min(...lay.bearers.filter((b) => !b.onWall && Math.abs(b.seg.a.x - b.seg.b.x) > 1).map((b) => b.seg.a.y));
+    expect(firstBearer).toBeGreaterThan(5600);
+    let run = j.seg.a.y + 45 / 2;
+    let k = 0;
+    while (run < firstBearer - 45 / 2 - 1) run += j.pieces[k++];
+    expect(run).toBeCloseTo(firstBearer - 45 / 2, 0);
+    // its joins there are over pedestal rows, on the slab
+    expect(j.splices.slice(0, k - 1).every((y) => y < 5600)).toBe(true);
+    expect(j.pieces.every((x) => x <= 6000)).toBe(true);
+    // a hanger each side of every bearer it meets (one at the wall bearer and at the last), none on the slab
+    const hung = lay.bearers.filter((b) => b.seg.a.x <= j.seg.a.x + 1 && b.seg.b.x >= j.seg.a.x - 1).length;
+    expect(j.hangers).toBe(2 * hung - 2);
+  });
+
+  it('orders the pedestals that set to the slab, no stumps or concrete for it, weed mat off it only', () => {
+    const p = sketch();
+    const d = computeDesign(p);
+    expect(d.slabs).toEqual([{ id: 'S1', height: 170, pedestalHeight: 170 - 23 - 90, productId: 'pedestal-45-75', count: d.layout!.pedestals.length, pads: 0 }]);
+    const line = (id: string) => d.bom.lines.find((l) => l.productId === id);
+    expect(line('pedestal-45-75')!.qty).toBe(d.layout!.pedestals.length);
+    expect(line('screw-deck-10gx50')!.qty).toBe(d.layout!.pedestals.length * 2);
+    const without = computeDesign({ ...p, slabs: [] });
+    expect(d.layout!.posts.length).toBeLessThan(without.layout!.posts.length);
+    expect(d.footings.bags).toBeLessThan(without.footings.bags);
+    expect(line('weed-mat')!.qty).toBe(Math.ceil((d.areaM2 - 2.9 * 5.6) * 1.1));
+    expect(d.method.some((m) => m.key === 'm.pedestals')).toBe(true);
+    expect(d.warnings.some((w) => w.key === 'compliance.pedestals')).toBe(true);
+  });
+
+  it('stands the joists on pedestals over a slab when they sit on the bearers too', () => {
+    const p = sketch();
+    p.params.joistConnection = 'onTop';
+    p.params.deckHeight = 450;
+    const d = computeDesign(p);
+    const lay = d.layout!;
+    expect(lay.posts.some((q) => inSlab(q.pt))).toBe(false);
+    expect(lay.pedestals.length).toBeGreaterThan(0);
+    // the crossings nailed are the bearers' only
+    const overSlab = lay.joists.filter((j) => j.seg.a.x > 5710 && j.seg.a.x < 8610);
+    const bearerLines = (x: number) => lay.bearers.filter((b) => b.seg.a.x <= x + 1 && b.seg.b.x >= x - 1).length;
+    for (const j of overSlab) expect(j.bearerCrossings).toBeLessThanOrEqual(bearerLines(j.seg.a.x) + j.splices.length);
+  });
+
+  it('a deck all on a slab: pedestals only, no stumps, bearers or concrete', () => {
+    const p = newProject('patio', false);
+    p.deck = [{ x: 0, y: 0 }, { x: 4000, y: 0 }, { x: 4000, y: 3000 }, { x: 0, y: 3000 }];
+    p.houseEdges = [];
+    p.house = [];
+    p.slabs = [{ id: 'S1', height: 160, poly: [{ x: -100, y: -100 }, { x: 4100, y: -100 }, { x: 4100, y: 3100 }, { x: -100, y: 3100 }] }];
+    const d = computeDesign(p);
+    expect(d.layout!.bearers).toEqual([]);
+    expect(d.layout!.posts).toEqual([]);
+    expect(d.footings.bags).toBe(0);
+    expect(d.layout!.pedestals.length).toBeGreaterThan(0);
+    expect(d.method.some((m) => m.key.startsWith('m.footings') || m.key.startsWith('m.posts') || m.key.startsWith('m.bearers'))).toBe(false);
+  });
+
+  /** a free-standing 4 x 3 m deck, joists along y, over a slab (x0..x1 by y0..y1) */
+  function patio(slabs: [number, number, number, number][]): Project {
+    const p = newProject('patio', false);
+    p.deck = [{ x: 0, y: 0 }, { x: 4000, y: 0 }, { x: 4000, y: 3000 }, { x: 0, y: 3000 }];
+    p.houseEdges = [];
+    p.house = [];
+    p.params.boardAxis = 'x';
+    p.params.deckHeight = 300;
+    p.slabs = slabs.map(([x0, y0, x1, y1], k) => ({ id: `S${k + 1}`, height: 170, poly: [{ x: x0, y: y0 }, { x: x1, y: y0 }, { x: x1, y: y1 }, { x: x0, y: y1 }] }));
+    return p;
+  }
+  /** how far a point is from a slab rectangle (0 on it) */
+  const away = (q: { x: number; y: number }, [x0, y0, x1, y1]: [number, number, number, number]) => Math.hypot(Math.max(x0 - q.x, 0, q.x - x1), Math.max(y0 - q.y, 0, q.y - y1));
+  /** every joist held at each support line it crosses: by a bearer, or a pedestal under it there */
+  function heldAtEveryLine(d: ReturnType<typeof computeDesign>) {
+    const lay = d.layout!;
+    for (const j of lay.joists) {
+      const x = j.seg.a.x;
+      for (const s of lay.supports) {
+        if (s.pos < Math.min(j.seg.a.y, j.seg.b.y) - 1 || s.pos > Math.max(j.seg.a.y, j.seg.b.y) + 1) continue;
+        const bearer = lay.bearers.some((b) => Math.abs(b.seg.a.y - s.pos) < 1 && x >= Math.min(b.seg.a.x, b.seg.b.x) - 1 && x <= Math.max(b.seg.a.x, b.seg.b.x) + 1);
+        const pedestal = lay.pedestals.some((q) => Math.abs(q.pt.y - s.pos) < 1 && Math.abs(q.pt.x - x) <= 45);
+        expect(bearer || pedestal).toBe(true);
+      }
+    }
+  }
+
+  it('the deck a little past a slab: the joists there stand on pedestals on pads beside it, no stump', () => {
+    // the slab stops 100 short of the deck's right edge: too little ground there for a stump clear of it
+    const p = patio([[-100, -100, 3900, 3100]]);
+    const d = computeDesign(p);
+    const lay = d.layout!;
+    expect(lay.posts).toEqual([]);
+    const pads = lay.pedestals.filter((q) => q.pad);
+    expect(pads.length).toBeGreaterThan(0);
+    for (const q of pads) expect(q.pt.x).toBeGreaterThan(3900);
+    expect(lay.pedestals.filter((q) => !q.pad).every((q) => q.pt.x <= 3900)).toBe(true);
+    heldAtEveryLine(d);
+    expect(d.slabs[0].pads).toBe(pads.length);
+    expect(d.warnings.some((w) => w.key === 'layout.slabPads')).toBe(true);
+    // the pads' concrete ordered: 300 square and 200 deep each
+    expect(d.footings.bags).toBe(Math.ceil((pads.length * 0.3 * 0.3 * 0.2) / p.rules.concreteBagYield));
+    expect(d.method.find((m) => m.key === 'm.pedestals')!.notes.some((n) => n.key === 'm.pedestals.n3')).toBe(true);
+  });
+
+  it('ground beside a slab wide enough for a stump: the stump keeps clear of the slab, the bearer on to its edge', () => {
+    const slab: [number, number, number, number] = [-100, -100, 3700, 3100];
+    const d = computeDesign(patio([slab]));
+    const lay = d.layout!;
+    expect(lay.pedestals.some((q) => q.pad)).toBe(false);
+    expect(lay.posts.length).toBeGreaterThan(0);
+    for (const q of lay.posts) expect(away(q.pt, slab)).toBeGreaterThanOrEqual(149);
+    for (const b of lay.bearers) expect(Math.min(b.seg.a.x, b.seg.b.x)).toBeCloseTo(3700, 0);
+    heldAtEveryLine(d);
+  });
+
+  it('two slabs close together: no stump comes near either, the joists between them held', () => {
+    // the row on the second slab runs on past it, 125 beside the first: no stump there, pads beside the first slab
+    const slabs: [number, number, number, number][] = [[-100, -100, 2600, 1400], [1500, 1450, 4100, 3100]];
+    const p = patio(slabs);
+    for (const axis of ['x', 'y'] as const) {
+      p.params.boardAxis = axis;
+      const d = computeDesign(p);
+      for (const q of d.layout!.posts) for (const s of slabs) expect(away(q.pt, s)).toBeGreaterThanOrEqual(149);
+      expect(d.warnings.some((w) => w.key === 'layout.stumpAtSlab')).toBe(false);
+      for (const q of d.layout!.pedestals.filter((x) => x.pad)) expect(Math.min(...slabs.map((s) => away(q.pt, s)))).toBeLessThan(150);
+      if (axis === 'x') {
+        expect(d.layout!.pedestals.some((q) => q.pad)).toBe(true);
+        heldAtEveryLine(d);
+      }
+    }
+  });
+
+  it('says so when the slab is too close below the deck for a pedestal', () => {
+    const p = sketch();
+    p.slabs![0].height = 120;
+    const d = computeDesign(p);
+    expect(d.slabs[0].productId).toBeNull();
+    expect(d.warnings[0]).toMatchObject({ severity: 'error', key: 'compliance.slabTooLow' });
+  });
+});
+

@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { computeDesign } from '../../engine';
+import { computeDesign, type DesignResult } from '../../engine';
 import { newProject } from '../../model/defaults';
 import type { Project } from '../../model/types';
 import { migrateProject } from '../../state';
 import { supplierOrderText } from '../order';
-import { asCalculated, withAdded, withNote, withoutLine, withPrice, withQty, withStock } from '../orderEdits';
+import { asCalculated, cutCount, withAdded, withNote, withoutLine, withPrice, withQty, withStock } from '../orderEdits';
 
 const line = (p: Project, key: string) => computeDesign(p).bom.lines.find((l) => l.key === key)!;
 const apply = (p: Project, patch: Partial<Project>): Project => ({ ...p, ...patch });
@@ -144,7 +144,102 @@ describe('order list edits', () => {
     delete p.order;
     expect(migrateProject(JSON.parse(JSON.stringify(p))).order).toBeNull();
     const bad = migrateProject({ ...JSON.parse(JSON.stringify(p)), order: { lines: 'x', added: 'y' } });
-    expect(bad.order).toEqual({ lines: {}, added: [], note: undefined });
+    expect(bad.order).toBeNull();
     expect(computeDesign(bad).ok).toBe(true);
   });
+
+  it('drops timber counts typed in before, so the order follows the cutting diagrams again', () => {
+    // a saved order from before: the joists typed in as 42 x 5.4 and the posts as 9, two other changes
+    const saved = {
+      ...JSON.parse(JSON.stringify(newProject('p', true))),
+      order: { lines: { 'tp-90x45': { stock: { '5400': 42 } }, 'post-100x100-h4': { stock: { '3000': 9 } }, 'weed-mat': { removed: true }, 'screw-colour-10gx65': { qty: 300 } }, added: [], note: 'side gate' },
+    };
+    const p = migrateProject(saved);
+    expect(p.order).toEqual({ lines: { 'weed-mat': { removed: true }, 'screw-colour-10gx65': { qty: 300 } }, added: [], note: 'side gate' });
+    const d = computeDesign(p);
+    const joist = d.bom.lines.find((l) => l.productId === 'tp-90x45')!;
+    expect(joist.edited).toBeFalsy();
+    expect(joist.stockBreakdown).toEqual(computeDesign({ ...p, order: null }).bom.lines.find((l) => l.productId === 'tp-90x45')!.stockBreakdown);
+    // only timber typed in goes: nothing left changed by hand is no order at all
+    expect(migrateProject({ ...saved, order: { lines: { 'tp-90x45': { stock: { '5400': 42 } } }, added: [] } }).order).toBeNull();
+  });
 });
+
+describe('the order follows the cutting diagrams', () => {
+  const rect = (w: number, h: number): Project => {
+    const p = newProject('r', true);
+    p.deck = [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }];
+    p.houseEdges = [0];
+    p.house = [[{ x: -500, y: 0 }, { x: w + 500, y: 0 }]];
+    p.stairs = [];
+    return p;
+  };
+  const shop = (axis: 'x' | 'y'): Project => {
+    const p = newProject('shop', true);
+    p.deck = [{ x: 0, y: 0 }, { x: 10650, y: 0 }, { x: 10650, y: 7800 }, { x: 6100, y: 7800 }, { x: 6100, y: 2350 }, { x: 0, y: 2350 }];
+    p.houseEdges = [0, 5];
+    p.house = [[{ x: -1500, y: 0 }, { x: 12150, y: 0 }]];
+    p.stairs = [];
+    p.params.boardAxis = axis;
+    return p;
+  };
+  /** sticks per length on the cutting diagram (the cut, then the spare drawn whole) */
+  const drawn = (d: DesignResult, id: string): Record<number, number> => {
+    const m: Record<number, number> = {};
+    for (const g of d.bom.cutlists.find((c) => c.productId === id)!.groups) m[g.stock] = (m[g.stock] ?? 0) + g.count;
+    for (const s of d.bom.lines.find((l) => l.productId === id && !l.addedId)?.spareStock ?? []) m[s.length] = (m[s.length] ?? 0) + s.count;
+    return m;
+  };
+  const ordered = (d: DesignResult, id: string): Record<number, number> =>
+    Object.fromEntries((d.bom.lines.find((l) => l.productId === id && !l.addedId)!.stockBreakdown ?? []).map((s) => [s.length, s.count]));
+
+  it('orders every length and count the cutting diagrams draw, and nothing else', () => {
+    for (const p of [newProject('s', true), rect(7200, 4200), shop('x'), shop('y')]) {
+      for (const cutting of ['simple', 'cheapest'] as const) {
+        const q = { ...p, rules: { ...p.rules, cutting } };
+        const d = computeDesign(q);
+        const text = supplierOrderText(q, d, 'en');
+        for (const c of d.bom.cutlists) {
+          expect(ordered(d, c.productId)).toEqual(drawn(d, c.productId));
+          const l = d.bom.lines.find((x) => x.productId === c.productId)!;
+          expect(l.qty).toBe(Object.values(drawn(d, c.productId)).reduce((a, b) => a + b, 0));
+          expect(text).toContain(l.stockBreakdown!.map((s) => `${(s.length / 1000).toFixed(1)}m x ${s.count}`).join(', '));
+        }
+      }
+    }
+  });
+
+  it('takes more by hand as spares, never fewer than the cut, and keeps them when the deck changes', () => {
+    let p = rect(7200, 4200);
+    p.params.frameSizing = 'fixed';
+    const joist = line(p, 'tp-90x45');
+    const [first] = joist.cutStock!;
+    // fewer than the cut: the cut is ordered, with no spare of that length
+    p = apply(p, { order: withStock(p, joist, first.length, 1) });
+    let l = line(p, 'tp-90x45');
+    expect(l.stockBreakdown!.find((s) => s.length === first.length)!.count).toBe(cutCount(l, first.length));
+    // three over the cut: three spare sticks of that length, drawn whole on the cutting diagram
+    p = apply(p, { order: withStock(p, l, first.length, cutCount(l, first.length) + 3) });
+    l = line(p, 'tp-90x45');
+    expect(l.edited).toBe(true);
+    expect(l.spareStock!.find((s) => s.length === first.length)!.count).toBe(3);
+    expect(ordered(computeDesign(p), 'tp-90x45')).toEqual(drawn(computeDesign(p), 'tp-90x45'));
+    // the deck grows: the order is the new cut and the same spares
+    const bigger = { ...p, deck: p.deck.map((q) => ({ x: q.x, y: q.y > 0 ? q.y + 1500 : q.y })) };
+    const b = line(bigger, 'tp-90x45');
+    expect(b.cutStock).not.toEqual(l.cutStock);
+    expect(b.spareStock).toEqual(l.spareStock);
+    expect(ordered(computeDesign(bigger), 'tp-90x45')).toEqual(drawn(computeDesign(bigger), 'tp-90x45'));
+  });
+
+  it('adds timber taken off the order as a line of its own, not the whole cut back', () => {
+    let p = newProject('s', true);
+    p = apply(p, { order: withoutLine(p, line(p, 'tp-140x45')) });
+    const r = withAdded(p, computeDesign(p), { productId: 'tp-140x45', qty: 2, length: 4800 });
+    p = apply(p, { order: r.order });
+    const d = computeDesign(p);
+    expect(d.bom.removed.map((x) => x.productId)).toEqual(['tp-140x45']);
+    expect(d.bom.lines.find((x) => x.key === r.key)!.stockBreakdown).toEqual([{ length: 4800, count: 2 }]);
+  });
+});
+

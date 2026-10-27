@@ -25,7 +25,11 @@ export interface BomLine {
   unit: Unit;
   /** purchase quantity: number of stock pieces for 'm' products, otherwise units */
   qty: number;
+  /** stock lengths ordered (timber cut on the cutting diagrams: the cut plus the spare, length for length) */
   stockBreakdown?: { length: number; count: number }[];
+  /** timber cut on the cutting diagrams: the sticks the cut takes, and the whole sticks over it */
+  cutStock?: { length: number; count: number }[];
+  spareStock?: { length: number; count: number }[];
   requiredLm?: number;
   purchasedLm?: number;
   cutWastePct?: number;
@@ -34,7 +38,7 @@ export interface BomLine {
   unitPrice: number;
   total: number;
   tags: string[];
-  /** quantity changed by hand; the calculated quantity and stock lengths are kept for reference */
+  /** quantity changed by hand (timber: the spare); the calculated quantity and stock lengths are kept for reference */
   edited?: boolean;
   calcQty?: number;
   calcStock?: { length: number; count: number }[];
@@ -81,6 +85,13 @@ export interface BomResult {
 
 const CATEGORY_ORDER: ProductCategory[] = ['decking', 'framing', 'post', 'balustrade', 'hardware', 'concrete', 'consumable', 'other'];
 
+/** two lists of stock lengths added together, longest first */
+export function addStock(a: { length: number; count: number }[], b: { length: number; count: number }[]): { length: number; count: number }[] {
+  const m = new Map<number, number>();
+  for (const s of [...a, ...b]) m.set(s.length, (m.get(s.length) ?? 0) + s.count);
+  return [...m].map(([length, count]) => ({ length, count })).filter((s) => s.count > 0).sort((p, q) => q.length - p.length);
+}
+
 /** stock lengths from a hand-edited map, longest first, empty entries dropped */
 export function stockFromMap(map: Record<string, number> | undefined): { length: number; count: number }[] {
   return Object.entries(map ?? {})
@@ -94,7 +105,8 @@ export function buildBom(
   counts: CountItem[],
   prices: Record<string, number>,
   rules: RuleSet,
-  /** spare boards per decking, edge board and fascia product (framing and posts take wasteFramingPct) */
+  /** spare boards per decking, edge board and fascia product (framing and posts take wasteFramingPct); the order's
+   *  hand edits can set another spare for a line */
   boardSpares: Record<string, number>,
   wasteFramingPct: number,
   gstPct: number,
@@ -127,12 +139,15 @@ export function buildBom(
     const requiredLm = pack.totalPieceLength / 1000;
     const pct = prod.category === 'decking' ? undefined : wasteFramingPct;
     const count = pack.bins.length;
-    const extraCount = pct === undefined ? Math.max(0, Math.round(boardSpares[productId] ?? 0)) : Math.round((count * pct) / 100);
-    const breakdown = pack.stockCount.map((s) => ({ ...s }));
-    if (extraCount > 0 && breakdown.length) {
-      const common = [...breakdown].sort((p, q) => q.count - p.count)[0];
-      common.count += extraCount;
-    }
+    // the order is the cut, length for length, and the spare on top: the company's (boards by count, framing by per
+    // cent, whole sticks of the length most cut) unless another was set by hand for this line
+    const cutStock = pack.stockCount.map((s) => ({ ...s }));
+    const ruleCount = pct === undefined ? Math.max(0, Math.round(boardSpares[productId] ?? 0)) : Math.round((count * pct) / 100);
+    const ruleSpare = ruleCount > 0 && cutStock.length ? [{ length: [...cutStock].sort((p, q) => q.count - p.count)[0].length, count: ruleCount }] : [];
+    const hand = opts.edits?.lines?.[productId]?.spare;
+    const spareStock = hand ? stockFromMap(hand) : ruleSpare;
+    const extraCount = spareStock.reduce((n, s) => n + s.count, 0);
+    const breakdown = addStock(cutStock, spareStock);
     const purchasedLm = breakdown.reduce((s, b) => s + (b.length * b.count) / 1000, 0);
     const unitPrice = priceOf(productId);
     lines.push({
@@ -141,6 +156,8 @@ export function buildBom(
       unit: prod.unit,
       qty: count + extraCount,
       stockBreakdown: breakdown,
+      cutStock,
+      spareStock,
       requiredLm,
       purchasedLm,
       cutWastePct: pack.wastePct,
@@ -150,6 +167,7 @@ export function buildBom(
       total: prod.unit === 'm' ? purchasedLm * unitPrice : (count + extraCount) * unitPrice,
       tags: [...new Set(list.map((p) => p.tag))],
       key: productId,
+      ...(hand ? { edited: true, calcQty: count + ruleCount, calcStock: addStock(cutStock, ruleSpare) } : {}),
     });
     const uses = new Map<number, Set<string>>();
     for (const pc of list) {
@@ -198,11 +216,9 @@ export function buildBom(
         lines.splice(i, 1);
         continue;
       }
-      if (l.unit === 'm' && e.stock) {
-        const breakdown = stockFromMap(e.stock);
-        const purchasedLm = breakdown.reduce((s, b) => s + (b.length * b.count) / 1000, 0);
-        lines[i] = { ...l, edited: true, calcQty: l.qty, calcStock: l.stockBreakdown, stockBreakdown: breakdown, qty: breakdown.reduce((s, b) => s + b.count, 0), purchasedLm, extraCount: undefined, total: purchasedLm * l.unitPrice };
-      } else if (l.unit !== 'm' && typeof e.qty === 'number' && Number.isFinite(e.qty)) {
+      // timber cut on the cutting diagrams is ordered as cut, its spare set above
+      if (l.cutStock) continue;
+      if (l.unit !== 'm' && typeof e.qty === 'number' && Number.isFinite(e.qty)) {
         const qty = Math.max(0, e.qty);
         lines[i] = { ...l, edited: true, calcQty: l.qty, qty, total: qty * l.unitPrice };
       }

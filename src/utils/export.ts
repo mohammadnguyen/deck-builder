@@ -64,6 +64,9 @@ export async function exportXlsx(project: Project, design: DesignResult, lang: L
   const cut: (string | number)[][] = [[t('cut.product'), t('cut.stock'), t('cut.count'), t('cut.cuts'), t('cut.offcut')]];
   for (const c of design.bom.cutlists) {
     for (const g of c.groups) cut.push([productName(c.productId, lang), g.stock, g.count, g.cuts.join(' + '), Math.round(g.offcut)]);
+    // the spare sticks, whole: the rows add up to the order, length for length
+    const line = design.bom.lines.find((l) => l.productId === c.productId && !l.addedId);
+    for (const s of line?.spareStock ?? []) cut.push([productName(c.productId, lang), s.length, s.count, t('cutd.spareRow'), '']);
   }
   XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(cut), 'CutList');
 

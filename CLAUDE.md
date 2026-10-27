@@ -49,6 +49,10 @@ owner can change rather than a hidden constant.
   switch); a board running on past an inside corner is notched round it when the strip past the corner is too
   short to lay on its own.
 - Spares on the order: 3 decking boards and 1 of each edge board / fascia product (per job); framing by per cent.
+- The order follows the cutting diagrams: timber is ordered in exactly the lengths and counts the diagrams cut, plus
+  the spares, which the diagrams draw as whole sticks, so the rows add up to the order length for length. By hand a
+  timber line only takes more spares, never fewer than the cut; timber counts typed in before (they could leave the
+  drawings behind) are dropped when a project loads.
 - Stairs to the NCC from the deck height; the last ripped board row is marked; the order list is editable.
 
 ## Drawings (owner's ask)

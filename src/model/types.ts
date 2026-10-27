@@ -151,6 +151,14 @@ export interface RuleSet {
   postEndSetback: number;
   minBearerGap: number;
   bearerEndInset: number;
+  /** over a slab: the pedestal row along a slab edge sits this far in from it; a stump hole beside a slab clears its
+   *  edge by this much; screws fixing a joist to each pedestal head; where the deck runs past a slab by too little for
+   *  a stump, the pads poured beside the slab for the pedestals there (square, and deep) */
+  slabEdgeInset?: number;
+  slabStumpClear?: number;
+  pedestalScrews?: number;
+  slabPadSize?: number;
+  slabPadDepth?: number;
   braceHeight: number;
   engineerHeight: number;
   lowDeckClearance: number;
@@ -245,6 +253,8 @@ export interface Product {
   isDecking?: boolean;
   /** true when the product may be chosen as joist / bearer */
   isFraming?: boolean;
+  /** an adjustable deck pedestal: the heights it sets to (mm) */
+  pedestal?: [number, number];
   isPost?: boolean;
   /** framing pine bought in the lengths the yard stocks (the rule set's timber lengths) */
   yardLengths?: boolean;
@@ -271,6 +281,16 @@ export interface OrderLineEdit {
   /** timber cut on the cutting diagrams: the spare set by hand (length in mm -> pieces over the cut). The order is
    *  always the cut itself, length for length, plus the spare. */
   spare?: Record<string, number>;
+}
+
+/** Existing concrete under part of the deck (a patio slab against the house): no stumps or bearers over it, the joists
+ *  sit on adjustable pedestals standing on the slab. */
+export interface SlabArea {
+  id: string;
+  /** outline on the plan (mm, the deck's coordinates) */
+  poly: Pt[];
+  /** finished deck level above the slab (mm) */
+  height: number;
 }
 
 /** An item added to the order by hand: a catalogue product, or anything else by name. */
@@ -322,4 +342,6 @@ export interface Project {
   breakers?: BreakerLayout | null;
   /** hand changes to the order list; null / absent = as calculated */
   order?: OrderEdits | null;
+  /** existing concrete under part of the deck: the joists sit on pedestals there, no bearers or stumps */
+  slabs?: SlabArea[];
 }

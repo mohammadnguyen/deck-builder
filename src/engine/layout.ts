@@ -1,5 +1,5 @@
 import type { Axis, BreakerLayout, DeckParams, Pt, RuleSet, Seg } from '../model/types';
-import { bbox, clipHorizontal, clipVertical, edges, pointInPolygon, swapPoly, swapPt, validatePolygon, type Edge } from './geometry';
+import { bbox, clipHorizontal, clipVertical, edges, mergeIntervals, pointInPolygon, projectOnEdge, swapPoly, swapPt, validatePolygon, type Edge } from './geometry';
 import { bestBreakerSplit } from './breakerplan';
 import { packedLength, runOn, simpleLength, splitRun, splitRunStocked } from './cutlist';
 import type { WarningItem } from './warnings';
@@ -28,7 +28,8 @@ export interface BearerRun {
 
 export interface SupportLine {
   pos: number;
-  kind: 'edge' | 'house' | 'inter' | 'wall';
+  /** slab: along a slab edge inside the deck, on the slab, where the joists change from pedestals to bearers */
+  kind: 'edge' | 'house' | 'inter' | 'wall' | 'slab';
   edgeIndex?: number;
 }
 
@@ -191,6 +192,10 @@ export interface LayoutResult {
   /** polygon the field boards fill (deck outline inset behind the edge boards) */
   fieldPoly: Pt[];
   ledgers: Ledger[];
+  /** over a slab: a pedestal under each joist at each support line (on slab `slab`), and the rows they stand in; where
+   *  the deck runs past a slab by too little for a stump, a pedestal on a pad poured beside the slab, level with it */
+  pedestals: { pt: Pt; slab: number; pad?: boolean }[];
+  pedestalRows: Seg[];
   attachment: 'freestanding' | 'wall';
   maxJoistSpan: number;
   joistSpanUsed: number;
@@ -217,6 +222,8 @@ export interface LayoutResult {
     breakerLm: number;
     breakerPieces: number;
     breakerScrews: number;
+    pedestals: number;
+    pads: number;
   };
 }
 
@@ -258,6 +265,9 @@ export interface LayoutContext {
   postWidth?: number;
   /** framing cut simply (each stick into one length): what a stocked length more must save, mm of joist / bearer */
   simpleCutting?: { joist: number; bearer: number };
+  /** existing concrete under part of the deck (outlines): no bearers or stumps over it, the joists sit on a pedestal at
+   *  each support line */
+  slabs?: Pt[][];
 }
 
 /**
@@ -359,6 +369,9 @@ export interface FramePlan {
   /** joist length, and joists crossing (or hung from) bearers */
   joistLm: number;
   crossings: number;
+  /** pedestals on each slab, and the pads beside the slabs some of them stand on */
+  pedestals: number[];
+  pads: number;
 }
 
 export function computeLayout(polyIn: Pt[], houseEdges: number[], params: DeckParams, rules: RuleSet, ctx: LayoutContext): LayoutResult {
@@ -458,6 +471,9 @@ function layoutImpl(
   const ebw = ctx.edgeBoardWidth || bw;
   const gap = ctx.boardGap;
   const jt = ctx.joistThickness;
+  // ---- existing concrete under part of the deck: pedestals there instead of bearers and stumps ----
+  const slabs = (ctx.slabs ?? []).map((s) => (swapped ? swapPoly(s) : s)).filter((s) => s.length >= 3);
+  const slabRanges = (y: number): [number, number][] => slabs.flatMap((s) => clipHorizontal(s, y)).sort((p, q) => p[0] - q[0]);
 
   // ---- picture-frame edge boards: field polygon inset behind them ----
   let edgeBoardOn = ctx.edgeBoard && E.some(exposed);
@@ -783,13 +799,30 @@ function layoutImpl(
       : ctx.flush ? Math.max(ctx.bearerWidth / 2, 45) : rules.bearerEdgeInset;
     lines.push({ pos: e.a.y - e.outward.y * inset, kind: isHouse ? 'house' : 'edge', edgeIndex: e.index });
   }
+  // a slab edge across the joists inside the deck: a pedestal row just on the slab, where the joists change from
+  // pedestals to bearers; the lines beyond are spaced from it
+  for (const s of slabs) {
+    for (const e of edges(s)) {
+      if (e.axis !== 'x') continue;
+      const x0 = Math.min(e.a.x, e.b.x);
+      const x1 = Math.max(e.a.x, e.b.x);
+      if (!clipHorizontal(poly, e.a.y + e.outward.y * 10).some(([a, b]) => Math.min(b, x1) - Math.max(a, x0) > 100)) continue;
+      lines.push({ pos: e.a.y - e.outward.y * (rules.slabEdgeInset ?? 75), kind: 'slab' });
+    }
+  }
   lines.sort((p, q) => p.pos - q.pos);
   const mergedLines: SupportLine[] = [];
   for (const l of lines) {
     const last = mergedLines[mergedLines.length - 1];
     if (last && last.kind !== 'wall' && l.kind !== 'wall' && l.pos - last.pos < rules.minBearerGap) {
-      last.pos = (last.pos + l.pos) / 2;
-      if (l.kind === 'house') last.kind = 'house';
+      // a slab edge's row keeps its place on the slab
+      if (l.kind === 'slab') {
+        last.pos = l.pos;
+        last.kind = 'slab';
+      } else if (last.kind !== 'slab') {
+        last.pos = (last.pos + l.pos) / 2;
+        if (l.kind === 'house') last.kind = 'house';
+      }
       continue;
     }
     if (last && Math.abs(l.pos - last.pos) < 1) continue;
@@ -818,7 +851,93 @@ function layoutImpl(
   const bearers: BearerRun[] = [];
   let maxBearerSpanUsed = 0;
   let bearerCounter = 0;
-  const bearerJobs: { index: number; xs: number; xe: number; postXs: number[]; onWall: boolean }[] = [];
+  const bearerJobs: { index: number; xs: number; xe: number; postXs: number[]; onWall: boolean; keep: [number, number][] }[] = [];
+  // over a slab a line is a row of pedestals, one under each joist; the bearer only where there is ground (the parts,
+  // each end that stops at a slab marked). Where the ground beside a slab is too narrow for a stump clear of it, the
+  // joists there stand on pedestals on pads poured beside the slab, level with it (`pad`: that slab; -1 for a row on
+  // the slab itself)
+  const pedestalRows: { y: number; x0: number; x1: number; pad: number }[] = [];
+  const offSlab = (iv: [number, number], y: number): { iv: [number, number]; slabS: boolean; slabE: boolean }[] => {
+    let parts = [{ iv: [iv[0], iv[1]] as [number, number], slabS: false, slabE: false }];
+    for (const [a, b] of slabRanges(y)) {
+      parts = parts.flatMap((p) => {
+        if (b <= p.iv[0] || a >= p.iv[1]) return [p];
+        const out: typeof parts = [];
+        if (a > p.iv[0]) out.push({ iv: [p.iv[0], a], slabS: p.slabS, slabE: true });
+        if (b < p.iv[1]) out.push({ iv: [b, p.iv[1]], slabS: true, slabE: p.slabE });
+        return out;
+      });
+    }
+    return parts;
+  };
+  let bearerAtSlab = false;
+  let padStrip = 0;
+  // a bearer end sits fully on its stump (the stump's outer face under the bearer end); a stump's hole keeps clear of
+  // every slab, a bearer end beside one running on past its stump by at most that clearance
+  const endSet = (ctx.postWidth ?? 100) / 2 + rules.postEndSetback;
+  const slabSet = Math.max(endSet, params.footingDiameter / 2 + (rules.slabStumpClear ?? 50));
+  const slabEdges = slabs.map((s) => edges(s));
+  /** the slab nearest a point (the one a pad beside it is level with) */
+  const nearestSlab = (x: number, y: number): number => {
+    let best = 0;
+    let bestD = Infinity;
+    slabs.forEach((s, k) => {
+      const d = pointInPolygon({ x, y }, s) ? 0 : Math.min(...slabEdges[k].map((e) => projectOnEdge(e, { x, y }).d));
+      if (d < bestD) {
+        bestD = d;
+        best = k;
+      }
+    });
+    return best;
+  };
+  /** the stretches of support line y where a stump would stand on a slab, or its hole come too close to one */
+  const keepOut = (y: number): [number, number][] => {
+    const out: [number, number][] = slabs.flatMap((s) => clipHorizontal(s, y));
+    for (const es of slabEdges) {
+      for (const e of es) {
+        const dy = Math.max(Math.min(e.a.y, e.b.y) - y, 0, y - Math.max(e.a.y, e.b.y));
+        if (dy >= slabSet) continue;
+        const w = Math.sqrt(slabSet * slabSet - dy * dy);
+        out.push([Math.min(e.a.x, e.b.x) - w, Math.max(e.a.x, e.b.x) + w]);
+      }
+    }
+    return mergeIntervals(out);
+  };
+  /** the stretches of [lo, hi] clear of `keep` (a stretch may be a single point) */
+  const clearOf = (lo: number, hi: number, keep: [number, number][]): [number, number][] => {
+    const out: [number, number][] = [];
+    let cur = lo;
+    for (const [a, b] of keep) {
+      if (b <= cur) continue;
+      if (a >= hi) break;
+      if (a >= cur) out.push([cur, a]);
+      cur = b;
+    }
+    if (cur <= hi) out.push([cur, hi]);
+    return out;
+  };
+  /** stumps from the first clear spot to the last, at most a span apart and each on clear ground: evenly spaced where
+   *  that keeps them clear, otherwise each as far on as it can go */
+  const stumpsOn = (free: [number, number][], span: number): number[] => {
+    const first = free[0][0];
+    const last = free[free.length - 1][1];
+    const n = Math.max(1, Math.ceil((last - first) / span - 1e-9));
+    const even = Array.from({ length: n + 1 }, (_, k) => first + ((last - first) * k) / n);
+    if (even.every((x) => free.some(([a, b]) => x >= a - 0.5 && x <= b + 0.5))) return even;
+    const out = [first];
+    let cur = first;
+    while (last - cur > span + 0.5) {
+      let next = cur;
+      for (const [a, b] of free) if (a <= cur + span + 0.5) next = Math.max(next, Math.min(b, cur + span));
+      if (next <= cur + 0.5) break;
+      out.push(next);
+      cur = next;
+    }
+    // the last one too close behind the one before (their holes would run together): that one goes
+    if (out.length > 1 && last - out[out.length - 1] < 250 && last - out[out.length - 2] <= span + 0.5) out.pop();
+    out.push(last);
+    return out;
+  };
   lines.forEach((line, li) => {
     const prevGap = li > 0 ? line.pos - lines[li - 1].pos : line.pos - bb.minY;
     const nextGap = li + 1 < lines.length ? lines[li + 1].pos - line.pos : bb.maxY - line.pos;
@@ -841,6 +960,7 @@ function layoutImpl(
             .sort((p, q) => p.x0 - q.x0)
         : [];
     const segs: BearerSeg[] = [];
+    const onSlab = mergeIntervals(slabRanges(line.pos));
     for (const iv of clipHorizontal(poly, line.pos)) {
       const mine: BearerSeg[] = [];
       let cursor = iv[0];
@@ -853,44 +973,30 @@ function layoutImpl(
         mine.push({ iv: [a, b], wall: true, edgeIndex: w.index, insetS: false, insetE: false });
         cursor = b;
       }
-      if (!mine.length) mine.push({ iv, wall: false, insetS: false, insetE: false });
+      if (!mine.length) mine.push({ iv: [iv[0], iv[1]], wall: false, insetS: false, insetE: false });
       else if (iv[1] - cursor > 200) mine.push({ iv: [cursor, iv[1]], wall: false, insetS: false, insetE: false });
       else mine[mine.length - 1].iv[1] = iv[1];
       mine[0].insetS = true;
       mine[mine.length - 1].insetE = true;
-      segs.push(...mine);
-    }
-    for (const { iv, wall, edgeIndex, insetS, insetE } of segs) {
-      const [x0, x1] = iv;
-      const onWall = wall;
-      const xs = x0 + (insetS ? rules.bearerEndInset : 0);
-      const xe = x1 - (insetE ? rules.bearerEndInset : 0);
-      const length = xe - xs;
-      if (length < 200) continue;
-      const houseStart = onHouseVertical(x0, line.pos);
-      const houseEnd = onHouseVertical(x1, line.pos);
-      // a bearer end sits fully on its stump (the stump's outer face under the bearer end); at a house wall
-      // the stump keeps the house inset clear of the wall footing
-      const endSet = (ctx.postWidth ?? 100) / 2 + rules.postEndSetback;
-      const sbS = houseStart ? rules.houseBearerInset : endSet;
-      const sbE = houseEnd ? rules.houseBearerInset : endSet;
-      const pStart = xs + sbS;
-      const pEnd = xe - sbE;
-      const postXs: number[] = [];
-      let postSpacing = 0;
-      if (onWall) {
-        // carried by the wall anchors, no posts
-      } else if (pEnd - pStart < 300) {
-        postXs.push((xs + xe) / 2);
-      } else {
-        const n = Math.max(1, Math.ceil((pEnd - pStart) / maxSpan));
-        postSpacing = (pEnd - pStart) / n;
-        for (let k = 0; k <= n; k++) postXs.push(pStart + postSpacing * k);
+      // a wall bearer, bolted along the wall, carries the joists there whatever is under it; off the walls the line
+      // over a slab is a row of pedestals
+      for (const m of mine) {
+        if (m.wall) {
+          segs.push(m);
+          continue;
+        }
+        for (const [a, b] of onSlab) if (Math.min(b, m.iv[1]) - Math.max(a, m.iv[0]) > 1) pedestalRows.push({ y: line.pos, x0: Math.max(a, m.iv[0]), x1: Math.min(b, m.iv[1]), pad: -1 });
+        for (const part of offSlab(m.iv, line.pos)) segs.push({ iv: part.iv, wall: false, insetS: m.insetS && !part.slabS, insetE: m.insetE && !part.slabE });
       }
+    }
+    const keep = slabs.length ? keepOut(line.pos) : [];
+    /** a bearer from xs to xe, on stumps at postXs (or bolted along the wall) */
+    const addBearer = (xs: number, xe: number, postXs: number[], postSpacing: number, onWall: boolean, edgeIndex: number | undefined, houseStart: boolean, houseEnd: boolean) => {
+      const length = xe - xs;
       maxBearerSpanUsed = Math.max(maxBearerSpanUsed, postSpacing);
       const id = `B${++bearerCounter}`;
       // pieces are cut once the stock length is chosen (below), from these
-      bearerJobs.push({ index: bearers.length, xs, xe, postXs, onWall });
+      bearerJobs.push({ index: bearers.length, xs, xe, postXs, onWall, keep });
       if (onWall) {
         ledgers.push({
           edgeIndex: edgeIndex ?? line.edgeIndex ?? -1,
@@ -915,6 +1021,74 @@ function layoutImpl(
         houseStart,
         houseEnd,
       });
+    };
+    for (const { iv, wall, edgeIndex, insetS, insetE } of segs) {
+      const [x0, x1] = iv;
+      const xs = x0 + (insetS ? rules.bearerEndInset : 0);
+      const xe = x1 - (insetE ? rules.bearerEndInset : 0);
+      const length = xe - xs;
+      const houseStart = onHouseVertical(x0, line.pos);
+      const houseEnd = onHouseVertical(x1, line.pos);
+      // at a house wall the stump keeps the house inset clear of the wall footing
+      const pStart = xs + (houseStart ? rules.houseBearerInset : endSet);
+      const pEnd = xe - (houseEnd ? rules.houseBearerInset : endSet);
+      if (!wall && keep.some(([a, b]) => b > x0 - 1 && a < x1 + 1)) {
+        // by a slab: stumps only where their holes keep clear of it, each bearer end running on past its stump by at
+        // most that clearance; joists left beyond a bearer's reach stand on pedestals on pads poured beside the slab
+        const free = pStart <= pEnd ? clearOf(pStart, pEnd, keep) : [];
+        const groups: [number, number][][] = [];
+        for (const f of free) {
+          const g = groups[groups.length - 1];
+          if (g && f[0] - g[g.length - 1][1] <= maxSpan) g.push(f);
+          else groups.push([f]);
+        }
+        const pads = (a: number, b: number) => {
+          if (b - a <= 1) return;
+          pedestalRows.push({ y: line.pos, x0: a, x1: b, pad: nearestSlab((a + b) / 2, line.pos) });
+          padStrip = Math.max(padStrip, b - a);
+        };
+        let covered = xs;
+        for (const [gi, g] of groups.entries()) {
+          const first = g[0][0];
+          const last = g[g.length - 1][1];
+          // a short stretch of clear ground takes one stump, as near the middle of what it carries as clear ground
+          // allows, the bearer running on either side of it as a short bearer does (up to 400)
+          const lastGroup = gi === groups.length - 1;
+          const single = last - first < 300;
+          const mid = (covered + (lastGroup ? xe : last + slabSet)) / 2;
+          const posts = single
+            ? [g.reduce((best, [a, b]) => {
+                const x = Math.min(Math.max(mid, a), b);
+                return Math.abs(x - mid) < Math.abs(best - mid) ? x : best;
+              }, first)]
+            : stumpsOn(g, maxSpan);
+          // (at a house wall the stump is set back clear of the house footing, the bearer running on to the wall)
+          const reachS = single ? 400 : Math.max(slabSet, gi === 0 && houseStart ? rules.houseBearerInset : 0);
+          const reachE = single ? 400 : Math.max(slabSet, lastGroup && houseEnd ? rules.houseBearerInset : 0);
+          const from = Math.max(covered, posts[0] - reachS);
+          const to = Math.min(xe, posts[posts.length - 1] + reachE);
+          pads(covered, from);
+          if (posts[0] - from > endSet + 1 || to - posts[posts.length - 1] > endSet + 1) bearerAtSlab = true;
+          const spacing = posts.length > 1 ? Math.max(...posts.slice(1).map((x, k) => x - posts[k])) : 0;
+          addBearer(from, to, posts, spacing, false, undefined, from === xs && houseStart, to === xe && houseEnd);
+          covered = to;
+        }
+        pads(covered, xe);
+        continue;
+      }
+      if (length < 200) continue;
+      const postXs: number[] = [];
+      let postSpacing = 0;
+      if (wall) {
+        // carried by the wall anchors, no posts
+      } else if (pEnd - pStart < 300) {
+        postXs.push((xs + xe) / 2);
+      } else {
+        const n = Math.max(1, Math.ceil((pEnd - pStart) / maxSpan));
+        postSpacing = (pEnd - pStart) / n;
+        for (let k = 0; k <= n; k++) postXs.push(pStart + postSpacing * k);
+      }
+      addBearer(xs, xe, postXs, postSpacing, wall, edgeIndex, houseStart, houseEnd);
     }
   });
   // ---- stumps on one grid: a bearer takes the stump positions already set out on the longer bearers wherever
@@ -931,8 +1105,9 @@ function layoutImpl(
       if (even.length > 2) {
         const p0 = even[0];
         const p1 = even[even.length - 1];
-        // grid lines clear of this bearer's end stumps
-        const cands = grid.filter((g) => g > p0 + 300 && g < p1 - 300).sort((u, v) => u - v);
+        // grid lines clear of this bearer's end stumps (and of any slab)
+        const keep = bearerJobs.find((j) => j.index === i)?.keep ?? [];
+        const cands = grid.filter((g) => g > p0 + 300 && g < p1 - 300 && !keep.some(([a, c]) => g > a + 0.5 && g < c - 0.5)).sort((u, v) => u - v);
         const aligned = [p0];
         let cur = p0;
         while (p1 - cur > b.maxSpan + 0.5) {
@@ -953,13 +1128,34 @@ function layoutImpl(
     }
     maxBearerSpanUsed = bearers.reduce((m, b) => Math.max(m, b.postSpacing), 0);
   }
+  if (bearerAtSlab) warnings.push({ severity: 'warn', key: 'layout.bearerAtSlab' });
+  /** the pedestal row at (x, y) on support line y */
+  const rowAt = (x: number, y: number) => pedestalRows.find((q) => Math.abs(q.y - y) < 1 && x >= q.x0 - 1 && x <= q.x1 + 1);
+  /** the slab of the pedestal at (x, y) (on a pad, the slab it is level with), or -1 where there is none */
+  const pedestalAt = (x: number, y: number): number => {
+    const r = rowAt(x, y);
+    if (!r) return -1;
+    return r.pad >= 0 ? r.pad : Math.max(0, slabs.findIndex((s) => pointInPolygon({ x: Math.min(Math.max(x, r.x0 + 1), r.x1 - 1), y }, s)));
+  };
   if (planOnly) {
     let joistLm = 0;
     for (const c of joistXs) for (const [a, b] of clipVertical(poly, c.x)) joistLm += b - a;
     let crossings = 0;
     for (const b of bearers) crossings += joistXs.filter((c) => c.x >= Math.min(b.seg.a.x, b.seg.b.x) - 1 && c.x <= Math.max(b.seg.a.x, b.seg.b.x) + 1).length;
     const lineCount = new Set(bearers.map((b) => b.lineIndex)).size;
+    const pedestals = slabs.map(() => 0);
+    let pads = 0;
+    for (const y of new Set(pedestalRows.map((r) => r.y))) {
+      for (const c of joistXs) {
+        const r = rowAt(c.x, y);
+        if (!r) continue;
+        pedestals[pedestalAt(c.x, y)]++;
+        if (r.pad >= 0) pads++;
+      }
+    }
     return {
+      pedestals,
+      pads,
       posts: bearers.reduce((n, b) => n + b.posts.length, 0),
       bearerLm: bearers.reduce((n, b) => n + b.length, 0),
       braceUnits: bearers.reduce((n, b) => n + Math.max(0, Math.ceil((b.posts.length - 1) / 2)), 0) + Math.max(0, lineCount - 1),
@@ -1085,6 +1281,12 @@ function layoutImpl(
   let joistJoinOffBearer = false;
   let frameJoists = 0;
   let joistLaps = 0;
+  const pedestals: { pt: Pt; slab: number; pad?: boolean }[] = [];
+  /** a pedestal under the joist at x on support line y (beside a lap, `dx` over), on the slab or on its pad */
+  const stand = (x: number, y: number, dx = 0) => {
+    const r = rowAt(x, y);
+    if (r) pedestals.push({ pt: { x: x + dx, y }, slab: pedestalAt(x, y), ...(r.pad >= 0 ? { pad: true } : {}) });
+  };
   // joist runs; outside flush framing a run longer than a stick is joined only over a bearer (the two pieces
   // half each), every end landing on a bearer: the fewest joins (pieces up to the longest stick), over the
   // bearers whose pieces cut cleanly from the stocked lengths (two 2.5 m joists from a 5.4)
@@ -1142,23 +1344,40 @@ function layoutImpl(
       const length = y1 - y0;
       if (c.kind === 'frame') frameJoists++;
       if (ctx.flush) {
-        // one piece per bay between consecutive supports, hung on a joist support at each end
+        // one piece per bay between consecutive supports, hung on a joist support at each end; over a slab the joist
+        // runs on over its pedestals (cut only at the bearers it hangs from), out to the deck edge past an end row
         const sup = allSupports.filter((p) => p > y0 - 1 && p < y1 + 1);
         if (sup.length < 2) continue;
+        const slabOf = sup.map((p) => pedestalAt(c.x, p));
+        sup.forEach((p, k) => slabOf[k] >= 0 && stand(c.x, p));
+        const last = sup.length - 1;
+        const cuts = [
+          slabOf[0] >= 0 ? { pos: y0, hung: false } : { pos: sup[0], hung: true },
+          ...sup.slice(1, -1).filter((_, k) => slabOf[k + 1] < 0).map((pos) => ({ pos, hung: true })),
+          slabOf[last] >= 0 ? { pos: y1, hung: false } : { pos: sup[last], hung: true },
+        ];
         const pieces: number[] = [];
-        for (let i = 0; i + 1 < sup.length; i++) {
-          const clear = sup[i + 1] - sup[i] - ctx.bearerWidth;
-          if (clear > 50) pieces.push(clear);
+        const splices: number[] = cuts.slice(1, -1).map((q) => q.pos);
+        let hangers = 0;
+        for (let i = 0; i + 1 < cuts.length; i++) {
+          const from = cuts[i].pos + (cuts[i].hung ? ctx.bearerWidth / 2 : 0);
+          const to = cuts[i + 1].pos - (cuts[i + 1].hung ? ctx.bearerWidth / 2 : 0);
+          if (to - from <= 50) continue;
+          hangers += (cuts[i].hung ? 1 : 0) + (cuts[i + 1].hung ? 1 : 0);
+          // longer than a stick over the pedestals: butted over a pedestal row, both ends on the one pedestal's head
+          const rows = sup.filter((p, k) => slabOf[k] >= 0 && p > from + 300 && p < to - 300);
+          const split = to - from > jMaxLen + 0.5 && rows.length ? (splitRunStocked(from, to, rows, jStocks, 0, rules.kerf, 300) ?? splitRun(from, to, rows, jMaxLen, 300)) : { pieces: [to - from], joins: [] as number[] };
+          pieces.push(...split.pieces);
+          splices.push(...split.joins);
         }
-        const hangers = pieces.length * 2;
         totalHangers += hangers;
         joists.push({
           id: `J${++joistCounter}`,
           pos: c.x,
-          seg: { a: { x: c.x, y: sup[0] }, b: { x: c.x, y: sup[sup.length - 1] } },
-          length: sup[sup.length - 1] - sup[0],
+          seg: { a: { x: c.x, y: cuts[0].pos }, b: { x: c.x, y: cuts[cuts.length - 1].pos } },
+          length: cuts[cuts.length - 1].pos - cuts[0].pos,
           pieces,
-          splices: sup.slice(1, -1),
+          splices: splices.sort((p, q) => p - q),
           bearerCrossings: 0,
           hangers,
           isEdge: c.kind === 'edge',
@@ -1166,14 +1385,20 @@ function layoutImpl(
         });
         continue;
       }
-      const crossings = bearerPositions.filter((p) => p > y0 + 1 && p < y1 - 1).length;
+      // on top: a pedestal under the joist at every row it crosses over a slab, the bearers crossed nailed
+      const crossings = bearerPositions.filter((p) => p > y0 + 1 && p < y1 - 1 && pedestalAt(c.x, p) < 0).length;
       const hangers = ledgerPositions.filter((p) => Math.abs(p - y0) < 1 || Math.abs(p - y1) < 1).length;
       const split = splitJoist(y0, y1, joistMode, lapOf(c.kind));
       if (split.offSupport) joistJoinOffBearer = true;
-      // both pieces of a lap sit on the bearer
+      // both pieces of a lap sit on the bearer; over a pedestal row, on the one pedestal, set under the pair
       const laps = lapOf(c.kind) ? split.joins.length : 0;
+      const pedestalJoins = split.joins.filter((j) => pedestalAt(c.x, j) >= 0);
+      for (const p of bearerPositions.filter((q) => q > y0 - 1 && q < y1 + 1 && pedestalAt(c.x, q) >= 0)) {
+        const lapped = laps > 0 && pedestalJoins.some((j) => Math.abs(j - p) < 1) && rowAt(c.x - jt / 2, p);
+        stand(c.x, p, lapped ? -jt / 2 : 0);
+      }
       joistLaps += laps;
-      joistBearerCrossings += crossings + laps;
+      joistBearerCrossings += crossings + (lapOf(c.kind) ? split.joins.length - pedestalJoins.length : 0);
       totalHangers += hangers;
       joists.push({
         id: `J${++joistCounter}`,
@@ -1182,7 +1407,7 @@ function layoutImpl(
         length,
         pieces: split.pieces.map((p) => p + rules.joistEndAllowance),
         splices: split.joins,
-        bearerCrossings: crossings + laps,
+        bearerCrossings: crossings + (lapOf(c.kind) ? split.joins.length - pedestalJoins.length : 0),
         hangers,
         isEdge: c.kind === 'edge',
         kind: c.kind,
@@ -1191,6 +1416,8 @@ function layoutImpl(
     }
   }
   if (joistJoinOffBearer) warnings.push({ severity: 'warn', key: 'layout.joistJoinOffBearer' });
+  const pads = pedestals.filter((p) => p.pad).length;
+  if (pads) warnings.push({ severity: 'warn', key: 'layout.slabPads', params: { n: pads, w: Math.round(padStrip), min: Math.round(slabSet + endSet) } });
   for (const l of ledgers) l.hangers = ctx.flush ? joists.filter((j) => Math.abs(j.seg.a.y - l.seg.a.y) < 1 || Math.abs(j.seg.b.y - l.seg.a.y) < 1).length : 0;
   const joistPositions = joistXs.map((c) => c.x);
 
@@ -1454,6 +1681,9 @@ function layoutImpl(
   const posts: PostInfo[] = [];
   let pc = 0;
   for (const b of bearers) for (const p of b.posts) posts.push({ id: `P${++pc}`, pt: p, bearerId: b.id });
+  // a stump that still lands near a slab (between two slabs close together, say) is said so: its hole cuts the slab
+  const atSlab = posts.filter((q) => slabs.some((s) => pointInPolygon(q.pt, s) || edges(s).some((e) => projectOnEdge(e, q.pt).d < slabSet - 1)));
+  if (atSlab.length) warnings.push({ severity: 'warn', key: 'layout.stumpAtSlab', params: { ids: atSlab.map((q) => q.id).join(', '), clear: Math.round(slabSet) } });
 
   // ---- swap back to world orientation ----
   const fix = <T extends { seg: Seg }>(x: T): T => (swapped ? { ...x, seg: swapSeg(x.seg) } : x);
@@ -1479,6 +1709,8 @@ function layoutImpl(
     breakers: breakers.map(fix),
     fieldPoly: swapped ? swapPoly(fieldPoly) : fieldPoly,
     ledgers: ledgers.map(fix),
+    pedestals: pedestals.map((p) => ({ ...p, pt: swapped ? swapPt(p.pt) : p.pt })),
+    pedestalRows: pedestalRows.map((r) => fix({ seg: { a: { x: r.x0, y: r.y }, b: { x: r.x1, y: r.y } } }).seg),
     attachment,
     maxJoistSpan,
     joistSpanUsed,
@@ -1504,6 +1736,8 @@ function layoutImpl(
       breakerLm,
       breakerPieces,
       breakerScrews,
+      pedestals: pedestals.length,
+      pads,
     },
   };
   return result;

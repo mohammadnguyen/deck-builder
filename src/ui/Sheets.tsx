@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
 import type { DesignResult } from '../engine';
 import { productName, useT } from '../i18n';
 import { PRODUCT_MAP, sizeLabel } from '../model/catalog';
@@ -218,6 +218,7 @@ export function SheetsView() {
             <h3>{t('sheet.notes')}</h3>
             <p>{t('sheet.footingNote', { footing: footingText, depth: p.footingType === 'stump' ? p.footingDepth : p.padDepth })}</p>
             <p>{t('sheet.stumpTops', { top: Math.round(design.levels.postTop), n: lay.posts.length, post: sizeLabel(design.postProductId) })}</p>
+            {lay.pedestals.length > 0 && <p>{t('sheet.pedestalSetout')}</p>}
             <p>
               {t('sheet.datum')}: {t('sheet.north')}.
             </p>
@@ -256,6 +257,18 @@ export function SheetsView() {
                   <td>{t('lvl.clearance')}</td>
                   <td>{Math.round(design.levels.groundClearance)}</td>
                 </tr>
+                {design.slabs.map((s) => (
+                  <Fragment key={s.id}>
+                    <tr>
+                      <td>{t('lvl.slab')}</td>
+                      <td>+{Math.round(p.deckHeight - s.height)}</td>
+                    </tr>
+                    <tr>
+                      <td>{t('lvl.pedestal')}</td>
+                      <td>{Math.round(s.pedestalHeight)}</td>
+                    </tr>
+                  </Fragment>
+                ))}
               </tbody>
             </table>
             <h3>{t('sheet.notes')}</h3>
@@ -263,8 +276,12 @@ export function SheetsView() {
             <p>{t('sheet.framingNote2', { post: sizeLabel(design.postProductId), footing: footingText })}</p>
             <p>{t(joistsToWall ? 'sheet.framingNote3' : 'sheet.framingNote3.free')}</p>
             {lay.totals.frameJoists > 0 && <p>{t('sheet.framingNote4')}</p>}
+            {design.slabs.filter((s) => s.count > 0).map((s) => (
+              <p key={s.id}>{t('sheet.pedestalNote', { n: s.count, h: Math.round(s.pedestalHeight), product: s.productId ?? '' })}</p>
+            ))}
+            {lay.totals.pads > 0 && <p>{t('sheet.padNote', { n: lay.totals.pads, size: project.rules.slabPadSize ?? 300, depth: project.rules.slabPadDepth ?? 200 })}</p>}
             {design.braces.count > 0 && <p>{t('m.bracing', { count: design.braces.count })}</p>}
-            <Legend items={[{ color: COLORS.bearer, label: t('legend.bearer') }, { color: COLORS.joist, label: t('legend.joist') }, { color: COLORS.frameJoist, label: t('legend.frameJoist') }, { color: COLORS.post, label: t('legend.post') }, { color: COLORS.ledger, label: t('legend.wall') }, { color: COLORS.splice, label: t('legend.splice'), shape: 'ring' }, ...(design.braces.count ? [{ color: COLORS.brace, label: t('legend.brace', { len: design.braces.length }), shape: 'line' as const }] : []), { color: COLORS.mark, label: t('legend.mark'), shape: 'tag' }, ...(project.house.length ? [{ color: COLORS.house, label: t('legend.house'), shape: 'dash' as const }] : [])]} />
+            <Legend items={[{ color: COLORS.bearer, label: t('legend.bearer') }, { color: COLORS.joist, label: t('legend.joist') }, { color: COLORS.frameJoist, label: t('legend.frameJoist') }, { color: COLORS.post, label: t('legend.post') }, { color: COLORS.ledger, label: t('legend.wall') }, { color: COLORS.splice, label: t('legend.splice'), shape: 'ring' }, ...(design.braces.count ? [{ color: COLORS.brace, label: t('legend.brace', { len: design.braces.length }), shape: 'line' as const }] : []), { color: COLORS.mark, label: t('legend.mark'), shape: 'tag' }, ...(project.house.length ? [{ color: COLORS.house, label: t('legend.house'), shape: 'dash' as const }] : []), ...(lay.pedestals.length ? [{ color: COLORS.pedestal, label: t('legend.pedestal'), shape: 'ring' as const }, { color: COLORS.pedestal, label: t('legend.slab'), shape: 'dash' as const }] : []), ...(lay.totals.pads ? [{ color: COLORS.pedestal, label: t('legend.pad'), shape: 'tag' as const }] : [])]} />
           </div>
         </Sheet>
 

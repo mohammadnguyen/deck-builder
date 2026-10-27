@@ -53,6 +53,11 @@ owner can change rather than a hidden constant.
   the spares, which the diagrams draw as whole sticks, so the rows add up to the order length for length. By hand a
   timber line only takes more spares, never fewer than the cut; timber counts typed in before (they could leave the
   drawings behind) are dropped when a project loads.
+- Existing concrete under part of the deck (a slab, drawn with how far the deck sits above it): no stumps or bearers
+  on it; the joists stand on adjustable pedestals set to its level, one under each joist at each support row (a join's
+  two ends on the one head), the row along a slab edge just inside it (rule). A wall bearer stays bolted along the
+  wall over a slab. Stump holes keep clear of every slab (rule); where the ground beside a slab is too narrow for a
+  stump, the joists there stand on pedestals on pads poured beside it, level with it (rule: pad size).
 - Stairs to the NCC from the deck height; the last ripped board row is marked; the order list is editable.
 
 ## Drawings (owner's ask)

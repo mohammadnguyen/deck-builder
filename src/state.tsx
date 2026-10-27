@@ -135,6 +135,7 @@ export function migrateProject(p: Partial<Project>): Project {
     params,
     progress: p.progress ?? {},
     breakers: p.breakers && Array.isArray(p.breakers.items) ? p.breakers : null,
+    slabs: Array.isArray(p.slabs) ? p.slabs.filter((s) => s && Array.isArray(s.poly) && s.poly.length >= 3 && Number.isFinite(s.height)) : [],
     order: migrateOrder(p.order),
   } as Project;
 }

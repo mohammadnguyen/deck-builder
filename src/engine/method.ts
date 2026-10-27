@@ -45,6 +45,8 @@ export interface MethodInput {
   /** joists set out at exact centres, short space last */
   joistSetout: boolean;
   joistSetoutSpacing: number;
+  /** slabs under the deck: the pedestals standing on each (and on pads beside it) */
+  pedestals?: { count: number; pads: number; pedestalHeight: number; productId: string | null }[];
 }
 
 export function buildMethod(m: MethodInput): MethodStep[] {
@@ -61,7 +63,22 @@ export function buildMethod(m: MethodInput): MethodStep[] {
     params: { posts: m.postCount },
     notes: [{ key: 'm.setout.n1' }, { key: 'm.setout.n2' }, ...(p.weedMat ? [{ key: 'm.setout.weedMat' }] : []), ...(m.againstHouse ? [{ key: 'm.setout.termite' }] : [])],
   });
-  if (p.footingType === 'slab') {
+  // over existing concrete: pedestals under the joists, no stumps there
+  for (const s of m.pedestals ?? []) {
+    steps.push({
+      key: 'm.pedestals',
+      params: { count: s.count, h: Math.round(s.pedestalHeight), product: s.productId ?? '', span: Math.round(m.layout.joistSpanUsed) },
+      notes: [
+        ...(s.pads ? [{ key: 'm.pedestals.n3', params: { n: s.pads, size: m.rules.slabPadSize ?? 300, depth: m.rules.slabPadDepth ?? 200 } }] : []),
+        { key: 'm.pedestals.n1' },
+        { key: 'm.pedestals.n2' },
+      ],
+    });
+  }
+  const onStumps = m.layout.bearers.some((b) => !b.onWall);
+  if (!onStumps) {
+    // the deck on pedestals (and the wall): no stumps or bearers on them
+  } else if (p.footingType === 'slab') {
     steps.push({
       key: 'm.footings.slab',
       params: { count: m.postCount, post: m.postName, postLength: m.postLength },
@@ -84,12 +101,12 @@ export function buildMethod(m: MethodInput): MethodStep[] {
   const dropToPostTop = flush
     ? m.boardThickness + (p.bearerToPost === 'onTop' ? m.bearerDepth : 0)
     : p.bearerToPost === 'onTop' ? frameDrop + m.bearerDepth : frameDrop;
-  steps.push({
+  if (onStumps) steps.push({
     key: 'm.posts',
     params: { postTop: Math.round(m.postTop), drop: dropToPostTop },
     notes: [{ key: p.bearerToPost === 'onTop' ? 'm.posts.onTop' : p.bearerToPost === 'screwed' ? 'm.posts.screwed' : p.bearerToPost === 'checked' ? 'm.posts.checked' : 'm.posts.bolted', params: { n: m.rules.battenScrewsPerPost, bearer: m.bearerName } }],
   });
-  steps.push({
+  if (onStumps) steps.push({
     key: p.bearerToPost === 'screwed' || p.bearerToPost === 'checked' ? 'm.bearers.screwed' : 'm.bearers',
     params: { bearer: m.bearerName, lam: p.bearerLaminations, count: m.layout.bearers.length, maxSpan: Math.round(m.layout.maxBearerSpanUsed), bolts: m.rules.boltsPerPost, screws: m.rules.battenScrewsPerPost },
     notes: [{ key: p.bearerLaminations === 2 ? 'm.bearers.n1' : 'm.bearers.n1.single' }, { key: 'm.bearers.n2' }, ...(flush ? [{ key: 'm.bearers.flush' }] : [])],

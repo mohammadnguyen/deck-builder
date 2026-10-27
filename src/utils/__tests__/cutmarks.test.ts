@@ -123,7 +123,7 @@ describe('piece marks', () => {
     const joistCuts = [...new Set(d.layout!.joists.flatMap((j) => j.pieces.map((x) => Math.ceil(x))))].sort((a, b) => a - b);
     expect(joistCuts).toEqual([4519, 4522, 4542, 4544]);
     const marks = joistCuts.map((c) => cm.of(d.frame.joistProductId, c)!);
-    expect(marks.map((m) => `${m.mark} ${m.length}`)).toEqual(['G 4502', 'G 4502', 'F 4524', 'F 4524']);
+    expect(marks.map((m) => `${m.mark} ${m.length}`)).toEqual(['H 4502', 'H 4502', 'G 4524', 'G 4524']);
     expect(marks[0].count + marks[2].count).toBe(d.layout!.joists.reduce((n, j) => n + j.pieces.length, 0));
     for (const g of joistGroups(d.layout!, d.frame.joistProductId, cm)) {
       for (const pc of g.pieces) expect(pc.mark!.length - (pc.to - pc.from)).toBeGreaterThanOrEqual(-1);

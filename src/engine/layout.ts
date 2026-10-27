@@ -1,7 +1,7 @@
 import type { Axis, BreakerLayout, DeckParams, Pt, RuleSet, Seg } from '../model/types';
 import { bbox, clipHorizontal, clipVertical, edges, pointInPolygon, swapPoly, swapPt, validatePolygon, type Edge } from './geometry';
 import { bestBreakerSplit } from './breakerplan';
-import { packedLength, runOn, splitRun, splitRunStocked } from './cutlist';
+import { packedLength, runOn, simpleLength, splitRun, splitRunStocked } from './cutlist';
 import type { WarningItem } from './warnings';
 
 /** Decks at or above this height are designed for balcony loads (reduced spans). */
@@ -256,6 +256,8 @@ export interface LayoutContext {
   sameTimber?: boolean;
   /** stump / post width, so a bearer end sits fully on its end stump */
   postWidth?: number;
+  /** framing cut simply (each stick into one length): what a stocked length more must save, mm of joist / bearer */
+  simpleCutting?: { joist: number; bearer: number };
 }
 
 /**
@@ -1054,7 +1056,7 @@ function layoutImpl(
     // a split already weighed (the same joins) is not packed again
     if (!ok || bSeen.has(key.join('|'))) continue;
     bSeen.add(key.join('|'));
-    const score = joins * 1e7 + packedLength(pcs, bStocks, rules.kerf);
+    const score = joins * 1e7 + (ctx.simpleCutting ? simpleLength(pcs, bStocks, rules.kerf, ctx.simpleCutting.bearer) : packedLength(pcs, bStocks, rules.kerf));
     if (score < bearerScore - 0.5) {
       bearerScore = score;
       bearerMode = mode;
@@ -1124,7 +1126,8 @@ function layoutImpl(
       if (!ok || jSeen.has(key.join('|'))) continue;
       jSeen.add(key.join('|'));
       // fewest joins first (a joist that fits one stick is never joined), then the least timber bought
-      const score = joins * 1e7 + packedLength([...shared, ...pcs], jStocks, rules.kerf);
+      const cut = [...shared, ...pcs];
+      const score = joins * 1e7 + (ctx.simpleCutting ? simpleLength(cut, jStocks, rules.kerf, ctx.simpleCutting.joist) : packedLength(cut, jStocks, rules.kerf));
       if (score < jScore - 0.5) {
         jScore = score;
         joistMode = mode;

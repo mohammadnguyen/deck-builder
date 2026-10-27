@@ -100,6 +100,9 @@ export function defaultRules(): RuleSet {
     timberLengths: [3600, 4800, 5400, 6000],
     // breakers go where the boards waste least; one more only when it saves this many boards
     breakerMinSaving: 2,
+    // framing cut so the crew needs no cut list: each stick into equal pieces, a length more only where it saves this
+    cutting: 'simple',
+    extraLengthSaving: 50,
   };
 }
 

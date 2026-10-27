@@ -656,6 +656,16 @@ function RulesPanel() {
         <Chk label={t('r.frameJoist')} checked={r.frameJoist} onChange={(v) => setRules((rr) => ({ ...rr, frameJoist: v }))} />
         <Chk label={t('r.compositeJoistSetout')} checked={r.compositeJoistSetout !== false} onChange={(v) => setRules((rr) => ({ ...rr, compositeJoistSetout: v }))} />
         <Chk label={t('r.ripAtHouse')} checked={r.ripAtHouse !== false} onChange={(v) => setRules((rr) => ({ ...rr, ripAtHouse: v }))} />
+        <Sel
+          label={t('r.cutting')}
+          value={r.cutting === 'cheapest' ? 'cheapest' : 'simple'}
+          options={[
+            { value: 'simple', label: t('r.cutting.simple') },
+            { value: 'cheapest', label: t('r.cutting.cheapest') },
+          ]}
+          onChange={(v) => setRules((rr) => ({ ...rr, cutting: v === 'cheapest' ? 'cheapest' : 'simple' }))}
+        />
+        <Num label={t('r.extraLengthSaving')} value={r.extraLengthSaving ?? 50} step={10} min={0} onChange={(v) => setRules((rr) => ({ ...rr, extraLengthSaving: v }))} />
         {miscKeys.map((k) => (
           <Num key={k} label={t(`r.${k}`)} value={r[k] as number} step={k === 'elevatedFactor' || k === 'concreteBagYield' ? 0.01 : 1} onChange={(v) => setRules((rr) => ({ ...rr, [k]: v }))} />
         ))}

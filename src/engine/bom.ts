@@ -1,6 +1,6 @@
 import { PRODUCT_MAP, stockLengthsOf } from '../model/catalog';
 import type { OrderEdits, ProductCategory, RuleSet, Unit } from '../model/types';
-import { packPieces, type BinGroup } from './cutlist';
+import { packPieces, packSimple, type BinGroup } from './cutlist';
 
 export interface Piece {
   productId: string;
@@ -119,7 +119,11 @@ export function buildBom(
     const prod = PRODUCT_MAP[productId];
     if (!prod) continue;
     const stock = stockLengthsOf(prod, rules);
-    const pack = packPieces(list.map((p) => p.length), stock, rules.kerf);
+    // framing and posts cut simply unless the owner wants the cheapest mixed cut list: a stocked length more has to
+    // save its dollars in this timber
+    const simple = rules.cutting !== 'cheapest' && (prod.category === 'framing' || prod.category === 'post');
+    const extra = (rules.extraLengthSaving ?? 50) / Math.max(1e-6, priceOf(productId)) * (prod.unit === 'm' ? 1000 : Math.max(...stock));
+    const pack = simple ? packSimple(list.map((p) => p.length), stock, rules.kerf, extra) : packPieces(list.map((p) => p.length), stock, rules.kerf);
     const requiredLm = pack.totalPieceLength / 1000;
     const pct = prod.category === 'decking' ? undefined : wasteFramingPct;
     const count = pack.bins.length;

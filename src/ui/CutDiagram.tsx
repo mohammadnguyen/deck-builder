@@ -4,7 +4,7 @@ import type { CutList } from '../engine/bom';
 import { productName, useT } from '../i18n';
 import { PRODUCT_MAP } from '../model/catalog';
 import type { Project } from '../model/types';
-import { cutMarks, finishedLength, markUse, type CutMarks } from '../utils/cutmarks';
+import { cutMarks, cutRows, finishedLength, markUse, type CutMarks } from '../utils/cutmarks';
 
 const W = 1000;
 const H = 40;
@@ -64,13 +64,29 @@ function Bar({ stock, cuts, offcut, maxStock, productId, marks, project, hatch }
   );
 }
 
+/** A spare stick: bought whole and not cut, so the rows add up to the order. */
+function SpareBar({ stock, maxStock, label }: { stock: number; maxStock: number; label: string }) {
+  const w = (W / maxStock) * stock;
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="cut-bar" preserveAspectRatio="xMinYMid meet">
+      <rect x={0.5} y={6} width={w - 1} height={H - 12} fill="#fff" stroke="#6b4a26" strokeWidth={1.5} strokeDasharray="8 5" />
+      {w > label.length * 11 + 10 && (
+        <text x={w / 2} y={H / 2 + 6} fontSize={16} textAnchor="middle" fill="#6b4a26">
+          {label}
+        </text>
+      )}
+    </svg>
+  );
+}
+
 function tagsOf(productId: string, cut: number, marks: CutMarks): string[] {
   return marks.of(productId, cut)?.tags ?? [];
 }
 
 /**
  * How to cut: for each product, every cutting pattern as a stick drawn to scale with its pieces, and how many
- * sticks are cut that way. Framing pieces carry the letters of the framing plan.
+ * sticks are cut that way, then the spare sticks: the rows add up to the order, length for length. Framing pieces
+ * carry the letters of the framing plan.
  */
 export function CutDiagrams({ design, project, filter, showUses = true }: { design: DesignResult; project: Project; filter?: (c: CutList) => boolean; showUses?: boolean }) {
   const { t, lang } = useT();
@@ -93,11 +109,15 @@ export function CutDiagrams({ design, project, filter, showUses = true }: { desi
         </defs>
       </svg>
       {lists.map((c) => {
-        const line = design.bom.lines.find((l) => l.productId === c.productId);
-        const maxStock = Math.max(...c.groups.map((g) => g.stock), 1);
-        const sticks = c.groups.reduce((n, g) => n + g.count, 0);
+        // the line on the order: the cut and its spare (a line taken off the order: the cut only)
+        const line = design.bom.lines.find((l) => l.productId === c.productId && !l.addedId);
+        const off = !line && design.bom.removed.some((l) => l.productId === c.productId);
+        const spare = line?.spareStock ?? [];
+        const maxStock = Math.max(...c.groups.map((g) => g.stock), ...spare.map((s) => s.length), 1);
         const perLength = new Map<number, number>();
         for (const g of c.groups) perLength.set(g.stock, (perLength.get(g.stock) ?? 0) + g.count);
+        for (const s of spare) perLength.set(s.length, (perLength.get(s.length) ?? 0) + s.count);
+        const sticks = [...perLength.values()].reduce((n, k) => n + k, 0);
         const lengths = [...perLength.entries()].sort((a, b) => b[0] - a[0]);
         const stockText = lengths.length === 1 ? t('cutd.sticks', { n: sticks, stock: `${(lengths[0][0] / 1000).toFixed(1)} m` }) : t('cutd.sticksMixed', { n: sticks, list: lengths.map(([len, n]) => `${n} × ${(len / 1000).toFixed(1)} m`).join(' + ') });
         const pieceMarks = marks.marks.filter((m) => m.productId === c.productId);
@@ -108,6 +128,7 @@ export function CutDiagrams({ design, project, filter, showUses = true }: { desi
               <span>
                 {stockText}
                 {line?.extraCount ? ` · ${t('cutd.spare', { n: line.extraCount })}` : ''}
+                {off ? ` · ${t('cutd.removed')}` : ''}
               </span>
             </div>
             {showUses && pieceMarks.length > 0 && (
@@ -119,15 +140,20 @@ export function CutDiagrams({ design, project, filter, showUses = true }: { desi
                 ))}
               </div>
             )}
-            {[...c.groups]
-              .sort((a, b) => b.count - a.count || b.cuts.length - a.cuts.length)
-              .map((g, i) => (
-                <div key={i} className="cut-row">
-                  <span className="cut-n">{g.count} ×</span>
-                  <span className="cut-len">{(g.stock / 1000).toFixed(1)} m</span>
-                  <Bar stock={g.stock} cuts={g.cuts} offcut={g.offcut} maxStock={maxStock} productId={c.productId} marks={marks} project={project} hatch={hatch} />
-                </div>
-              ))}
+            {cutRows(c.groups, (cut) => marks.of(c.productId, cut)?.mark ?? String(Math.round(cut)), project.rules.kerf).map((g, i) => (
+              <div key={i} className="cut-row">
+                <span className="cut-n">{g.count} ×</span>
+                <span className="cut-len">{(g.stock / 1000).toFixed(1)} m</span>
+                <Bar stock={g.stock} cuts={g.cuts} offcut={g.offcut} maxStock={maxStock} productId={c.productId} marks={marks} project={project} hatch={hatch} />
+              </div>
+            ))}
+            {spare.map((s) => (
+              <div key={`spare-${s.length}`} className="cut-row spare">
+                <span className="cut-n">{s.count} ×</span>
+                <span className="cut-len">{(s.length / 1000).toFixed(1)} m</span>
+                <SpareBar stock={s.length} maxStock={maxStock} label={t('cutd.spareRow')} />
+              </div>
+            ))}
           </div>
         );
       })}

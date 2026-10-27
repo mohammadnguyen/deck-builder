@@ -1,4 +1,5 @@
 import type { DesignResult } from '../engine';
+import type { BinGroup } from '../engine/cutlist';
 import type { BearerRun, JoistRun, LayoutResult } from '../engine/layout';
 import { PRODUCT_MAP } from '../model/catalog';
 import type { RuleSet } from '../model/types';
@@ -179,4 +180,21 @@ export function joistGroups(lay: LayoutResult, productId: string, marks: CutMark
 export function markUse(m: CutMark): string {
   const order = ['joist', 'bearer', 'wallBearer', 'post', 'brace', 'stringer', 'rail', 'handrail', 'stairKicker', 'joinBlock', 'balustradePost', 'handrailPost', 'slat'];
   return order.find((t) => m.tags.includes(t)) ?? m.tags[0] ?? '';
+}
+
+/** Cutting patterns that read the same (the same stick, the same letters: pieces a few mm apart share a letter and
+ *  are cut to the longer) drawn as one row, the most used first. */
+export function cutRows(groups: BinGroup[], label: (cut: number) => string, kerf: number): BinGroup[] {
+  const rows = new Map<string, BinGroup>();
+  for (const g of groups) {
+    const key = `${g.stock}|${g.cuts.map(label).join(',')}`;
+    const row = rows.get(key);
+    if (!row) rows.set(key, { ...g, cuts: [...g.cuts] });
+    else {
+      row.count += g.count;
+      row.cuts = row.cuts.map((c, i) => Math.max(c, g.cuts[i]));
+      row.offcut = Math.max(0, row.stock - row.cuts.reduce((a, c) => a + c, 0) - kerf * (row.cuts.length - 1));
+    }
+  }
+  return [...rows.values()].sort((a, b) => b.count - a.count || b.cuts.length - a.cuts.length);
 }

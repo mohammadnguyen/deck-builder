@@ -6,7 +6,7 @@ import type { ProductCategory, Unit } from '../model/types';
 import { useApp } from '../state';
 import { money, stockLabel } from '../utils/format';
 import { lineName } from '../utils/order';
-import { asCalculated, withAdded, withoutLine, withPrice, withQty, withStock } from '../utils/orderEdits';
+import { asCalculated, cutCount, withAdded, withoutLine, withPrice, withQty, withStock } from '../utils/orderEdits';
 import { NumInline } from './fields';
 
 const CATS: ProductCategory[] = ['decking', 'framing', 'post', 'balustrade', 'hardware', 'concrete', 'consumable', 'other'];
@@ -142,6 +142,9 @@ function OrderRow({ n, line, flash }: { n: number; line: BomLine; flash: boolean
   const order = (fn: Parameters<typeof updateProject>[0], label = 'h.order') => updateProject(fn, label);
   const freeLengths = timber ? [...stockLengthsOf(prod, project.rules)].sort((a, b) => b - a).filter((len) => !(line.stockBreakdown ?? []).some((s) => s.length === len)) : [];
   const calcText = line.calcQty === undefined ? '' : timber && line.calcStock ? stockLabel(line.calcStock) : pack ? `${Math.ceil(line.calcQty / pack)} ${t('unitName.box')}` : `${line.calcQty} ${t(`unitName.${line.unit}`)}`;
+  // timber cut on the cutting diagrams: ordered as cut, only its spare changes by hand
+  const cut = !!line.cutStock && !line.addedId;
+  const ruleSpare = line.calcQty !== undefined && line.calcStock ? line.calcQty - (line.cutStock ?? []).reduce((n, s) => n + s.count, 0) : 0;
   return (
     <tr className={`${line.edited ? 'edited' : ''} ${line.addedId ? 'added' : ''} ${flash ? 'flash' : ''}`}>
       <td>{n}</td>
@@ -151,7 +154,16 @@ function OrderRow({ n, line, flash }: { n: number; line: BomLine; flash: boolean
           {line.tags.map((x) => t(`tag.${x}`)).join(', ')}
           {!line.edited && !line.addedId && timber && line.requiredLm !== undefined ? ` · ${t('ord.need', { m: line.requiredLm.toFixed(1), waste: (line.cutWastePct ?? 0).toFixed(0) })}` : ''}
           {!line.edited && !line.addedId && line.extraCount ? ` · ${t('bom.extra', { n: line.extraCount })}` : ''}
-          {line.edited && (
+          {line.edited && cut && (
+            <>
+              {' · '}
+              <span className="calc">{t('ord.spareEdited', { n: line.extraCount ?? 0, m: ruleSpare })}</span>{' '}
+              <button type="button" className="linkish" onClick={() => order((p) => ({ ...p, order: asCalculated(p, line.productId) }), 'h.orderReset')}>
+                {t('ord.reset')}
+              </button>
+            </>
+          )}
+          {line.edited && !cut && (
             <>
               {' · '}
               <span className="calc">{t('ord.calc', { qty: calcText })}</span>{' '}
@@ -166,9 +178,9 @@ function OrderRow({ n, line, flash }: { n: number; line: BomLine; flash: boolean
         {timber ? (
           <div className="stock">
             {(line.stockBreakdown ?? []).map((s) => (
-              <label key={s.length} className="len">
+              <label key={s.length} className="len" title={cut && cutCount(line, s.length) ? t('ord.cutMin', { n: cutCount(line, s.length) }) : undefined}>
                 <span>{(s.length / 1000).toFixed(1)}m ×</span>
-                <NumInline value={s.count} step={1} min={0} onCommit={(v) => order((p) => ({ ...p, order: withStock(p, line, s.length, v) }))} />
+                <NumInline value={s.count} step={1} min={cut ? cutCount(line, s.length) : 0} onCommit={(v) => order((p) => ({ ...p, order: withStock(p, line, s.length, v) }))} />
               </label>
             ))}
             {freeLengths.length > 0 && (

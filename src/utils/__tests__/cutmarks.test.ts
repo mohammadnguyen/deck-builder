@@ -3,7 +3,7 @@ import { computeDesign, type DesignResult } from '../../engine';
 import { PRODUCT_MAP } from '../../model/catalog';
 import { defaultRules, newProject } from '../../model/defaults';
 import type { Project } from '../../model/types';
-import { bearerPieces, cutMarks, finishedLength, joistGroups, type CutMarks } from '../cutmarks';
+import { bearerPieces, cutMarks, cutRows, finishedLength, joistGroups, type CutMarks } from '../cutmarks';
 
 /** the deck from the shop: 11.3 m along the house, a 4.8 m leg running 7.8 m out on the right */
 function shopDeck(axis: 'x' | 'y'): Project {
@@ -139,3 +139,19 @@ describe('piece marks', () => {
     expect(finishedLength(787, ['post'], r)).toBe(787);
   });
 });
+
+describe('cutting diagram rows', () => {
+  it('draws patterns with the same letters on the same stick as one row, cut to the longer', () => {
+    const groups = [
+      { stock: 4800, cuts: [2370, 2370], count: 8, offcut: 57 },
+      { stock: 6000, cuts: [5518], count: 10, offcut: 482 },
+      { stock: 4800, cuts: [2368, 2368], count: 5, offcut: 61 },
+    ];
+    const rows = cutRows(groups, (cut) => (cut > 5000 ? 'A' : 'C'), 3);
+    expect(rows).toEqual([
+      { stock: 4800, cuts: [2370, 2370], count: 13, offcut: 57 },
+      { stock: 6000, cuts: [5518], count: 10, offcut: 482 },
+    ]);
+  });
+});
+

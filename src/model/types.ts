@@ -268,8 +268,9 @@ export interface OrderLineEdit {
   removed?: boolean;
   /** purchase quantity set by hand: units, or pieces for products sold in boxes */
   qty?: number;
-  /** stock lengths set by hand for timber sold by the metre: length in mm -> pieces */
-  stock?: Record<string, number>;
+  /** timber cut on the cutting diagrams: the spare set by hand (length in mm -> pieces over the cut). The order is
+   *  always the cut itself, length for length, plus the spare. */
+  spare?: Record<string, number>;
 }
 
 /** An item added to the order by hand: a catalogue product, or anything else by name. */

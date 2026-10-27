@@ -3,7 +3,7 @@ import { computeDesign, type DesignResult } from './engine';
 import { LangContext, translate } from './i18n';
 import { defaultParams, defaultRules, newProject } from './model/defaults';
 import { PRODUCT_MAP, resolveProductId, CATALOG } from './model/catalog';
-import type { DeckParams, Lang, Project, RuleSet } from './model/types';
+import type { DeckParams, Lang, OrderEdits, Project, RuleSet } from './model/types';
 import { canRedo as hCanRedo, canUndo as hCanUndo, currentState, initHistory, jumpHistory, pushHistory, redoHistory, undoHistory, type History } from './utils/history';
 
 export type Tool = 'select' | 'deck' | 'house' | 'stair' | 'pan';
@@ -134,11 +134,27 @@ export function migrateProject(p: Partial<Project>): Project {
     params,
     progress: p.progress ?? {},
     breakers: p.breakers && Array.isArray(p.breakers.items) ? p.breakers : null,
-    order:
-      p.order && typeof p.order === 'object'
-        ? { lines: p.order.lines && typeof p.order.lines === 'object' ? p.order.lines : {}, added: Array.isArray(p.order.added) ? p.order.added : [], note: typeof p.order.note === 'string' ? p.order.note : undefined }
-        : null,
+    order: migrateOrder(p.order),
   } as Project;
+}
+
+/**
+ * The hand changes to a saved order. Timber cut on the cutting diagrams is ordered as cut: counts typed in for it
+ * before (`stock`, which could leave the drawings behind) are dropped, so the line follows the cut again; its spare,
+ * lines taken off, other quantities, items added and the note stay.
+ */
+function migrateOrder(order: unknown): Project['order'] {
+  if (!order || typeof order !== 'object') return null;
+  const o = order as Partial<OrderEdits>;
+  const lines: OrderEdits['lines'] = {};
+  for (const [id, e] of Object.entries(o.lines && typeof o.lines === 'object' ? o.lines : {})) {
+    if (!e || typeof e !== 'object') continue;
+    const { stock: _old, ...rest } = e as OrderEdits['lines'][string] & { stock?: unknown };
+    if (rest.removed || rest.qty !== undefined || rest.spare !== undefined) lines[id] = rest;
+  }
+  const added = Array.isArray(o.added) ? o.added : [];
+  const note = typeof o.note === 'string' ? o.note : undefined;
+  return Object.keys(lines).length || added.length || note?.trim() ? { lines, added, note } : null;
 }
 
 export function isProjectLike(x: unknown): x is Partial<Project> {

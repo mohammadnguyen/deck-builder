@@ -64,7 +64,16 @@ main.design { display: flex; flex: 1; min-height: 0; }
 .statusbar { display: flex; align-items: center; gap: 18px; padding: 4px 10px; border-top: 1px solid var(--border); background: #fafafa; color: var(--muted); font-size: 12px; white-space: nowrap; }
 .statusbar > * { flex: none; }
 .statusbar .hint { margin-left: auto; text-align: right; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; flex: 0 1 auto; }
-.app-toast { position: fixed; left: 50%; top: 58px; transform: translateX(-50%); background: #1f2937; color: #fff; padding: 8px 14px; border-radius: 6px; z-index: 40; font-size: 13px; box-shadow: 0 4px 14px rgba(0,0,0,.2); pointer-events: none; }
+.app-toast { position: fixed; left: 50%; top: 58px; transform: translateX(-50%); background: #1f2937; color: #fff; padding: 8px 14px; border-radius: 6px; z-index: 40; font-size: 13px; line-height: 1.5; max-width: calc(100vw - 32px); width: max-content; box-sizing: border-box; box-shadow: 0 4px 14px rgba(0,0,0,.2); pointer-events: none; }
+/* share a project: a QR code to scan and a link to send */
+.modal-back { position: fixed; inset: 0; z-index: 60; background: rgba(15, 23, 42, .45); display: flex; align-items: center; justify-content: center; padding: 16px; }
+.modal { background: #fff; color: var(--text); border-radius: 12px; padding: 18px; width: 100%; max-width: 420px; max-height: calc(100vh - 32px); overflow: auto; box-shadow: 0 12px 40px rgba(0,0,0,.25); box-sizing: border-box; }
+.modal h3 { margin: 0 0 6px; font-size: 16px; }
+.modal:focus { outline: none; }
+.share-dialog .hint { font-size: 12px; color: var(--muted); line-height: 1.5; margin: 6px 0; }
+.share-dialog .qr { display: block; width: min(260px, 70vw); height: auto; margin: 10px auto; }
+.share-dialog .share-link { width: 100%; box-sizing: border-box; padding: 7px 8px; border: 1px solid var(--border); border-radius: 6px; font: inherit; font-size: 12px; color: var(--muted); }
+.share-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 4px; }
 .statusbar .coords { min-width: 86px; }
 .toast { position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); background: #7f1d1d; color: #fff; padding: 8px 14px; border-radius: 6px; z-index: 10; }
 

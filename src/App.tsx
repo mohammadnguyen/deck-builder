@@ -6,6 +6,7 @@ import { GuidePanel } from './ui/GuidePanel';
 import { MaterialsView } from './ui/MaterialsView';
 import { ResultsBar } from './ui/ResultsBar';
 import { SheetsView } from './ui/Sheets';
+import { ShareDialog } from './ui/ShareDialog';
 import { StepsView } from './ui/StepsView';
 import { exportProjectJson } from './utils/export';
 
@@ -39,10 +40,22 @@ const MODES: { id: Mode; key: string }[] = [
 ];
 
 export default function App() {
-  const { project, projects, lang, setLang, ui, setUi, updateProject, createProject, openProject, duplicateProject, deleteProject, importProject, undo, redo, saveOk, lastHistoryAction } = useApp();
+  const { project, projects, lang, setLang, ui, setUi, updateProject, createProject, openProject, duplicateProject, deleteProject, importProject, undo, redo, saveOk, lastHistoryAction, arrival } = useApp();
   const { t } = useT();
   const fileRef = useRef<HTMLInputElement>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
+
+  // a project a share link brought: say which, and where it is kept (WeChat keeps its own pages apart)
+  useEffect(() => {
+    if (!arrival) return;
+    const wechat = /MicroMessenger/i.test(navigator.userAgent);
+    const said = arrival.broken ? t('share.broken') : t(arrival.copy ? 'share.arrivedCopy' : 'share.arrived', { name: arrival.name });
+    setToast(wechat && !arrival.broken ? t('share.then', { said, next: t('share.wechat') }) : said);
+    const id = window.setTimeout(() => setToast(null), wechat ? 9000 : 5000);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [arrival]);
 
   // confirm undo / redo / jumps wherever they happen
   useEffect(() => {
@@ -126,6 +139,9 @@ export default function App() {
             <button className="btn" onClick={(e) => { createProject(true); closeMenu(e); }}>
               {t('app.newSample')}
             </button>
+            <button className="btn" onClick={(e) => { setSharing(true); closeMenu(e); }}>
+              {t('app.share')}
+            </button>
             <button className="btn" onClick={(e) => { duplicateProject(); closeMenu(e); }}>
               {t('app.duplicate')}
             </button>
@@ -194,6 +210,7 @@ export default function App() {
       )}
       {tabs('tabbar no-print')}
       {toast && <div className="app-toast" role="status">{toast}</div>}
+      {sharing && <ShareDialog onClose={() => setSharing(false)} />}
     </div>
   );
 }

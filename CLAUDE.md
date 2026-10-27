@@ -73,6 +73,9 @@ boards the other way, a nudge that drops a breaker or the ripped row) for the co
   (`src/engine/layout.ts`, boards along x; a y layout is computed in a swapped frame), then `buildBom`
   and `buildMethod`. Keep a design under about 10 ms; the editor recomputes it while dragging.
 - Every user-facing string exists in both `src/i18n/zh.ts` and `src/i18n/en.ts`.
+- Projects live in the browser that made them (localStorage). A share link (project menu) carries a whole project in
+  the address after `#` (`src/utils/share.ts`): only what differs from `defaultRules()` / `defaultParams()`,
+  deflated, so a link made before a default changes opens with the new default; opening it stores the project there.
 - A changed rule default that saved rule sets should follow bumps `RULES_VERSION` in
   `src/model/defaults.ts` with a one-off step in `migrateProject` (`src/state.tsx`).
 - Prove engine changes with tests and a sweep over many deck shapes, and check the UI in a browser

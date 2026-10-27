@@ -185,6 +185,10 @@ export interface RuleSet {
   timberLengths?: number[];
   /** a breaker beyond the fewest a long run needs is laid only when it saves at least this many boards */
   breakerMinSaving?: number;
+  /** framing timber: 'simple' (each stick cut into one length, as few lengths as will do) or 'cheapest' (mixed) */
+  cutting?: 'simple' | 'cheapest';
+  /** simple cutting: dollars a stocked length more must save */
+  extraLengthSaving?: number;
 }
 
 export interface FrameSizes {

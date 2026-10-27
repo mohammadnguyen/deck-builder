@@ -1,7 +1,9 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
+import { computeDesign } from '../engine';
 import { useT } from '../i18n';
 import { useApp } from '../state';
 import { exportCsv, exportProjectJson, exportXlsx } from '../utils/export';
+import { money } from '../utils/format';
 import { supplierOrderText } from '../utils/order';
 import { withNote } from '../utils/orderEdits';
 import { CutDiagrams } from './CutDiagram';
@@ -13,6 +15,13 @@ export function MaterialsView() {
   const { project, design, lang, updateProject } = useApp();
   const { t } = useT();
   const [copied, setCopied] = useState(false);
+  // the framing cut simply (each stick into one length, few lengths) or for the least timber: what the other way costs
+  const simple = project.rules.cutting !== 'cheapest';
+  const otherTotal = useMemo(() => {
+    if (!design.ok) return null;
+    const other = computeDesign({ ...project, rules: { ...project.rules, cutting: simple ? 'cheapest' : 'simple' } });
+    return other.ok ? other.bom.total : null;
+  }, [project, design, simple]);
   if (!design.ok) {
     return (
       <div className="materials-wrap">
@@ -45,6 +54,24 @@ export function MaterialsView() {
             {t('app.exportJson')}
           </button>
         </div>
+      </div>
+      <div className="cut-mode">
+        <b>{t('cutmode.label')}</b>
+        <div className="seg">
+          {(['simple', 'cheapest'] as const).map((m) => (
+            <button key={m} type="button" className={(m === 'simple') === simple ? 'on' : ''} onClick={() => updateProject((p) => ({ ...p, rules: { ...p.rules, cutting: m } }), 'h.cutMode')}>
+              {t(`cutmode.${m}`)}
+            </button>
+          ))}
+        </div>
+        <small>
+          {t(simple ? 'cutmode.simpleHint' : 'cutmode.cheapestHint', { saving: project.rules.extraLengthSaving ?? 50 })}{' '}
+          {otherTotal !== null && Math.abs(otherTotal - design.bom.total) >= 1
+            ? t(simple ? 'cutmode.costsMore' : 'cutmode.saves', { diff: money(Math.abs(otherTotal - design.bom.total)) })
+            : otherTotal !== null
+              ? t('cutmode.same')
+              : ''}
+        </small>
       </div>
       <div className="materials-grid">
         <section className="card bom-card">

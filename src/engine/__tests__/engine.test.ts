@@ -3,7 +3,7 @@ import { defaultRules, newProject } from '../../model/defaults';
 import { PRODUCT_MAP } from '../../model/catalog';
 import type { Project } from '../../model/types';
 import { bestBreakerSplit, nestingLengths, symmetricSplits } from '../breakerplan';
-import { packPieces, pieceWaste, splitRun, splitRunStocked } from '../cutlist';
+import { packPieces, packSimple, pieceWaste, splitRun, splitRunStocked } from '../cutlist';
 import { bayLabel, joistMaxSpan, joistSpaces } from '../layout';
 import { clipHorizontal, clipVertical, detectHouseEdges, edges, normalizePolygon, polygonAreaMm2, validatePolygon } from '../geometry';
 import { computeDesign } from '../index';
@@ -730,10 +730,11 @@ describe('joins as the crew makes them', () => {
     // 4500 to the stump's centre, 70 on (half the 140 depth), 20 end allowance
     expect(b.pieces).toEqual([[4590, 4590]]);
     expect(b.posts.some((pt) => Math.abs(pt.x - 4500) < 1)).toBe(true);
-    // the wall bearer is bolted along the wall: butted
+    // the wall bearer is bolted along the wall: butted, where its pieces cut simply: a whole 4.8 and one more from a
+    // 4.8, so every bearer comes out of 4.8 m sticks
     const wall = lay.bearers.find((x) => x.onWall)!;
-    expect(wall.splices).toEqual([[3020]]);
-    expect(wall.pieces).toEqual([[3040, 6000]]);
+    expect(wall.splices).toEqual([[4780]]);
+    expect(wall.pieces).toEqual([[4800, 4240]]);
     expect(lay.totals.bearerScarfs).toBe(5);
   });
   it('laps field joists side by side over a bearer, each end on to its far face; joists under the board joints stay in line', () => {
@@ -843,5 +844,46 @@ describe('bracing on the plan, termites at the wall', () => {
     expect(d.method.some((s) => s.notes.some((n) => n.key === 'm.setout.termite'))).toBe(true);
     const free = { ...p, houseEdges: [], params: { ...p.params, attachment: 'freestanding' as const } };
     expect(computeDesign(free).warnings.some((w) => w.key === 'compliance.termite')).toBe(false);
+  });
+});
+
+describe('simple cutting, for a crew without a cut list', () => {
+  // a dollar or two of 90x45 a metre: a length more has to save about 7 m of it
+  const extra = 7000;
+  const lengthsOf = (r: ReturnType<typeof packSimple>) => r.stockCount.map((s) => `${s.count}x${s.length}`);
+  const oneLengthPerStick = (r: ReturnType<typeof packSimple>) => r.bins.every((b) => Math.max(...b.cuts) - Math.min(...b.cuts) <= 5);
+  it('cuts 1.8 m pieces as thirds of a 5.4, not one each from a 2.4', () => {
+    const r = packSimple(new Array(6).fill(1790), [2400, 5400], 5, extra);
+    expect(lengthsOf(r)).toEqual(['2x5400']);
+    expect(r.groups).toEqual([{ stock: 5400, cuts: [1790, 1790, 1790], count: 2, offcut: 20 }]);
+  });
+  it('cuts 2.2 m pieces two to a 4.8, or one from a 2.4 when that is all it needs', () => {
+    expect(lengthsOf(packSimple(new Array(4).fill(2200), [2400, 4800], 5, extra))).toEqual(['2x4800']);
+    // three of them: one length either way, the least timber is three 2.4s
+    expect(lengthsOf(packSimple(new Array(3).fill(2200), [2400, 4800], 5, extra))).toEqual(['3x2400']);
+  });
+  it('keeps the order to a length or two where a mixed cut list would scatter them', () => {
+    const pieces = [...new Array(3).fill(5300), ...new Array(5).fill(4200), ...new Array(4).fill(2300), ...new Array(3).fill(1700)];
+    const yard = [3600, 4800, 5400, 6000];
+    const mixed = packPieces(pieces, yard, 5);
+    const simple = packSimple(pieces, yard, 5, extra);
+    expect(mixed.stockCount.length).toBeGreaterThan(2);
+    expect(simple.stockCount.length).toBeLessThanOrEqual(2);
+    expect(oneLengthPerStick(simple)).toBe(true);
+    // every piece is on a stick
+    expect(simple.bins.flatMap((b) => b.cuts).sort((a, b) => a - b)).toEqual([...pieces].sort((a, b) => a - b));
+    // simple costs a little more timber, never less than the cheapest mix
+    expect(simple.totalStockLength).toBeGreaterThanOrEqual(mixed.totalStockLength);
+  });
+  it('is the company default for framing; the cheapest mixed cut list is a rule away', () => {
+    const p = newProject('s', true);
+    const frame = (q: Project) => computeDesign(q).bom.cutlists.filter((c) => PRODUCT_MAP[c.productId]?.category === 'framing');
+    expect(p.rules.cutting).toBe('simple');
+    for (const c of frame(p)) for (const g of c.groups) expect(Math.max(...g.cuts) - Math.min(...g.cuts)).toBeLessThanOrEqual(5);
+    const bearerLengths = (q: Project) => new Set(frame(q).find((c) => c.productId === 'tp-140x45')!.groups.map((g) => g.stock)).size;
+    expect(bearerLengths(p)).toBe(1);
+    p.rules.cutting = 'cheapest';
+    expect(frame(p).some((c) => c.groups.some((g) => Math.max(...g.cuts) - Math.min(...g.cuts) > 5))).toBe(true);
+    expect(bearerLengths(p)).toBeGreaterThan(1);
   });
 });

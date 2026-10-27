@@ -1,5 +1,5 @@
 import { PRODUCT_MAP, POST_PRODUCTS, hangerFor, product, resolveProductId, stockLengthsOf } from '../model/catalog';
-import type { FrameSizes, Project, Pt, RuleSet } from '../model/types';
+import type { FrameSizes, Product, Project, Pt, RuleSet } from '../model/types';
 import { designBalustrade, type BalustradeDesign } from './balustrade';
 import { buildBom, type BomResult, type CountItem, type Piece } from './bom';
 import { assessCompliance, type Pathway } from './compliance';
@@ -243,6 +243,12 @@ function setup(project: Project) {
     params.footingType === 'stump' ? Math.max(100, postTop + params.footingDepth)
     : params.footingType === 'stirrup' ? Math.max(100, postTop - rules.stirrupLift)
     : Math.max(50, postTop);
+  // simple cutting (the company's rule): a stocked length more has to save its dollars in this timber
+  const unitPrice = (id: string): number => {
+    const v = project.prices[id];
+    return typeof v === 'number' && Number.isFinite(v) ? v : PRODUCT_MAP[id]?.defaultPrice ?? 0;
+  };
+  const extraLength = (prod: Product): number => ((rules.extraLengthSaving ?? 50) / Math.max(1e-6, unitPrice(prod.id))) * 1000;
   const ctx: LayoutContext = {
     boardWidth: decking.width ?? 86,
     boardGap: params.boardGap,
@@ -267,6 +273,7 @@ function setup(project: Project) {
     bearerStockLengths: stockLengthsOf(bearer, rules),
     sameTimber: joist.id === bearer.id,
     postWidth: postW,
+    simpleCutting: rules.cutting === 'cheapest' ? undefined : { joist: extraLength(joist), bearer: extraLength(bearer) },
   };
   return {
     params, rules, poly, valid, decking, joist, bearer, flush, boardT, joistD, bearerD, levels, concreteId,

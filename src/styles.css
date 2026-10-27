@@ -281,6 +281,10 @@ main.page-main { flex: 1; min-height: 0; overflow: auto; }
 
 /* steps + materials pages */
 .steps-wrap, .materials-wrap { max-width: 1100px; margin: 0 auto; padding: 16px 20px 40px; }
+.cut-mode { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; background: #fff; border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; margin-bottom: 10px; }
+.cut-mode b { font-size: 13px; }
+.cut-mode .seg { margin: 0; flex: 0 0 auto; min-width: 220px; }
+.cut-mode small { flex: 1 1 260px; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .steps-head, .materials-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .steps-head h2, .materials-head h2 { margin: 0 0 2px; font-size: 20px; }
 .steps-actions { display: flex; gap: 8px; flex-wrap: wrap; }

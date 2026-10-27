@@ -34,8 +34,12 @@ owner can change rather than a hidden constant.
   limit. Joists under the edge boards and breakers stay in line under the board joints, butted. Only the
   perimeter ends under the edge boards overhang. A run that fits one stick is never joined.
 - Framing pine (H3 MGP10 / F7) is bought in the lengths the yard usually has: 3.6, 4.8, 5.4 and 6.0 m (a
-  rule the owner can change). One cut list may mix lengths, cut the way a carpenter would: the cheapest mix
-  wins, e.g. 2.5 m joists come from 5.4 m sticks cut in half.
+  rule the owner can change). Cutting is a rule, simple by default so a crew without a cut list can cut it:
+  every stick cut into equal pieces of one length (whole, halves, thirds: 1.8 m from a 5.4 in thirds, not one
+  from a 2.4; 2.2 m two from a 4.8), bought in as few lengths as will do, another length only where it saves
+  the owner's amount (default $50); never "10 x 5.4, 3 x 2.4, 7 x 6.0, 1 x 4.8". The other choice, least
+  timber, mixes lengths and pieces on a stick (the cheapest mix wins). The materials page switches it and
+  shows what the other way costs.
 - Joins: the fewer the better. A joist or bearer takes pieces up to the longest stick, and of the supports
   that allow the fewest joins, the joins go where the pieces cut cleanly from the stocked lengths.
 - Standard frame: 90x45 joists on single 140x45 bearers, stumps at about 1.5 m. The frame is sized

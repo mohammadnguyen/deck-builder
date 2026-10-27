@@ -1,9 +1,9 @@
 /**
- * 1D cutting-stock optimiser: nests the pieces of one product into the lengths it is bought in. A cut list may
- * mix lengths, the way a carpenter buys them: a 2.5 m joist comes from half a 5.4, a 4.5 m one from a 4.8.
- * Several packings are tried and the one that buys the least timber wins, then the fewest sticks, cutting
- * patterns and different lengths. The best single length is one of them, so mixing never buys more than
- * one length would.
+ * 1D cutting-stock optimiser: nests the pieces of one product into the lengths it is bought in, two ways.
+ * Simple (the company's default for framing): every stick cut into equal pieces of one length, from as few
+ * lengths as will do, so the crew can cut without a cut list (packSimple). Cheapest: a cut list may mix lengths
+ * and pieces on a stick (packPieces): several packings are tried and the one that buys the least timber wins,
+ * then the fewest sticks, cutting patterns and different lengths.
  */
 export interface Bin {
   stock: number;
@@ -64,6 +64,126 @@ export function packedLength(lengths: number[], stockLengths: number[], kerf: nu
   if (!stocks.length || !pieces.length) return 0;
   const a = packInto(pieces, stocks, kerf, 0).totalStockLength;
   return stocks.length > 1 ? Math.min(a, packPatterns(pieces, stocks, kerf, 0).totalStockLength) : a;
+}
+
+/** a piece type of a simple cut list: lengths a few mm apart are one cut on site (they share a letter), planned
+ *  at the longer */
+interface PieceType {
+  len: number;
+  n: number;
+  items: number[];
+}
+
+function pieceTypes(pieces: number[]): PieceType[] {
+  const types: PieceType[] = [];
+  for (const p of [...pieces].sort((a, b) => b - a)) {
+    const last = types[types.length - 1];
+    if (last && last.len - p <= 5) {
+      last.n++;
+      last.items.push(p);
+    } else types.push({ len: p, n: 1, items: [p] });
+  }
+  return types;
+}
+
+interface SimplePlan {
+  /** per piece type: the stick it comes from and how many pieces each gives; the odd pieces left over may come
+   *  from another length of the set */
+  picks: { len: number; n: number; stock: number; k: number; sticks: number; rest: { stock: number; k: number; sticks: number } | null }[];
+  bought: number;
+  cost: number;
+}
+
+/**
+ * The simple cut list: every stick cut into equal pieces of one length (a whole stick, halves, thirds ...), from as
+ * few stocked lengths as will do. Each set of one, two or three lengths is tried, every piece type taking the length
+ * of the set that buys least for it; a length beyond the first is charged `extraLength` (mm of this timber).
+ * null when a piece is longer than every stick.
+ */
+function simplePlan(types: PieceType[], stocks: number[], kerf: number, extraLength: number): SimplePlan | null {
+  const longest = Math.max(...types.map((t) => t.len));
+  const sets: number[][] = [];
+  for (let i = 0; i < stocks.length; i++) {
+    sets.push([stocks[i]]);
+    for (let j = i + 1; j < stocks.length; j++) {
+      sets.push([stocks[i], stocks[j]]);
+      for (let k = j + 1; k < stocks.length; k++) sets.push([stocks[i], stocks[j], stocks[k]]);
+    }
+  }
+  let best: (SimplePlan & { lengths: number; sticks: number }) | null = null;
+  for (const set of sets) {
+    if (Math.max(...set) < longest) continue;
+    const picks: SimplePlan['picks'] = [];
+    const per = (stock: number, len: number) => Math.max(1, Math.floor((stock + kerf) / (len + kerf)));
+    const boughtOf = (p: SimplePlan['picks'][number]) => p.sticks * p.stock + (p.rest ? p.rest.sticks * p.rest.stock : 0);
+    const sticksOf = (p: SimplePlan['picks'][number]) => p.sticks + (p.rest?.sticks ?? 0);
+    for (const t of types) {
+      let pick: SimplePlan['picks'][number] | null = null;
+      for (const stock of set) {
+        if (stock < t.len) continue;
+        const k = per(stock, t.len);
+        const full = Math.floor(t.n / k);
+        const odd = t.n - full * k;
+        // the odd pieces from the stick of the set that suits them (one 2.4 rather than a 5.4 for a last 2.2)
+        for (const other of odd ? set : [stock]) {
+          if (other < t.len) continue;
+          const k2 = per(other, t.len);
+          const c: SimplePlan['picks'][number] = odd
+            ? { len: t.len, n: t.n, stock, k, sticks: full, rest: other === stock ? null : { stock: other, k: k2, sticks: Math.ceil(odd / k2) } }
+            : { len: t.len, n: t.n, stock, k, sticks: full, rest: null };
+          if (odd && other === stock) c.sticks = full + 1;
+          // the least timber, then the fewest sticks (two 2.2s from a 4.8 rather than one each from two 2.4s)
+          if (!pick || boughtOf(c) < boughtOf(pick) - 0.5 || (Math.abs(boughtOf(c) - boughtOf(pick)) <= 0.5 && sticksOf(c) < sticksOf(pick))) pick = c;
+        }
+      }
+      picks.push(pick!);
+    }
+    const bought = picks.reduce((s, p) => s + boughtOf(p), 0);
+    const lengths = new Set(picks.flatMap((p) => (p.rest ? [p.stock, p.rest.stock] : [p.stock]))).size;
+    const sticks = picks.reduce((s, p) => s + sticksOf(p), 0);
+    const cost = bought + extraLength * (lengths - 1);
+    const better =
+      !best || cost < best.cost - 0.5 || (Math.abs(cost - best.cost) <= 0.5 && (lengths < best.lengths || (lengths === best.lengths && sticks < best.sticks)));
+    if (better) best = { picks, bought, cost, lengths, sticks };
+  }
+  return best;
+}
+
+/**
+ * Pack for a crew without a cut list: every stick cut into equal pieces of one length, from as few stocked lengths
+ * as will do (a length more only where it saves `extraLength` mm of this timber). Pieces a few mm apart are cut to
+ * the longer. Falls back to the mixed packing when a piece is longer than every stick.
+ */
+export function packSimple(lengths: number[], stockLengths: number[], kerf: number, extraLength: number): PackResult {
+  const stocks = [...new Set(stockLengths)].filter((s) => s > 0).sort((p, q) => p - q);
+  const pieces = lengths.filter((l) => l > 0).map((l) => Math.ceil(l));
+  const totalPieceLength = pieces.reduce((s, l) => s + l, 0);
+  if (!stocks.length || !pieces.length) return { bins: [], groups: [], stockCount: [], totalStockLength: 0, totalPieceLength, wastePct: 0, oversize: [] };
+  const types = pieceTypes(pieces);
+  const plan = simplePlan(types, stocks, kerf, extraLength);
+  if (!plan) return packPieces(lengths, stockLengths, kerf);
+  const bins: Bin[] = [];
+  plan.picks.forEach((p, ti) => {
+    // the pieces themselves (a few mm apart at most) go on the sticks, so the cut list keeps each one's length
+    const items = [...types[ti].items];
+    const cut = (stock: number, n: number) => {
+      const cuts = items.splice(0, n);
+      const used = usedLength(cuts, kerf);
+      bins.push({ stock, cuts, used, offcut: Math.max(0, stock - used) });
+    };
+    for (let i = 0; i < p.sticks && items.length; i++) cut(p.stock, Math.min(p.k, items.length));
+    for (let i = 0; p.rest && i < p.rest.sticks && items.length; i++) cut(p.rest.stock, Math.min(p.rest.k, items.length));
+  });
+  return packResult(bins, totalPieceLength, []);
+}
+
+/** What a simple cut list costs, in mm of timber with each length beyond the first charged `extraLength`: for
+ *  weighing one split against another. */
+export function simpleLength(lengths: number[], stockLengths: number[], kerf: number, extraLength: number): number {
+  const stocks = [...new Set(stockLengths)].filter((s) => s > 0).sort((p, q) => p - q);
+  const pieces = lengths.filter((l) => l > 0).map((l) => Math.ceil(l));
+  if (!stocks.length || !pieces.length) return 0;
+  return simplePlan(pieceTypes(pieces), stocks, kerf, extraLength)?.cost ?? packedLength(lengths, stockLengths, kerf);
 }
 
 function betterPack(a: PackResult, b: PackResult): boolean {

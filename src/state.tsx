@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { computeDesign, type DesignResult } from './engine';
 import { LangContext, translate } from './i18n';
 import { defaultParams, defaultRules, newProject } from './model/defaults';
@@ -236,7 +236,7 @@ export interface Arrival {
   broken?: boolean;
 }
 
-/** the share link leaves the address once its project is stored, so a reload does not bring it again */
+/** the share link leaves the address once its project is changed here, so a reload does not bring it again */
 const clearShareHash = () => window.history.replaceState(null, '', window.location.pathname + window.location.search);
 
 interface Store {
@@ -301,6 +301,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     let list = stored.filter(isProjectLike).map(migrateProject);
     let current = loadJSON<string>(LS.current, '');
     let arrival: Arrival | null = null;
+    let arrived: Project | null = null;
     const histories: Store['histories'] = {};
     const shared = sharedProject(window.location.hash);
     if (shared && isProjectLike(shared)) {
@@ -310,14 +311,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
       current = r.id;
       histories[r.id] = initHistory(p, 'h.shared');
       arrival = { name: p.name, copy: r.copy, at: Date.now() };
+      arrived = p;
     } else if (isShareHash(window.location.hash)) arrival = { name: '', copy: false, at: Date.now(), broken: true };
     if (!list.length) {
       const rules = loadJSON<RuleSet | null>(LS.rules, null);
       const prices = loadJSON<Record<string, number> | null>(LS.prices, null);
       list = [newProject(lang === 'zh' ? '示例 deck' : 'Sample deck', true, rules ?? undefined, prices ?? undefined)];
     }
-    return { store: { projects: list, histories }, current, arrival };
+    return { store: { projects: list, histories }, current, arrival, arrived };
   });
+  // the project a link brought, while it is as it came (the link stays in the address till then)
+  const arrived = useRef<Project | null>(boot.arrived);
   const [store, setStore] = useState<Store>(boot.store);
   const [currentId, setCurrentId] = useState<string>(boot.current);
   const [arrival, setArrival] = useState<Arrival | null>(boot.arrival);
@@ -422,14 +426,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const receive = useCallback(
     (hash: string) => {
       if (!isShareHash(hash)) return;
-      clearShareHash();
       const shared = sharedProject(hash);
       if (!shared || !isProjectLike(shared)) {
+        clearShareHash();
         setArrival({ name: '', copy: false, at: Date.now(), broken: true });
         return;
       }
       const r = receiveShared(store.projects, migrateProject(shared), (name) => translate(lang, 'share.copyName', { name }));
       const p = r.projects.find((x) => x.id === r.id)!;
+      arrived.current = p;
       setStore({ projects: r.projects, histories: { ...store.histories, [r.id]: initHistory(p, 'h.shared') } });
       setCurrentId(r.id);
       setUiState((u) => ({ ...u, selection: null, tool: 'select', mode: 'design', drawMode: false }));
@@ -437,9 +442,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [store, lang],
   );
+  // The link stays in the address while its project is as it came: "Open in Safari" in a chat app's own browser, or
+  // "Open in browser" in WeChat, opens the address it shows, and so takes the project along. The first change, or
+  // another project opened, takes the link out, so a reload does not bring it again. A link that cannot be read goes.
   useEffect(() => {
+    if (boot.arrival?.broken) clearShareHash();
+  }, [boot]);
+  useEffect(() => {
+    if (!arrived.current || project === arrived.current) return;
+    arrived.current = null;
     if (isShareHash(window.location.hash)) clearShareHash();
-  }, []);
+  }, [project]);
   useEffect(() => {
     const onHash = () => receive(window.location.hash);
     window.addEventListener('hashchange', onHash);

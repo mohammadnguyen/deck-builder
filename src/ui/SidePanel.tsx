@@ -657,6 +657,7 @@ function RulesPanel() {
         <Chk label={t('r.frameJoist')} checked={r.frameJoist} onChange={(v) => setRules((rr) => ({ ...rr, frameJoist: v }))} />
         <Chk label={t('r.compositeJoistSetout')} checked={r.compositeJoistSetout !== false} onChange={(v) => setRules((rr) => ({ ...rr, compositeJoistSetout: v }))} />
         <Chk label={t('r.ripAtHouse')} checked={r.ripAtHouse !== false} onChange={(v) => setRules((rr) => ({ ...rr, ripAtHouse: v }))} />
+        <Chk label={t('r.edgeJoinsLeastWaste')} checked={r.edgeJoinsLeastWaste !== false} onChange={(v) => setRules((rr) => ({ ...rr, edgeJoinsLeastWaste: v }))} />
         <Sel
           label={t('r.cutting')}
           value={r.cutting === 'cheapest' ? 'cheapest' : 'simple'}

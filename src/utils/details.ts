@@ -15,7 +15,7 @@ type Axis = 'x' | 'y';
 function tidy(d: DetailEdits): DetailEdits | null {
   const out: DetailEdits = {};
   if (d.noEdgeBoard?.length) out.noEdgeBoard = [...d.noEdgeBoard].sort((a, b) => a - b);
-  for (const k of ['stumpsOff', 'stumpsAdded', 'stumpsMoved', 'bearersOff', 'bearersAdded', 'bearersMoved', 'joistsOff', 'joistsAdded', 'joistsMoved', 'joistsDoubled'] as const) {
+  for (const k of ['stumpsOff', 'stumpsAdded', 'stumpsMoved', 'bearersOff', 'bearersAdded', 'bearersMoved', 'joistsOff', 'joistsAdded', 'joistsMoved', 'joistsDoubled', 'edgeJoins', 'bearerJoins', 'joistJoinLines'] as const) {
     const list = d[k];
     if (list?.length) (out as Record<string, unknown>)[k] = list;
   }

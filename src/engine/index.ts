@@ -116,6 +116,16 @@ export interface DesignResult {
   method: MethodStep[];
 }
 
+/** the fascia along the sides off the house when it is on: its runs, and the cuts each takes (a run longer than a
+ *  board cut where the boards allow, as the fascia runs on past the joist ends) */
+function fasciaCuts(project: Project, poly: Pt[], fasciaProductId: string): { runs: FasciaRun[]; cuts: number[] } {
+  if (!project.params.fascia || poly.length < 4) return { runs: [], cuts: [] };
+  const E = edges(poly);
+  const runs = E.filter((e) => !project.houseEdges.includes(e.index)).map((e) => ({ edgeIndex: e.index, length: e.length }));
+  const max = maxStock(fasciaProductId, project.rules) - project.rules.boardEndAllowance;
+  return { runs, cuts: runs.flatMap((f) => splitRun(0, f.length, [], max, 300).pieces.map((len) => len + project.rules.boardEndAllowance)) };
+}
+
 /** the longest length a product is bought in (framing pine: of the yard's lengths) */
 const maxStock = (id: string, rules: RuleSet): number => {
   const lengths = stockLengthsOf(product(id), rules);
@@ -171,10 +181,10 @@ export function frameCandidates(rules: RuleSet): FrameSizes[] {
   return out;
 }
 
-/** stumps, bearer lines or joists changed by hand */
+/** stumps, bearer lines, joists or their joins changed by hand */
 export function frameEdited(d: Project['details']): boolean {
   if (!d) return false;
-  return [d.stumpsOff, d.stumpsAdded, d.stumpsMoved, d.bearersOff, d.bearersAdded, d.bearersMoved, d.joistsOff, d.joistsAdded, d.joistsMoved, d.joistsDoubled].some((list) => !!list?.length);
+  return [d.stumpsOff, d.stumpsAdded, d.stumpsMoved, d.bearersOff, d.bearersAdded, d.bearersMoved, d.joistsOff, d.joistsAdded, d.joistsMoved, d.joistsDoubled, d.bearerJoins, d.joistJoinLines].some((list) => !!list?.length);
 }
 
 /** the frame chosen for a deck without its parts changed by hand, by everything else about it: the same while only
@@ -319,6 +329,10 @@ function setup(project: Project) {
     return typeof v === 'number' && Number.isFinite(v) ? v : PRODUCT_MAP[id]?.defaultPrice ?? 0;
   };
   const extraLength = (prod: Product): number => ((rules.extraLengthSaving ?? 50) / Math.max(1e-6, unitPrice(prod.id))) * 1000;
+  // the edge boards' own board (not the decking): its cut is its own, with the fascia's when that is the same board
+  const fasciaProductId = decking.fasciaProductId && PRODUCT_MAP[decking.fasciaProductId] ? decking.fasciaProductId : decking.id;
+  const edgeBoardOwn = edgeBoardProductId !== decking.id;
+  const d = project.details;
   const ctx: LayoutContext = {
     boardWidth: decking.width ?? 86,
     boardGap: params.boardGap,
@@ -353,6 +367,12 @@ function setup(project: Project) {
     joistsOff: [...(project.details?.joistsOff ?? []), ...(project.details?.joistsMoved ?? []).map((m) => m.from)],
     joistsAdded: [...(project.details?.joistsAdded ?? []), ...(project.details?.joistsMoved ?? []).map((m) => m.to)],
     joistsDoubled: project.details?.joistsDoubled ?? [],
+    edgeBoardStockLengths: stockLengthsOf(product(edgeBoardProductId), rules),
+    edgeBoardOwn,
+    edgeBoardPool: edgeBoardOwn && valid.ok && fasciaProductId === edgeBoardProductId ? fasciaCuts(project, poly, fasciaProductId).cuts : [],
+    edgeJoins: d?.edgeJoins ?? [],
+    bearerJoins: d?.bearerJoins ?? [],
+    joistJoinLines: d?.joistJoinLines ?? [],
   };
   return {
     params, rules, poly, valid, decking, joist, bearer, flush, boardT, joistD, bearerD, levels, concreteId,
@@ -479,7 +499,7 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
   const fasciaProductId = decking.fasciaProductId && PRODUCT_MAP[decking.fasciaProductId] ? decking.fasciaProductId : decking.id;
   const deckScrew = decking.screwProductId && PRODUCT_MAP[decking.screwProductId] ? decking.screwProductId : 'screw-deck-10gx50';
   const clipId = decking.hiddenClipProductId && PRODUCT_MAP[decking.hiddenClipProductId] ? decking.hiddenClipProductId : null;
-  const fascia: FasciaRun[] = params.fascia ? E.filter((e) => !houseEdges.includes(e.index)).map((e) => ({ edgeIndex: e.index, length: e.length })) : [];
+  const { runs: fascia, cuts: fasciaPieces } = fasciaCuts(project, poly, fasciaProductId);
 
   // ---- pieces & counts ----
   const pieces: Piece[] = [];
@@ -497,13 +517,8 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
   for (const row of layout.boards) for (const run of row.runs) for (const len of run.pieces) push(decking.id, len, 'decking');
   for (const eb of layout.edgeBoards) for (const len of eb.pieces) push(edgeBoardProductId, len, 'edgeBoard');
   for (const br of layout.breakers) for (const len of br.pieces) push(decking.id, len, 'breaker');
-  const fasciaMax = maxStock(fasciaProductId, rules) - rules.boardEndAllowance;
-  let fasciaScrews = 0;
-  for (const f of fascia) {
-    const split = splitRun(0, f.length, [], fasciaMax, 300);
-    for (const len of split.pieces) push(fasciaProductId, len + rules.boardEndAllowance, 'fascia');
-    fasciaScrews += Math.ceil(f.length / 450) * 2;
-  }
+  for (const len of fasciaPieces) push(fasciaProductId, len, 'fascia');
+  const fasciaScrews = fascia.reduce((n, f) => n + Math.ceil(f.length / 450) * 2, 0);
   for (let i = 0; i < postCount; i++) push(postProductId, postLength, 'post');
   for (let i = 0; i < braceCount; i++) push('tp-90x45', braceLength, 'brace');
   if (balustrade.enabled) {

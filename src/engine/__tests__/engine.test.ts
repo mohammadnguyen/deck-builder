@@ -1298,3 +1298,97 @@ describe('detail mode: parts changed by hand, the rest laid out round them', () 
     expect(migrateProject({ ...p, details: { stumpsOff: [] } }).details).toBeNull();
   });
 });
+
+describe('joins: edge boards where they waste least, and joins put by hand', () => {
+  /** a deck against the house along the top, the boards along x (joists along y) */
+  function deck(w: number, h: number): Project {
+    const p = newProject('joins', false);
+    p.deck = [{ x: 0, y: 0 }, { x: w, y: 0 }, { x: w, y: h }, { x: 0, y: h }];
+    p.house = [[{ x: -500, y: 0 }, { x: w + 500, y: 0 }]];
+    p.houseEdges = detectHouseEdges(p.deck, p.house);
+    p.params.deckHeight = 600;
+    p.params.boardAxis = 'x';
+    return p;
+  }
+  const side = (d: ReturnType<typeof computeDesign>, i: number) => d.layout!.edgeBoards.find((e) => e.edgeIndex === i)!;
+  const boards = (d: ReturnType<typeof computeDesign>) => d.bom.lines.find((l) => l.productId === d.edgeBoardProductId)!.qty;
+
+  it('joins a long edge board where the boards waste least: one piece a whole board, the rest beside another piece', () => {
+    const d = computeDesign(deck(4000, 7000));
+    // the 7 m sides along the joists need two pieces each: one goes 5.4 + 1.64 so the order takes a board less
+    const pieces = d.layout!.edgeBoards.flatMap((e) => e.pieces.map(Math.round));
+    expect(pieces).toContain(5400);
+    const even = deck(4000, 7000);
+    even.rules.edgeJoinsLeastWaste = false;
+    const e = computeDesign(even);
+    expect(side(e, 1).pieces.map(Math.round)).toEqual([3520, 3520]);
+    expect(boards(d)).toBe(boards(e) - 1);
+    // a join is where its pieces say
+    const s1 = side(d, 1);
+    const at = s1.joinPts[0].y - Math.min(s1.seg.a.y, s1.seg.b.y);
+    expect(Math.round(s1.pieces[0] - 20)).toBe(Math.round(at));
+  });
+
+  it('never buys more edge boards than the even split, over many shapes', () => {
+    for (const [w, h] of [[4000, 7000], [6000, 6900], [9000, 3000], [12000, 4800], [5500, 5600], [7200, 6100]] as const) {
+      for (const axis of ['x', 'y'] as const) {
+        const p = deck(w, h);
+        p.params.boardAxis = axis;
+        const off = deck(w, h);
+        off.params.boardAxis = axis;
+        off.rules.edgeJoinsLeastWaste = false;
+        expect(boards(computeDesign(p))).toBeLessThanOrEqual(boards(computeDesign(off)));
+      }
+    }
+  });
+
+  it('puts edge board joins where they were put by hand: along the joists anywhere, across them on a joist', () => {
+    const p = deck(4000, 7000);
+    p.details = { edgeJoins: [{ x: 0, y: 4000 }, { x: 2010, y: 7000 }] };
+    const d = computeDesign(p);
+    expect(side(d, 3).pieces.map(Math.round)).toEqual([4020, 3020]);
+    expect(side(d, 3).joinPts).toEqual([{ x: 0, y: 4000 }]);
+    const across = side(d, 2).joinPts[0].x;
+    expect(d.layout!.joistPositions.some((x) => Math.abs(x - across) < 0.5)).toBe(true);
+    expect(Math.abs(across - 2010)).toBeLessThan(250);
+    // one that leaves a piece longer than a board is said so
+    const q = deck(4000, 7000);
+    q.details = { edgeJoins: [{ x: 0, y: 6200 }] };
+    expect(computeDesign(q).warnings.find((w) => w.key === 'layout.handEdgeLong')).toMatchObject({ params: { sides: '4' } });
+  });
+
+  it('joins a bearer over the stumps put by hand, the second ply by the rules; a piece too long is said', () => {
+    const base = computeDesign(deck(12000, 3000));
+    const b0 = base.layout!.bearers.find((b) => !b.onWall)!;
+    expect(b0.splices[0].map(Math.round)).toEqual([4513, 8975]);
+    const y = b0.seg.a.y;
+    const p = deck(12000, 3000);
+    p.details = { bearerJoins: [{ x: 4500, y }, { x: 7500, y: y + 40 }] };
+    const d = computeDesign(p);
+    const b = d.layout!.bearers.find((x) => !x.onWall && Math.abs(x.seg.a.y - y) < 1)!;
+    expect(b.splices[0].map(Math.round)).toEqual([4513, 7488]);
+    expect(d.warnings.some((w) => w.key === 'layout.handBearerJoin' || w.key === 'layout.bearerJoinLost')).toBe(false);
+    // one join in the middle leaves 6 m pieces with their scarfs: longer than a 6.0 stick
+    const q = deck(12000, 3000);
+    q.details = { bearerJoins: [{ x: 6000, y }, { x: 6000, y: 2600 }] };
+    const dq = computeDesign(q);
+    expect(dq.warnings.find((w) => w.key === 'layout.handBearerJoin')).toMatchObject({ params: { ids: b.id } });
+    expect(dq.warnings.find((w) => w.key === 'layout.bearerJoinLost')).toMatchObject({ params: { n: 1 } });
+  });
+
+  it('joins the joists over the bearer chosen by hand, where they can be', () => {
+    const base = computeDesign(deck(6000, 7500));
+    expect(base.layout!.joists.find((j) => j.kind === 'field')!.splices.map(Math.round)).toEqual([4494]);
+    const p = deck(6000, 7500);
+    p.details = { joistJoinLines: [{ x: 3000, y: 3000 }] };
+    const d = computeDesign(p);
+    for (const j of d.layout!.joists) expect(j.splices.map(Math.round)).toEqual([3004]);
+    expect(d.warnings.some((w) => w.key === 'layout.handJoistJoin')).toBe(false);
+    // a line that leaves a piece longer than a stick: the rules' join, said so
+    const q = deck(6000, 7500);
+    q.details = { joistJoinLines: [{ x: 3000, y: 1500 }] };
+    const dq = computeDesign(q);
+    expect(dq.layout!.joists.find((j) => j.kind === 'field')!.splices.map(Math.round)).toEqual([4494]);
+    expect(dq.warnings.find((w) => w.key === 'layout.handJoistJoin')?.params?.n).toBe(dq.layout!.joists.length);
+  });
+});

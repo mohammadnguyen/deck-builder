@@ -178,6 +178,9 @@ function migrateDetails(d: DetailEdits | null | undefined): DetailEdits | null {
     joistsAdded: pts(d.joistsAdded),
     joistsMoved: moves(d.joistsMoved),
     joistsDoubled: pts(d.joistsDoubled),
+    edgeJoins: pts(d.edgeJoins),
+    bearerJoins: pts(d.bearerJoins),
+    joistJoinLines: pts(d.joistJoinLines),
   };
   // only the changes there are
   for (const k of Object.keys(out) as (keyof DetailEdits)[]) if (!out[k]?.length) delete out[k];

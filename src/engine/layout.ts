@@ -1,7 +1,7 @@
 import type { Axis, BreakerLayout, DeckParams, Pt, RuleSet, Seg } from '../model/types';
 import { bbox, clipHorizontal, clipVertical, edges, mergeIntervals, pointInPolygon, projectOnEdge, swapPoly, swapPt, validatePolygon, type Edge } from './geometry';
 import { bestBreakerSplit } from './breakerplan';
-import { packedLength, runOn, simpleLength, splitRun, splitRunStocked } from './cutlist';
+import { packedLength, packPieces, runOn, simpleLength, splitRun, splitRunStocked } from './cutlist';
 import type { WarningItem } from './warnings';
 
 /** Decks at or above this height are designed for balcony loads (reduced spans). */
@@ -287,6 +287,16 @@ export interface LayoutContext {
   joistsAdded?: Pt[];
   joistsOff?: Pt[];
   joistsDoubled?: Pt[];
+  /** the edge board product: the lengths it comes in, whether it is its own (not the decking, so its joins can be
+   *  placed for its own cut), and the other cuts bought in it (the fascia, when it is the same board) */
+  edgeBoardStockLengths?: number[];
+  edgeBoardOwn?: boolean;
+  edgeBoardPool?: number[];
+  /** joins put where they are by hand: edge board joins (on the outline), bearer joins (at stumps), the bearer lines
+   *  the joists join over */
+  edgeJoins?: Pt[];
+  bearerJoins?: Pt[];
+  joistJoinLines?: Pt[];
 }
 
 /**
@@ -401,6 +411,9 @@ export function computeLayout(polyIn: Pt[], houseEdges: number[], params: DeckPa
 export function planFrame(polyIn: Pt[], houseEdges: number[], params: DeckParams, rules: RuleSet, ctx: LayoutContext): FramePlan {
   return layoutImpl(polyIn, houseEdges, params, rules, ctx, true) as FramePlan;
 }
+
+/** edge board joins chosen for the least waste, by the sides and their options: the same for every frame tried */
+const edgeJoinCache = new Map<string, number[]>();
 
 /** automatic breakers by field and settings: the same for every frame the sizing tries */
 const autoBreakerCache = new Map<string, { breakers: { xc: number; y0: number; y1: number; aligned: boolean; id: string; manual: boolean }[]; saving: { n: number; saving: number }[] }>();
@@ -1075,7 +1088,7 @@ function layoutImpl(
   const bearers: BearerRun[] = [];
   let maxBearerSpanUsed = 0;
   let bearerCounter = 0;
-  const bearerJobs: { index: number; xs: number; xe: number; postXs: number[]; onWall: boolean; keep: [number, number][]; pinned: boolean }[] = [];
+  const bearerJobs: { index: number; xs: number; xe: number; postXs: number[]; onWall: boolean; keep: [number, number][]; pinned: boolean; hand?: number[] }[] = [];
   // over a slab a line is a row of pedestals, one under each joist; the bearer only where there is ground (the parts,
   // each end that stops at a slab marked). Where the ground beside a slab is too narrow for a stump clear of it, the
   // joists there stand on pedestals on pads poured beside the slab, level with it (`pad`: that slab; -1 for a row on
@@ -1434,6 +1447,24 @@ function layoutImpl(
   const bStocks = [...new Set(ctx.bearerStockLengths?.length ? ctx.bearerStockLengths : [ctx.bearerMaxStock])].sort((p, q) => p - q);
   const bMaxLen = bStocks[bStocks.length - 1] - allowance;
   type Ply = { pieces: number[]; joins: number[]; off: boolean };
+  // detail mode: bearer joins put by hand, each over the stump nearest it on its bearer (not an end one): the first ply
+  // joins there, the second by the rules round it
+  const bjPins = (ctx.bearerJoins ?? []).map(toLay);
+  const bjUsed = bjPins.map(() => false);
+  for (const job of bearerJobs) {
+    if (job.onWall) continue;
+    const y = bearers[job.index].seg.a.y;
+    const inner = [...job.postXs].sort((p, q) => p - q).slice(1, -1);
+    const at: number[] = [];
+    bjPins.forEach((q, k) => {
+      if (Math.abs(q.y - y) > Math.min(150, rules.minBearerGap / 2) || q.x < job.xs - 1 || q.x > job.xe + 1 || !inner.length) return;
+      const x = inner.reduce((b, p) => (Math.abs(p - q.x) < Math.abs(b - q.x) ? p : b), inner[0]);
+      if (Math.abs(x - q.x) > 600) return;
+      bjUsed[k] = true;
+      if (!at.some((v) => Math.abs(v - x) < 1)) at.push(x);
+    });
+    if (at.length) job.hand = at.sort((p, q) => p - q);
+  }
   // a wall bearer can join anywhere: where a piece is a whole stick (or two) from either end
   const wallSpots = (from: number, to: number): number[] => {
     const use = bStocks.map((L) => L - allowance);
@@ -1449,9 +1480,11 @@ function layoutImpl(
     const sup = job.onWall ? [] : job.postXs;
     const maxLen = mode === 'stocked' ? bMaxLen : mode;
     const ext = job.onWall ? 0 : scarf;
-    const a =
-      (mode === 'stocked' ? splitRunStocked(job.xs, job.xe, job.onWall ? wallSpots(job.xs, job.xe) : sup, bStocks, allowance, rules.kerf, 600, undefined, ext) : null) ??
-      splitRun(job.xs, job.xe, sup, maxLen - 2 * ext, 600);
+    const handPts = job.hand ? [job.xs, ...job.hand, job.xe] : null;
+    const a = handPts
+      ? { pieces: handPts.slice(1).map((x, k) => x - handPts[k]), joins: job.hand!, offSupport: false }
+      : (mode === 'stocked' ? splitRunStocked(job.xs, job.xe, job.onWall ? wallSpots(job.xs, job.xe) : sup, bStocks, allowance, rules.kerf, 600, undefined, ext) : null) ??
+        splitRun(job.xs, job.xe, sup, maxLen - 2 * ext, 600);
     const plies: Ply[] = [{ pieces: runOn(a.pieces, ext), joins: a.joins, off: a.offSupport && !job.onWall }];
     if (params.bearerLaminations === 2) {
       const len = job.xe - job.xs;
@@ -1519,14 +1552,20 @@ function layoutImpl(
   }
   let bearerJoinOffPost = false;
   let bearerScarfs = 0;
+  const handBearerLong: string[] = [];
   for (const job of bearerJobs) {
     const plies = splitBearer(job, bearerMode);
     bearers[job.index].pieces = plies.map((p) => p.pieces.map((x) => x + rules.joistEndAllowance));
     bearers[job.index].splices = plies.map((p) => p.joins);
     if (plies.some((p) => p.off)) bearerJoinOffPost = true;
     if (!job.onWall) bearerScarfs += plies.reduce((n, p) => n + p.joins.length, 0);
+    // joins put by hand that leave a piece longer than the longest stick
+    if (job.hand && plies[0].pieces.some((x) => x > bMaxLen + 0.5)) handBearerLong.push(bearers[job.index].id);
   }
   if (bearerJoinOffPost) warnings.push({ severity: 'warn', key: 'layout.bearerJoinOffPost' });
+  if (handBearerLong.length) warnings.push({ severity: 'warn', key: 'layout.handBearerJoin', params: { ids: handBearerLong.join(', '), max: Math.round(bMaxLen + allowance) } });
+  const bjLost = bjUsed.filter((u) => !u).length;
+  if (bjLost) warnings.push({ severity: 'warn', key: 'layout.bearerJoinLost', params: { n: bjLost } });
 
   // ---- joists ----
   const bearerPositions = lines.map((l) => l.pos);
@@ -1572,14 +1611,29 @@ function layoutImpl(
   // on the bearer); the joists under the edge boards and the breakers stay in line under the board joints, butted
   const lapRun = ctx.bearerWidth / 2;
   const lapOf = (kind: JoistKind): number => (kind === 'field' ? lapRun : 0);
-  /** a joist run's pieces: 'stocked' as a carpenter would (above), or greedily with the longest pieces up to maxLen */
+  // detail mode: the bearer lines the joists join over, chosen by hand (each the line nearest a point put on it)
+  const jjLines: number[] = [];
+  let jjLost = 0;
+  for (const q of (ctx.joistJoinLines ?? []).map(toLay)) {
+    const near = bearerPositions.reduce((b, p) => (Math.abs(p - q.y) < Math.abs(b - q.y) ? p : b), Infinity);
+    if (Math.abs(near - q.y) > Math.min(150, rules.minBearerGap / 2)) jjLost++;
+    else if (!jjLines.includes(near)) jjLines.push(near);
+  }
+  /** a joist run's pieces: 'stocked' as a carpenter would (above), or greedily with the longest pieces up to maxLen;
+   *  where joins were put on lines by hand, the fewest joins over those lines (`hand`: whether they could take them) */
   const splitJoist = (y0: number, y1: number, mode: 'stocked' | number, ext: number) => {
     const sup = bearerPositions.filter((p) => p > y0 && p < y1);
+    const handSup = jjLines.filter((p) => p > y0 + 1 && p < y1 - 1);
+    if (handSup.length) {
+      const h = splitRunStocked(y0, y1, handSup, jStocks, rules.joistEndAllowance, rules.kerf, 600, undefined, ext);
+      if (h) return { ...h, pieces: runOn(h.pieces, ext), hand: true };
+    }
     const r =
       (mode === 'stocked' ? splitRunStocked(y0, y1, sup, jStocks, rules.joistEndAllowance, rules.kerf, 600, undefined, ext) : null) ??
       splitRun(y0, y1, sup, (mode === 'stocked' ? jMaxLen : mode) - 2 * ext, 600);
-    return { ...r, pieces: runOn(r.pieces, ext) };
+    return { ...r, pieces: runOn(r.pieces, ext), hand: !handSup.length };
   };
+  let jjRefused = 0;
   let joistMode: 'stocked' | number = jMaxLen;
   if (!ctx.flush) {
     // bearers of the same timber are cut from the same sticks
@@ -1667,6 +1721,8 @@ function layoutImpl(
       const hangers = ledgerPositions.filter((p) => Math.abs(p - y0) < 1 || Math.abs(p - y1) < 1).length;
       const split = splitJoist(y0, y1, joistMode, lapOf(c.kind));
       if (split.offSupport) joistJoinOffBearer = true;
+      // joins put on lines by hand that this joist could not take (a piece longer than the longest stick)
+      if (!split.hand) jjRefused++;
       // both pieces of a lap sit on the bearer; over a pedestal row, on the one pedestal, set under the pair
       const laps = lapOf(c.kind) ? split.joins.length : 0;
       const pedestalJoins = split.joins.filter((j) => pedestalAt(c.x, j) >= 0);
@@ -1694,6 +1750,8 @@ function layoutImpl(
     }
   }
   if (joistJoinOffBearer) warnings.push({ severity: 'warn', key: 'layout.joistJoinOffBearer' });
+  if (jjRefused) warnings.push({ severity: 'warn', key: 'layout.handJoistJoin', params: { n: jjRefused, max: Math.round(jMaxLen + rules.joistEndAllowance) } });
+  if (jjLost) warnings.push({ severity: 'warn', key: 'layout.joistJoinLost', params: { n: jjLost } });
   const pads = pedestals.filter((p) => p.pad).length;
   if (pads) warnings.push({ severity: 'warn', key: 'layout.slabPads', params: { n: pads, w: Math.round(padStrip), min: Math.round(slabSet + endSet) } });
   for (const l of ledgers) l.hangers = ctx.flush ? joists.filter((j) => Math.abs(j.seg.a.y - l.seg.a.y) < 1 || Math.abs(j.seg.b.y - l.seg.a.y) < 1).length : 0;
@@ -1870,7 +1928,8 @@ function layoutImpl(
   const lastRow = boards[boards.length - 1];
   if (lastRow && lastRow.ripped && lastRow.width < bw / 2) warnings.push({ severity: 'warn', key: 'layout.narrowRip', params: { width: Math.round(lastRow.width) } });
 
-  // ---- edge boards: one run per exposed edge that has one, mitred where two of them meet ----
+  // ---- edge boards: one run per exposed edge that has one, mitred where two of them meet; the fewest pieces a side
+  //      needs, joined where the edge boards waste least (or where the joins were put by hand) ----
   const edgeBoards: EdgeBoardRun[] = [];
   let edgeBoardLm = 0;
   let edgeBoardPieces = 0;
@@ -1879,47 +1938,172 @@ function layoutImpl(
   if (edgeBoardOn) {
     const n = E.length;
     const maxEdge = ctx.edgeBoardMaxStock - rules.boardEndAllowance;
+    const minEdge = rules.minBoardPiece;
     const cornerAt = (i: number): CornerKind => {
       const prev = E[(i - 1 + n) % n];
       const cur = E[i];
       if (!boarded(prev) || !boarded(cur)) return 'butt';
       return cornerShape(poly, i);
     };
+    /** a side's edge board along its axis: where it runs, the mitre allowance at each end, its joins and the other
+     *  ways to join it */
+    interface SidePlan { e: Edge; startCorner: CornerKind; endCorner: CornerKind; ax: Axis; lo: number; hi: number; extraLo: number; extraHi: number; joins: number[]; options: number[][] }
+    /** the pieces of a side cut at these joins (before the end allowance) */
+    const piecesOf = (r: SidePlan, joins: number[]): number[] => {
+      const pts = [r.lo, ...joins, r.hi];
+      const out = pts.slice(1).map((x, k) => x - pts[k]);
+      out[0] += r.extraLo;
+      out[out.length - 1] += r.extraHi;
+      return out;
+    };
+    /** every piece within a board, none shorter than the shortest piece worth laying */
+    const fitsBoards = (r: SidePlan, joins: number[]): boolean => {
+      const pts = [r.lo, ...joins, r.hi];
+      return pts.slice(1).every((x, k) => x - pts[k] >= minEdge - 0.5) && piecesOf(r, joins).every((p) => p <= maxEdge + 0.5);
+    };
+    const stocks = ctx.edgeBoardStockLengths?.length ? ctx.edgeBoardStockLengths : [ctx.edgeBoardMaxStock];
+    // the edge boards' own cut (not packed with the decking) is weighed join by join, unless the owner wants them even
+    const optimise = !!ctx.edgeBoardOwn && rules.edgeJoinsLeastWaste !== false;
+    const handJoins = (ctx.edgeJoins ?? []).map(toLay);
+    const handLong: number[] = [];
+    const handShort: number[] = [];
+    const plans: (SidePlan & { sup: number[] | null })[] = [];
     for (const e of E) {
       if (!boarded(e)) continue;
       const startCorner = cornerAt(e.index);
       const endCorner = cornerAt((e.index + 1) % n);
-      const extra = (startCorner === 'concave' ? ebw : 0) + (endCorner === 'concave' ? ebw : 0);
-      const length = e.length + extra;
-      const alongJoists = e.axis === 'y';
-      let pieces: number[];
-      let joinTs: number[];
-      if (length <= maxEdge) {
-        pieces = [length];
-        joinTs = [];
-      } else if (alongJoists) {
-        // continuous support from the edge joist: split evenly
-        const parts = Math.ceil(length / maxEdge);
-        pieces = Array.from({ length: parts }, () => length / parts);
-        joinTs = Array.from({ length: parts - 1 }, (_, k) => ((k + 1) * e.length) / parts);
-      } else {
-        const lo = Math.min(e.a.x, e.b.x);
-        const hi = Math.max(e.a.x, e.b.x);
-        const sup = joistPositions.filter((x) => x > lo + rules.minBoardPiece && x < hi - rules.minBoardPiece);
-        const split = splitRun(lo, hi, sup, maxEdge - extra, rules.minBoardPiece);
-        pieces = [...split.pieces];
-        // the mitre allowance at a concave corner belongs to the piece at that end
-        const startIdx = e.dir.x > 0 ? 0 : pieces.length - 1;
-        const endIdx = e.dir.x > 0 ? pieces.length - 1 : 0;
-        if (startCorner === 'concave') pieces[startIdx] += ebw;
-        if (endCorner === 'concave') pieces[endIdx] += ebw;
-        joinTs = split.joins.map((x) => (e.dir.x > 0 ? x - e.a.x : e.a.x - x));
+      const ax = e.axis;
+      const other: Axis = ax === 'x' ? 'y' : 'x';
+      const along = e.axis === 'y';
+      const lo = Math.min(e.a[ax], e.b[ax]);
+      const hi = Math.max(e.a[ax], e.b[ax]);
+      // the mitre allowance at a concave corner belongs to the piece at that end
+      const sExtra = startCorner === 'concave' ? ebw : 0;
+      const eExtra = endCorner === 'concave' ? ebw : 0;
+      const up = e.dir[ax] > 0;
+      const r = { e, startCorner, endCorner, ax, lo, hi, extraLo: up ? sExtra : eExtra, extraHi: up ? eExtra : sExtra, joins: [] as number[], options: [] as number[][], sup: null as number[] | null };
+      // across the joists a join lands on a joist; along them anywhere, on the edge joist
+      r.sup = along ? null : joistPositions.filter((x) => x > lo + minEdge && x < hi - minEdge);
+      const mine = handJoins.filter((q) => Math.abs(q[other] - e.a[other]) < 2 && q[ax] > lo + 1 && q[ax] < hi - 1).map((q) => q[ax]);
+      if (mine.length) {
+        // put in by hand: across the joists, on to the nearest joist (a piece left too short is said)
+        const spots = along ? null : joistPositions.filter((x) => x > lo + 1 && x < hi - 1);
+        const at = (x: number) => (spots?.length ? spots.reduce((b, j) => (Math.abs(j - x) < Math.abs(b - x) ? j : b), spots[0]) : x);
+        r.joins = [...new Set(mine.map((x) => Math.round(at(x) * 10) / 10))].sort((p, q) => p - q);
+        if (piecesOf(r, r.joins).some((p) => p > maxEdge + 0.5)) handLong.push(e.index + 1);
+        const pts = [lo, ...r.joins, hi];
+        if (pts.slice(1).some((x, k) => x - pts[k] < minEdge - 0.5)) handShort.push(e.index + 1);
+      } else if (e.length + sExtra + eExtra > maxEdge) {
+        if (along) {
+          // continuous support from the edge joist: cut evenly
+          const parts = Math.ceil((e.length + sExtra + eExtra) / maxEdge);
+          const P = (e.length + sExtra + eExtra) / parts;
+          r.joins = Array.from({ length: parts - 1 }, (_, k) => lo + (k + 1) * P - r.extraLo);
+        } else r.joins = splitRun(lo, hi, r.sup!, maxEdge - sExtra - eExtra, minEdge).joins;
+        if (optimise) r.options = [r.joins];
       }
+      plans.push(r);
+    }
+    // the other ways to join each side with as many joins: one piece a whole board, or what fills a board beside
+    // another piece; every joist across the joists; as long as the pieces allow from either end
+    const cutsOf = (r: SidePlan, joins: number[]) => piecesOf(r, joins).map((p) => p + rules.boardEndAllowance);
+    const choosing = plans.filter((r) => r.options.length);
+    for (const r of choosing) {
+      const add = (joins: number[]) => {
+        const j = joins.map((x) => Math.round(x * 10) / 10);
+        // (never more joins than the rules give the side)
+        if (j.length === r.joins.length && fitsBoards(r, j) && !r.options.some((o) => o.length === j.length && o.every((x, i) => Math.abs(x - j[i]) < 1))) r.options.push(j);
+      };
+      const greedy = (fromLo: boolean): number[] => {
+        // as long as the pieces allow, from one end (across the joists, at the joists)
+        if (r.sup) {
+          if (fromLo) return splitRun(r.lo, r.hi, r.sup, maxEdge - r.extraLo - r.extraHi, minEdge).joins;
+          return splitRun(-r.hi, -r.lo, r.sup.map((x) => -x), maxEdge - r.extraLo - r.extraHi, minEdge).joins.map((x) => -x).reverse();
+        }
+        const out: number[] = [];
+        if (fromLo) {
+          let x = r.lo + maxEdge - r.extraLo;
+          out.push(x);
+          while (r.hi - x > maxEdge - r.extraHi + 0.5 && out.length < 20) out.push((x += maxEdge));
+        } else {
+          let x = r.hi - (maxEdge - r.extraHi);
+          out.unshift(x);
+          while (x - r.lo > maxEdge - r.extraLo + 0.5 && out.length < 20) out.unshift((x -= maxEdge));
+        }
+        return out;
+      };
+      add(greedy(true));
+      add(greedy(false));
+      if (r.joins.length !== 1) continue;
+      if (r.sup) for (const x of r.sup) add([x]);
+      else {
+        const others = [...(ctx.edgeBoardPool ?? []), ...plans.filter((o) => o !== r).flatMap((o) => cutsOf(o, o.joins))];
+        const fills = stocks.flatMap((S) => [S, ...others.map((c) => S - c - ctx.kerf)]).map((T) => T - rules.boardEndAllowance).filter((x) => x >= minEdge);
+        for (const raw of fills) {
+          add([r.lo + raw - r.extraLo]);
+          add([r.hi - (raw - r.extraHi)]);
+        }
+      }
+    }
+    // weighed together: what all the edge boards (and the fascia cut from the same board) buy, then how many boards
+    const weighing = choosing.filter((r) => r.options.length > 1);
+    if (weighing.length) {
+      const key = JSON.stringify([stocks, ctx.kerf, rules.boardEndAllowance, ctx.edgeBoardPool ?? [], plans.map((r) => [r.lo, r.hi, r.extraLo, r.extraHi, r.joins]), weighing.map((r) => r.options)]);
+      let pick = edgeJoinCache.get(key);
+      if (!pick) {
+        const choice = weighing.map(() => 0);
+        const score = (c: number[]) => {
+          const cuts = [...(ctx.edgeBoardPool ?? []), ...plans.flatMap((r) => {
+            const w = weighing.indexOf(r);
+            return cutsOf(r, w >= 0 ? r.options[c[w]] : r.joins);
+          })];
+          const pack = packPieces(cuts, stocks, ctx.kerf);
+          return { bought: pack.totalStockLength, boards: pack.bins.length };
+        };
+        const better = (a: { bought: number; boards: number }, b: { bought: number; boards: number }) => a.bought < b.bought - 0.5 || (Math.abs(a.bought - b.bought) <= 0.5 && a.boards < b.boards);
+        let best = score(choice);
+        for (let pass = 0; pass < 3; pass++) {
+          let moved = false;
+          weighing.forEach((r, i) => {
+            for (let o = 0; o < r.options.length; o++) {
+              if (o === choice[i]) continue;
+              const trial = [...choice];
+              trial[i] = o;
+              const s = score(trial);
+              if (better(s, best)) {
+                best = s;
+                choice[i] = o;
+                moved = true;
+              }
+            }
+          });
+          if (!moved) break;
+        }
+        pick = choice;
+        if (edgeJoinCache.size > 200) edgeJoinCache.clear();
+        edgeJoinCache.set(key, pick);
+      }
+      weighing.forEach((r, i) => (r.joins = r.options[pick![i]]));
+    }
+    // joins put by hand that are on no side with an edge board now (the outline changed, or the edge board went)
+    const edgeLost = handJoins.filter((q) => !plans.some((r) => {
+      const other: Axis = r.ax === 'x' ? 'y' : 'x';
+      return Math.abs(q[other] - r.e.a[other]) < 2 && q[r.ax] > r.lo + 1 && q[r.ax] < r.hi - 1;
+    })).length;
+    if (edgeLost) warnings.push({ severity: 'warn', key: 'layout.edgeJoinLost', params: { n: edgeLost } });
+    if (handLong.length) warnings.push({ severity: 'warn', key: 'layout.handEdgeLong', params: { sides: handLong.join(', '), max: Math.round(maxEdge) } });
+    if (handShort.length) warnings.push({ severity: 'warn', key: 'layout.handEdgeShort', params: { sides: handShort.join(', '), min: minEdge } });
+    for (const r of plans) {
+      const e = r.e;
+      const length = e.length + r.extraLo + r.extraHi;
+      const pieces = piecesOf(r, r.joins);
+      const joinTs = r.joins.map((x) => (x - e.a[r.ax]) * e.dir[r.ax]);
+      const alongJoists = e.axis === 'y';
       const crossings = alongJoists
         ? Math.floor(e.length / 450) + 1
         : joistPositions.filter((x) => x > Math.min(e.a.x, e.b.x) - 1 && x < Math.max(e.a.x, e.b.x) + 1).length;
       const runScrews = (crossings + joinTs.length) * rules.screwsPerCrossing;
-      if (startCorner !== 'butt') mitres++;
+      if (r.startCorner !== 'butt') mitres++;
       edgeBoardLm += length;
       edgeBoardPieces += pieces.length;
       edgeBoardScrews += runScrews;
@@ -1930,8 +2114,8 @@ function layoutImpl(
         length,
         pieces: pieces.map((p) => p + rules.boardEndAllowance),
         joinPts: joinTs.map((tt) => ({ x: e.a.x + e.dir.x * tt, y: e.a.y + e.dir.y * tt })),
-        startCorner,
-        endCorner,
+        startCorner: r.startCorner,
+        endCorner: r.endCorner,
         crossings,
         screws: runScrews,
         alongJoists,

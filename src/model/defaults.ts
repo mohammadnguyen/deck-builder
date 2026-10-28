@@ -67,6 +67,7 @@ export function defaultRules(): RuleSet {
     bearerOffClear: 300,
     joistOffClear: 100,
     joistCantileverPct: 25,
+    edgeJoinsLeastWaste: true,
     braceHeight: 1200,
     engineerHeight: 3000,
     lowDeckClearance: 400,

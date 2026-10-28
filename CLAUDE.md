@@ -15,7 +15,10 @@ owner can change rather than a hidden constant.
 
 - Composite decking: joists set out at 400 centres from the start of each bay, the short space last.
   Timber decking: joist spacing evened out per bay.
-- Picture-frame edge boards priced separately, 45 degree mitres; double joists under edge board joints.
+- Picture-frame edge boards priced separately, 45 degree mitres; double joists under edge board joints. A side keeps
+  the fewest pieces it needs, joined where the edge boards (with the fascia when it is the same board) buy the fewest
+  boards: one piece a whole board, or a piece that fills a board beside another (rule, on; a side changes only when
+  it saves; timber edge boards are packed with the decking, joined as before).
 - The frame follows the boards, and boards are not wasted unless there is no other way. Composite boards
   are 5.4 m at most: a run that fits one board gets no breaker; a longer run gets symmetric breaker boards
   that stop at the edge board, placed where the boards waste least (2.7 | 5.4 | 2.7, halves, thirds,
@@ -66,7 +69,10 @@ owner can change rather than a hidden constant.
   put in; a joist doubled (a twin hard beside it, the pair butted at its joins and nailed). Everything else is laid out
   round them by the rules (a bearer line moved carries the stumps put in on it); the frame size is chosen without the
   hand-changed parts (they tune it); a change that breaks a rule is said, not blocked (joist span, joist spacing, joists
-  running past their last bearer more than a share of their span, rule 25%). Joins follow the same pattern next.
+  running past their last bearer more than a share of their span, rule 25%). Joins the same way: an edge board join
+  slid along its side (on to a joist across the joists), taken out or put in, a side back to auto; a bearer join
+  stepped to the stump before or after (the second ply joins by the rules round it); the bearers the joists join over
+  chosen (the fewest joins over those). A piece left longer than a board or stick, or too short, is said.
 
 ## Drawings (owner's ask)
 

@@ -14,7 +14,8 @@ export type Selection =
   | { type: 'stair'; id: string }
   | { type: 'breaker'; id: string }
   // detail mode: single parts of the frame
-  | { type: 'edgeBoard'; index: number }
+  | { type: 'edgeBoard'; index: number; x?: number; y?: number }
+  | { type: 'edgeJoin'; x: number; y: number }
   | { type: 'post'; x: number; y: number }
   | { type: 'offSpot'; x: number; y: number }
   | { type: 'bearer'; id: string; x: number; y: number }

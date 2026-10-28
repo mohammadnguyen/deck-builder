@@ -287,8 +287,11 @@ main.page-main { flex: 1; min-height: 0; overflow: auto; }
 .dimchip.house { border-color: #5b6770; color: #374151; }
 .dimchip.sel { box-shadow: 0 0 0 3px rgba(245,158,11,.35); }
 .dimchip:focus { outline: 2px solid var(--accent); }
-.edgebar { position: absolute; left: 50%; bottom: 44px; transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px 10px; max-width: calc(100% - 24px); background: #fff; border: 1px solid var(--border); border-radius: 18px; padding: 6px 12px; box-shadow: 0 4px 14px rgba(0,0,0,.12); z-index: 5; font-size: 13px; }
+.edgebar { position: absolute; left: 50%; bottom: 84px; transform: translateX(-50%); display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 8px 10px; width: max-content; max-width: calc(100% - 24px); background: #fff; border: 1px solid var(--border); border-radius: 18px; padding: 6px 12px; box-shadow: 0 4px 14px rgba(0,0,0,.12); z-index: 5; font-size: 13px; }
 .edgebar .chk { display: inline-flex; align-items: center; gap: 4px; }
+.edgebar .joinctl { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.edgebar .joinstep { display: inline-flex; align-items: center; gap: 2px; font-variant-numeric: tabular-nums; }
+.edgebar .joinstep .tool { padding: 2px 7px; min-width: 0; }
 .edgebar input[type=number] { width: 70px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 4px; margin-left: 4px; }
 .canvas-empty { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); background: #fff; border: 1px dashed var(--border); border-radius: 10px; padding: 14px 20px; color: var(--muted); font-size: 14px; }
 .toolbar .grow { flex: 1; }
@@ -406,7 +409,7 @@ ol.steps ul { margin: 6px 0 0 30px; padding: 0 0 0 14px; color: #374151; font-si
 /* on a phone the length box sits in a row between the toolbar and the drawing instead of floating next to the finger */
 @media (max-width: 960px) {
   .canvas-wrap .toolbar { order: -2; }
-  .toolbar .phone-hide { display: none; }
+  .toolbar .phone-hide, .edgebar .phone-hide { display: none; }
   .canvas-wrap .len-float { position: static; order: -1; transform: none; margin: 6px 8px; }
   .canvas-wrap .len-float input { flex: 1; min-width: 0; width: auto; }
 }
@@ -423,7 +426,7 @@ ol.steps ul { margin: 6px 0 0 30px; padding: 0 0 0 14px; color: #374151; font-si
 
 /* phones: the selection bar spans the drawing; the zoom buttons step aside while it is open (pinch still zooms) */
 @media (max-width: 960px) {
-  .edgebar { left: 8px; right: 8px; bottom: 8px; transform: none; max-width: none; border-radius: 12px; padding: 8px 10px; z-index: 6; }
+  .edgebar { left: 8px; right: 8px; bottom: 8px; transform: none; width: auto; max-width: none; border-radius: 12px; padding: 8px 10px; z-index: 6; }
   .edgebar > span:first-child { flex-basis: 100%; text-align: center; font-weight: 600; }
   .canvas-wrap:has(.edgebar) .zoomctl { display: none; }
 }

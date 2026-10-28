@@ -3,7 +3,10 @@ import { computeDesign } from '../../engine';
 import { detectHouseEdges } from '../../engine/geometry';
 import { newProject } from '../../model/defaults';
 import type { DetailEdits, Project } from '../../model/types';
-import { detailCount, joistEdits, joistTarget, lineEdits, moveJoist, moveLine, removeJoist, removeLine, setDoubled, unmoveJoist, unmoveLine } from '../details';
+import {
+  bearerHandJoins, clearJoistJoinLines, detailCount, joistEdits, joistJoinLineAt, joistTarget, lineEdits, moveJoist, moveLine, removeJoist, removeLine, setBearerJoins, setDoubled,
+  setJoistJoinLine, setSideJoins, sideHandJoins, unmoveJoist, unmoveLine,
+} from '../details';
 
 /** a 6 x 4 m deck against the house along the top, 600 high: bearer lines at 23 (the wall), 1340, 2658, 3975 */
 function deck(details: DetailEdits | null = null): Project {
@@ -71,5 +74,28 @@ describe('detail mode helpers: bearer lines and joists', () => {
     expect(edits.get(20000)).toEqual({ own: { kind: 'added', index: 0 } });
     expect(edits.get(9000)).toEqual({ own: { kind: 'moved', index: 0 } });
     expect(detailCount(d)).toBe(3);
+  });
+
+  it("joins put by hand: a side's edge board joins, a bearer's, and the line the joists join over", () => {
+    const side = { a: { x: 6000, y: 4000 }, b: { x: 0, y: 4000 } };
+    const other = { a: { x: 6000, y: 0 }, b: { x: 6000, y: 4000 } };
+    let d = setSideJoins(null, side, [{ x: 2500.4, y: 4000 }]);
+    d = setSideJoins(d, other, [{ x: 6000, y: 1800 }]);
+    expect(sideHandJoins(d, side)).toEqual([{ x: 2500, y: 4000 }]);
+    // a side's joins replace its own, not the other side's; none: back to the rules
+    d = setSideJoins(d, side, [{ x: 2000, y: 4000 }, { x: 4000, y: 4000 }]);
+    expect(d!.edgeJoins).toEqual([{ x: 6000, y: 1800 }, { x: 2000, y: 4000 }, { x: 4000, y: 4000 }]);
+    expect(setSideJoins(setSideJoins(d, side, []), other, [])).toBeNull();
+    // a bearer's joins: the points on its line (within a stump's snap), along it
+    const seg = { a: { x: 0, y: 1340 }, b: { x: 6000, y: 1340 } };
+    const b = setBearerJoins({ bearerJoins: [{ x: 1500, y: 2658 }] }, seg, 'y', [{ x: 3000, y: 1340 }]);
+    expect(bearerHandJoins(b, seg, 'y')).toEqual([{ x: 3000, y: 1340 }]);
+    expect(setBearerJoins(b, seg, 'y', [])).toEqual({ bearerJoins: [{ x: 1500, y: 2658 }] });
+    // the joists over a line: on and off, and all back to the rules
+    const j = setJoistJoinLine(null, { x: 3000, y: 2658 }, 'y', true);
+    expect(joistJoinLineAt(j, 2658, 'y')).toBe(true);
+    expect(joistJoinLineAt(j, 1340, 'y')).toBe(false);
+    expect(setJoistJoinLine(j, { x: 100, y: 2700 }, 'y', false)).toBeNull();
+    expect(clearJoistJoinLines(setJoistJoinLine(j, { x: 0, y: 1340 }, 'y', true))).toBeNull();
   });
 });

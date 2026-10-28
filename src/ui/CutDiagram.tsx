@@ -86,9 +86,10 @@ function tagsOf(productId: string, cut: number, marks: CutMarks): string[] {
 /**
  * How to cut: for each product, every cutting pattern as a stick drawn to scale with its pieces, and how many
  * sticks are cut that way, then the spare sticks: the rows add up to the order, length for length. Framing pieces
- * carry the letters of the framing plan.
+ * carry the letters of the framing plan. In two columns the products are split here, the rows evened out: Safari
+ * gives a drawn bar in CSS columns no size, so it drops out of the PDF made from the sheet.
  */
-export function CutDiagrams({ design, project, filter, showUses = true }: { design: DesignResult; project: Project; filter?: (c: CutList) => boolean; showUses?: boolean }) {
+export function CutDiagrams({ design, project, filter, showUses = true, columns = 1 }: { design: DesignResult; project: Project; filter?: (c: CutList) => boolean; showUses?: boolean; columns?: 1 | 2 }) {
   const { t, lang } = useT();
   const hatch = `offcut-${useId().replace(/:/g, '')}`;
   const marks = cutMarks(design, project.rules, project.params.joistConnection === 'flush');
@@ -99,64 +100,90 @@ export function CutDiagrams({ design, project, filter, showUses = true }: { desi
     return first >= 0 ? first : 1000;
   };
   lists.sort((a, b) => order(a) - order(b));
-  return (
-    <div className="cut-diagrams">
-      <svg width={0} height={0} style={{ position: 'absolute' }}>
-        <defs>
-          <pattern id={hatch} patternUnits="userSpaceOnUse" width={8} height={8} patternTransform="rotate(45)">
-            <line x1={0} y1={0} x2={0} y2={8} stroke="#c4c8ce" strokeWidth={3} />
-          </pattern>
-        </defs>
-      </svg>
-      {lists.map((c) => {
-        // the line on the order: the cut and its spare (a line taken off the order: the cut only)
-        const line = design.bom.lines.find((l) => l.productId === c.productId && !l.addedId);
-        const off = !line && design.bom.removed.some((l) => l.productId === c.productId);
-        const spare = line?.spareStock ?? [];
-        const maxStock = Math.max(...c.groups.map((g) => g.stock), ...spare.map((s) => s.length), 1);
-        const perLength = new Map<number, number>();
-        for (const g of c.groups) perLength.set(g.stock, (perLength.get(g.stock) ?? 0) + g.count);
-        for (const s of spare) perLength.set(s.length, (perLength.get(s.length) ?? 0) + s.count);
-        const sticks = [...perLength.values()].reduce((n, k) => n + k, 0);
-        const lengths = [...perLength.entries()].sort((a, b) => b[0] - a[0]);
-        const stockText = lengths.length === 1 ? t('cutd.sticks', { n: sticks, stock: `${(lengths[0][0] / 1000).toFixed(1)} m` }) : t('cutd.sticksMixed', { n: sticks, list: lengths.map(([len, n]) => `${n} × ${(len / 1000).toFixed(1)} m`).join(' + ') });
-        const pieceMarks = marks.marks.filter((m) => m.productId === c.productId);
-        return (
-          <div key={c.productId} className="cut-product">
-            <div className="cut-head">
-              <b>{productName(c.productId, lang)}</b>
-              <span>
-                {stockText}
-                {line?.extraCount ? ` · ${t('cutd.spare', { n: line.extraCount })}` : ''}
-                {off ? ` · ${t('cutd.removed')}` : ''}
+  // the line on the order: the cut and its spare (a line taken off the order: the cut only)
+  const lineOf = (c: CutList) => design.bom.lines.find((l) => l.productId === c.productId && !l.addedId);
+  const rowsOf = (c: CutList) => cutRows(c.groups, (cut) => marks.of(c.productId, cut)?.mark ?? String(Math.round(cut)), project.rules.kerf);
+  const product = (c: CutList) => {
+    const line = lineOf(c);
+    const off = !line && design.bom.removed.some((l) => l.productId === c.productId);
+    const spare = line?.spareStock ?? [];
+    const maxStock = Math.max(...c.groups.map((g) => g.stock), ...spare.map((s) => s.length), 1);
+    const perLength = new Map<number, number>();
+    for (const g of c.groups) perLength.set(g.stock, (perLength.get(g.stock) ?? 0) + g.count);
+    for (const s of spare) perLength.set(s.length, (perLength.get(s.length) ?? 0) + s.count);
+    const sticks = [...perLength.values()].reduce((n, k) => n + k, 0);
+    const lengths = [...perLength.entries()].sort((a, b) => b[0] - a[0]);
+    const stockText = lengths.length === 1 ? t('cutd.sticks', { n: sticks, stock: `${(lengths[0][0] / 1000).toFixed(1)} m` }) : t('cutd.sticksMixed', { n: sticks, list: lengths.map(([len, n]) => `${n} × ${(len / 1000).toFixed(1)} m`).join(' + ') });
+    const pieceMarks = marks.marks.filter((m) => m.productId === c.productId);
+    return (
+      <div key={c.productId} className="cut-product">
+        <div className="cut-head">
+          <b>{productName(c.productId, lang)}</b>
+          <span>
+            {stockText}
+            {line?.extraCount ? ` · ${t('cutd.spare', { n: line.extraCount })}` : ''}
+            {off ? ` · ${t('cutd.removed')}` : ''}
+          </span>
+        </div>
+        {showUses && pieceMarks.length > 0 && (
+          <div className="cut-keys">
+            {pieceMarks.map((m) => (
+              <span key={m.mark}>
+                <b>{m.mark}</b> {m.length} × {m.count} {t(`cutd.use.${markUse(m)}`)}
               </span>
-            </div>
-            {showUses && pieceMarks.length > 0 && (
-              <div className="cut-keys">
-                {pieceMarks.map((m) => (
-                  <span key={m.mark}>
-                    <b>{m.mark}</b> {m.length} × {m.count} {t(`cutd.use.${markUse(m)}`)}
-                  </span>
-                ))}
-              </div>
-            )}
-            {cutRows(c.groups, (cut) => marks.of(c.productId, cut)?.mark ?? String(Math.round(cut)), project.rules.kerf).map((g, i) => (
-              <div key={i} className="cut-row">
-                <span className="cut-n">{g.count} ×</span>
-                <span className="cut-len">{(g.stock / 1000).toFixed(1)} m</span>
-                <Bar stock={g.stock} cuts={g.cuts} offcut={g.offcut} maxStock={maxStock} productId={c.productId} marks={marks} project={project} hatch={hatch} />
-              </div>
-            ))}
-            {spare.map((s) => (
-              <div key={`spare-${s.length}`} className="cut-row spare">
-                <span className="cut-n">{s.count} ×</span>
-                <span className="cut-len">{(s.length / 1000).toFixed(1)} m</span>
-                <SpareBar stock={s.length} maxStock={maxStock} label={t('cutd.spareRow')} />
-              </div>
             ))}
           </div>
-        );
-      })}
+        )}
+        {rowsOf(c).map((g, i) => (
+          <div key={i} className="cut-row">
+            <span className="cut-n">{g.count} ×</span>
+            <span className="cut-len">{(g.stock / 1000).toFixed(1)} m</span>
+            <Bar stock={g.stock} cuts={g.cuts} offcut={g.offcut} maxStock={maxStock} productId={c.productId} marks={marks} project={project} hatch={hatch} />
+          </div>
+        ))}
+        {spare.map((s) => (
+          <div key={`spare-${s.length}`} className="cut-row spare">
+            <span className="cut-n">{s.count} ×</span>
+            <span className="cut-len">{(s.length / 1000).toFixed(1)} m</span>
+            <SpareBar stock={s.length} maxStock={maxStock} label={t('cutd.spareRow')} />
+          </div>
+        ))}
+      </div>
+    );
+  };
+  const defs = (
+    <svg width={0} height={0} style={{ position: 'absolute' }}>
+      <defs>
+        <pattern id={hatch} patternUnits="userSpaceOnUse" width={8} height={8} patternTransform="rotate(45)">
+          <line x1={0} y1={0} x2={0} y2={8} stroke="#c4c8ce" strokeWidth={3} />
+        </pattern>
+      </defs>
+    </svg>
+  );
+  if (columns === 1) {
+    return (
+      <div className="cut-diagrams">
+        {defs}
+        {lists.map(product)}
+      </div>
+    );
+  }
+  // where the products split so the two columns hold about as many rows (a heading counts as a row)
+  const size = lists.map((c) => 1 + (showUses && marks.marks.some((m) => m.productId === c.productId) ? 1 : 0) + rowsOf(c).length + (lineOf(c)?.spareStock?.length ?? 0));
+  const all = size.reduce((a, b) => a + b, 0);
+  let split = 0;
+  let best = all;
+  for (let i = 0, before = 0; i <= lists.length; before += size[i] ?? 0, i++) {
+    if (Math.abs(all - 2 * before) < best) {
+      best = Math.abs(all - 2 * before);
+      split = i;
+    }
+  }
+  return (
+    <div className="cut-diagrams cut-cols">
+      {defs}
+      <div className="cut-col">{lists.slice(0, split).map(product)}</div>
+      <div className="cut-col">{lists.slice(split).map(product)}</div>
     </div>
   );
 }

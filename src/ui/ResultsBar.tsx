@@ -62,10 +62,8 @@ export function ResultsBar() {
     });
   };
 
-  const print = () => {
-    setUi({ mode: 'sheets' });
-    window.setTimeout(() => window.print(), 700);
-  };
+  // the drawings as a PDF file (made on the drawings page): printing it from there works in every browser
+  const pdf = () => setUi({ mode: 'sheets', pdfAsked: Date.now() });
 
   return (
     <div className="results">
@@ -124,8 +122,8 @@ export function ResultsBar() {
         </div>
       )}
 
-      <button className="btn primary big" onClick={print}>
-        {t('res.printSheets')}
+      <button className="btn primary big" onClick={pdf}>
+        {t('res.pdfSheets')}
       </button>
       <button className="btn big" onClick={() => setUi({ mode: 'materials' })}>
         {t('res.order')}

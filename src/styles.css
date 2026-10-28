@@ -113,7 +113,14 @@ ul.warnings li b { margin-right: 4px; }
 /* ---- sheets ---- */
 main.sheets-main { flex: 1; min-height: 0; overflow: auto; background: #9ca3af; }
 .sheets-wrap { padding: 12px 20px; }
-.sheets-toolbar { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
+.sheets-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+/* the PDF: made, then saved or shared */
+.pdf-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; padding: 8px 12px; border-radius: 8px; background: #fff; font-size: 13px; }
+.pdf-bar .pdf-failed { color: var(--danger); }
+.pdf-bar a.btn { text-decoration: none; }
+/* each sheet is drawn for the PDF from a copy out of view, at its print size */
+.pdf-host { position: fixed; left: -100000px; top: 0; display: block; }
+.pdf-host .sheet { box-shadow: none; }
 .sheets { display: flex; flex-direction: column; gap: 16px; align-items: flex-start; }
 .sheet {
   width: 420mm; height: 297mm; background: #fff; padding: 8mm; display: flex; flex-direction: column; box-shadow: 0 2px 10px rgba(0,0,0,.3);
@@ -159,8 +166,10 @@ table.bom tr.grand td { font-size: 10pt; }
 .cut-n { font-size: 8pt; font-weight: 700; text-align: right; }
 .cut-len { font-size: 7.5pt; color: #555; white-space: nowrap; }
 .cut-bar { width: 100%; height: auto; display: block; }
-.cut-sheet { width: 100%; columns: 2; column-gap: 8mm; }
-.cut-sheet > p { column-span: all; }
+.cut-sheet { width: 100%; }
+/* two columns laid out by the sheet itself: Safari gives a bar in CSS columns no size, and the PDF loses it */
+.cut-diagrams.cut-cols { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); column-gap: 8mm; align-items: start; }
+.cut-col { display: flex; flex-direction: column; gap: 2.5mm; min-width: 0; }
 .grid-tables { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; }
 .side-col p.small, .cut-sheet p.small { font-size: 7.5pt; color: #333; }
 /* on screen (materials page) the bars are taller */
@@ -184,10 +193,17 @@ ol.method ul { margin: 1mm 0 0; padding-left: 4mm; color: #333; }
   @page { size: A3 landscape; margin: 0; }
   html, body, #root, .app { height: auto; background: #fff; }
   .no-print, .header { display: none !important; }
-  main.sheets-main { overflow: visible; background: #fff; }
-  .sheets-wrap { padding: 0; }
-  .sheets { zoom: 1 !important; gap: 0; }
-  .sheet { box-shadow: none; page-break-after: always; break-after: page; margin: 0; }
+  /* print takes its width from the default paper (A4 is under 960 px): the phone rules apply, and lose here */
+  main.sheets-main { overflow: visible; background: #fff; padding: 0 !important; }
+  .sheets-wrap { padding: 0 !important; }
+  .sheets { zoom: 1 !important; gap: 0; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  /* a millimetre short of the page: a sheet exactly as tall as the page runs over by a rounding and spills its
+     title block, or a blank page, on to the next */
+  .sheet { box-shadow: none; page-break-after: always; break-after: page; margin: 0; height: 296mm; }
+  .sheet:last-child { page-break-after: auto; break-after: auto; }
+  .app-toast { display: none !important; }
+  /* Safari breaks pages only between blocks, not inside flex boxes: the sheets stand in plain blocks */
+  .app, main.sheets-main, .sheets-wrap, .sheets { display: block !important; }
 }
 
 /* ---- shell: one app for the counter, the builder and the crew ---- */

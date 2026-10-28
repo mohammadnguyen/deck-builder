@@ -85,6 +85,11 @@ framing plan draws the braces a high deck needs. A deck against the house carrie
 keep the house's termite management clear. When editing stops, the results panel prices ways to save (the
 boards the other way, a nudge that drops a breaker or the ripped row) for the counter to offer.
 
+The drawings PDF is made in the app (`src/utils/pdf.ts`): each sheet drawn by html2canvas from a copy at print
+size, one A3 landscape page each, saved or shared from the drawings page. Safari's print lays the A3 sheets on
+its own paper (cut, shrunk, run across pages), so Safari and iPhones print from the PDF. No CSS columns on a sheet:
+Safari gives an SVG in CSS columns no size, and html2canvas then leaves it out.
+
 ## Working in this repo
 
 - `npm test` (vitest), `npm run typecheck`, `npm run build` (typecheck + Vite build).

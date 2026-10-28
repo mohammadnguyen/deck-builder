@@ -95,6 +95,8 @@ boards the other way, a nudge that drops a breaker or the ripped row) for the co
 - Projects live in the browser that made them (localStorage). A share link (project menu) carries a whole project in
   the address after `#` (`src/utils/share.ts`): only what differs from `defaultRules()` / `defaultParams()`,
   deflated, so a link made before a default changes opens with the new default; opening it stores the project there.
+  The link stays in the address until that project is changed or another is opened, so "Open in Safari" from a chat
+  app's own browser (or "Open in browser" in WeChat) takes the project along.
 - A changed rule default that saved rule sets should follow bumps `RULES_VERSION` in
   `src/model/defaults.ts` with a one-off step in `migrateProject` (`src/state.tsx`).
 - Prove engine changes with tests and a sweep over many deck shapes, and check the UI in a browser

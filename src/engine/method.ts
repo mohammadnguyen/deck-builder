@@ -124,6 +124,8 @@ export function buildMethod(m: MethodInput): MethodStep[] {
     });
   }
   const nails = p.joistFixing === 'skewNails';
+  // joists doubled by hand (each pair once, however many runs it has)
+  const doubled = new Set(m.layout.joists.filter((j) => j.twin).map((j) => Math.round(j.pos))).size;
   steps.push({
     key: flush ? 'm.joists.flush' : nails ? 'm.joists.nails' : 'm.joists',
     params: {
@@ -140,6 +142,7 @@ export function buildMethod(m: MethodInput): MethodStep[] {
           ? [{ key: 'm.joists.auto', params: { max: Math.round(m.joistSpacingCap), spacing: m.joistSpacingText } }]
           : []),
       ...(m.layout.totals.frameJoists > 0 ? [{ key: 'm.joists.frame', params: { n: m.layout.totals.frameJoists, pairs: Math.ceil(m.layout.totals.frameJoists / 2), inset: Math.round(m.layout.edgeBoards[0]?.width ?? 0) + p.boardGap } }] : []),
+      ...(doubled ? [{ key: 'm.joists.double', params: { n: doubled } }] : []),
       ...(p.joistTape ? [{ key: 'm.joists.n2' }] : []),
       ...(m.layout.totals.boardJoins > 0 ? [{ key: 'm.joists.n3', params: { joins: m.layout.totals.boardJoins } }] : []),
     ],

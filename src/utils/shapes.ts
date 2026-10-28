@@ -368,10 +368,17 @@ export function mirrorProject(p: Project): Project {
   });
   const house = p.house.map((pl) => pl.map((q) => ({ x: mx(q.x), y: q.y })));
   const m = (q: Pt): Pt => ({ x: mx(q.x), y: q.y });
-  // slabs and stumps changed by hand go with the deck
+  // slabs and the parts changed by hand go with the deck
   const slabs = p.slabs?.map((s) => ({ ...s, poly: s.poly.map(m) }));
-  const details = p.details
-    ? { ...p.details, stumpsOff: p.details.stumpsOff?.map(m), stumpsAdded: p.details.stumpsAdded?.map(m), stumpsMoved: p.details.stumpsMoved?.map((s) => ({ from: m(s.from), to: m(s.to) })) }
-    : p.details;
+  const d = p.details;
+  const mv = (list: { from: Pt; to: Pt }[] | undefined) => list?.map((s) => ({ from: m(s.from), to: m(s.to) }));
+  const details = d
+    ? {
+        ...d,
+        stumpsOff: d.stumpsOff?.map(m), stumpsAdded: d.stumpsAdded?.map(m), stumpsMoved: mv(d.stumpsMoved),
+        bearersOff: d.bearersOff?.map(m), bearersAdded: d.bearersAdded?.map(m), bearersMoved: mv(d.bearersMoved),
+        joistsOff: d.joistsOff?.map(m), joistsAdded: d.joistsAdded?.map(m), joistsMoved: mv(d.joistsMoved), joistsDoubled: d.joistsDoubled?.map(m),
+      }
+    : d;
   return { ...p, deck, stairs, house, breakers: mirrorBreakers(p.breakers, mx), ...(slabs ? { slabs } : {}), details };
 }

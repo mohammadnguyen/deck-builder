@@ -303,3 +303,11 @@ export function setDoubled(d: DetailEdits | null | undefined, at: Pt, on: boolea
 export function putBackJoist(d: DetailEdits | null | undefined, spot: Pt): DetailEdits | null {
   return tidy(putBackPart('joist', d ?? {}, spot));
 }
+
+/** the joist a change to the one at `pos` acts on: the first of a pair when this is the second (`twin`), else itself */
+export function joistTarget(layout: LayoutResult | undefined, d: DetailEdits | null | undefined, pos: number): { pos: number; edit: JoistEdit | undefined } {
+  const edits = joistEdits(layout, d);
+  const e = edits.get(Math.round(pos * 10));
+  if (e?.twin) for (const [key, m] of edits) if (!m.twin && m.double === e.double) return { pos: key / 10, edit: m };
+  return { pos, edit: e };
+}

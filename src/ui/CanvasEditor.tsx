@@ -8,7 +8,10 @@ import { PRODUCT_MAP } from '../model/catalog';
 import { useApp, type Selection as UISelection, type Tool } from '../state';
 import { acrossOf, alongOf, breakerBays, breakerRoom, breakerSpans, currentBreakers, extendedBreaker, mainBay, movedBreaker, removeBreaker, snapBreakerEnd, stripWidth, updateBreaker, type BreakerSpan } from '../utils/breakers';
 import type { ManualBreaker } from '../model/types';
-import { addStump, detailCount, moveStump, putBackStump, removeStump, setEdgeBoard, stumpEdits, unmoveStump, type StumpEdit } from '../utils/details';
+import {
+  addJoist, addLine, addStump, detailCount, joistEdits, joistTarget, lineEdits, moveJoist, moveLine, moveStump, putBackJoist, putBackLine, putBackStump, removeJoist,
+  removeLine, removeStump, setDoubled, setEdgeBoard, stumpEdits, unmoveJoist, unmoveLine, unmoveStump, type JoistEdit, type PartEdit, type StumpEdit,
+} from '../utils/details';
 import { applyDeckMove, carryEdgeData, housePolylineFor, insertNotch, isJogEdge, mirrorProject, moveEdgeTo, moveVertexTo, nextStairId, removeJog, samePoly, setEdgeLengthAnchored } from '../utils/shapes';
 import { NumInline } from './fields';
 import { COLORS, DesignLayers } from './PlanLayers';
@@ -28,7 +31,10 @@ type Drag =
   | { type: 'breakerEnd'; id: string; end: 'from' | 'to'; base: BreakerLayout; pos: number; other: number; at: number; orig: number | null; last: number | null; sx: number; sy: number; moved: boolean }
   | { type: 'pinch'; d0: number; scale0: number; mid0: { x: number; y: number }; ox0: number; oy0: number }
   // detail mode: a stump slid along its bearer (`at`, `last`: its place along the bearer's axis)
-  | { type: 'post'; from: Pt; axis: 'x' | 'y'; lo: number; hi: number; at: number; last: number; grab: number; edit: StumpEdit | undefined; sx: number; sy: number; moved: boolean };
+  | { type: 'post'; from: Pt; axis: 'x' | 'y'; lo: number; hi: number; at: number; last: number; grab: number; edit: StumpEdit | undefined; sx: number; sy: number; moved: boolean }
+  // detail mode: a bearer line or a joist slid across (`axis`: the coordinate that changes; `at`, `last`: its place)
+  | { type: 'line'; from: Pt; axis: 'x' | 'y'; lo: number; hi: number; at: number; last: number; grab: number; edit: PartEdit | undefined; sx: number; sy: number; moved: boolean }
+  | { type: 'joist'; from: Pt; axis: 'x' | 'y'; lo: number; hi: number; at: number; last: number; grab: number; edit: JoistEdit | undefined; sx: number; sy: number; moved: boolean };
 
 type Hover =
   | { type: 'edge'; index: number }
@@ -39,6 +45,10 @@ type Hover =
   | { type: 'post'; x: number; y: number }
   | { type: 'offSpot'; x: number; y: number }
   | { type: 'bearer'; id: string; x: number; y: number }
+  | { type: 'joist'; x: number; y: number }
+  | { type: 'lineOff'; x: number; y: number }
+  | { type: 'joistOff'; x: number; y: number }
+  | { type: 'spot'; x: number; y: number }
   | null;
 type Dir = 'auto' | 'E' | 'W' | 'N' | 'S';
 
@@ -53,6 +63,30 @@ function isTextInput(el: Element | null): boolean {
 
 function snapTo(v: number, s: number): number {
   return Math.round(v / s) * s;
+}
+
+/** the bearer picked at a spot on it: on the same line, covering the spot */
+function bearerAt(lay: LayoutResult | null | undefined, s: Pt) {
+  if (!lay) return undefined;
+  const ax = lay.supportAxis;
+  const al = ax === 'x' ? 'y' : 'x';
+  const on = lay.bearers.filter((b) => Math.abs(b.seg.a[ax] - s[ax]) < 1);
+  return on.find((b) => s[al] >= Math.min(b.seg.a[al], b.seg.b[al]) - 1 && s[al] <= Math.max(b.seg.a[al], b.seg.b[al]) + 1) ?? on[0];
+}
+
+/** the joist picked at a spot on it (the nearest within two joist widths, as one put in may be set beside another),
+ *  the run covering the spot first */
+function joistAt(lay: LayoutResult | null | undefined, s: Pt) {
+  if (!lay) return undefined;
+  const ax = lay.boardAxis;
+  const al = ax === 'x' ? 'y' : 'x';
+  let best: { run: LayoutResult['joists'][number]; d: number } | null = null;
+  for (const j of lay.joists) {
+    const covers = s[al] >= Math.min(j.seg.a[al], j.seg.b[al]) - 1 && s[al] <= Math.max(j.seg.a[al], j.seg.b[al]) + 1;
+    const d = Math.abs(j.seg.a[ax] - s[ax]) + (covers ? 0 : 0.5);
+    if (d <= 2 * lay.joistThickness + 1 && (!best || d < best.d)) best = { run: j, d };
+  }
+  return best?.run;
 }
 
 function ortho(prev: Pt, p: Pt): Pt {
@@ -362,6 +396,8 @@ export function CanvasEditor() {
         }
         if (best) return { type: 'post', x: best.q.x, y: best.q.y };
         for (const o of project.details?.stumpsOff ?? []) if (dist(o, w) < reach) return { type: 'offSpot', x: o.x, y: o.y };
+        for (const o of project.details?.bearersOff ?? []) if (dist(o, w) < reach) return { type: 'lineOff', x: o.x, y: o.y };
+        for (const o of project.details?.joistsOff ?? []) if (dist(o, w) < reach) return { type: 'joistOff', x: o.x, y: o.y };
         for (const s of design.stairs) if (pointInPolygon(w, s.outline)) return { type: 'stair', id: s.id };
         if (ui.layers.boards) {
           const ax = lay.boardAxis;
@@ -380,6 +416,8 @@ export function CanvasEditor() {
             if (pr.d <= tol || (pr.d <= ebw + tol * 0.5 && pointInPolygon(w, poly))) return { type: 'edgeBoard', index: e.index };
           }
         }
+        // the bearer under the pointer (where a joist crosses it, whichever of the two is nearer)
+        let hitB: { h: Hover; d: number } | null = null;
         for (const b of lay.bearers) {
           if (b.onWall) continue;
           const horiz = Math.abs(b.seg.a.y - b.seg.b.y) < 1;
@@ -387,9 +425,30 @@ export function CanvasEditor() {
           const line = horiz ? b.seg.a.y : b.seg.a.x;
           const lo = Math.min(horiz ? b.seg.a.x : b.seg.a.y, horiz ? b.seg.b.x : b.seg.b.y);
           const hi = Math.max(horiz ? b.seg.a.x : b.seg.a.y, horiz ? b.seg.b.x : b.seg.b.y);
-          if (along >= lo && along <= hi && Math.abs((horiz ? w.y : w.x) - line) <= 35 + tol) return { type: 'bearer', id: b.id, x: horiz ? along : line, y: horiz ? line : along };
+          const dd = Math.abs((horiz ? w.y : w.x) - line);
+          if (along >= lo && along <= hi && dd <= 35 + tol && (!hitB || dd < hitB.d)) hitB = { h: { type: 'bearer', id: b.id, x: horiz ? along : line, y: horiz ? line : along }, d: dd };
         }
-        return null;
+        if (hitB && (ui.layers.boards || !ui.layers.frame)) return hitB.h;
+        // with the boards hidden: the joist under the pointer, else an empty spot of the frame (to put one in there)
+        if (!ui.layers.boards && ui.layers.frame) {
+          const ax = lay.boardAxis;
+          const al = ax === 'x' ? 'y' : 'x';
+          // (picked at the middle of its run, so the run under the pointer is the one lit up)
+          // (a joist reaches at most 30% of the way to the next, so the middle of each space stays an empty spot)
+          const across = lay.joists.filter((j) => w[al] >= Math.min(j.seg.a[al], j.seg.b[al]) && w[al] <= Math.max(j.seg.a[al], j.seg.b[al]));
+          let hitJ: { at: number; mid: number; d: number } | null = null;
+          for (const j of across) {
+            const dd = Math.abs(w[ax] - j.seg.a[ax]);
+            const side = Math.sign(w[ax] - j.seg.a[ax]) || 1;
+            const gap = Math.min(Infinity, ...across.map((o) => (o.seg.a[ax] - j.seg.a[ax]) * side).filter((g) => g > 1));
+            const reachJ = Math.min(lay.joistThickness / 2 + tol, Math.max(lay.joistThickness / 2 + 10, 0.3 * gap));
+            if (dd <= reachJ && (!hitJ || dd < hitJ.d)) hitJ = { at: j.seg.a[ax], mid: Math.round((j.seg.a[al] + j.seg.b[al]) / 2), d: dd };
+          }
+          if (hitB && (!hitJ || hitB.d <= hitJ.d)) return hitB.h;
+          if (hitJ) return ax === 'x' ? { type: 'joist', x: hitJ.at, y: hitJ.mid } : { type: 'joist', x: hitJ.mid, y: hitJ.at };
+          if (pointInPolygon(w, poly)) return { type: 'spot', x: w.x, y: w.y };
+        }
+        return hitB?.h ?? null;
       }
       let vertex: { index: number; d: number } | null = null;
       for (let i = 0; i < poly.length; i++) {
@@ -429,7 +488,7 @@ export function CanvasEditor() {
       }
       return null;
     },
-    [design.ok, design.layout, design.stairs, design.edgeBoardProductId, project.deck, project.details, project.houseEdges, project.params.edgeBoard, ui.detail, ui.layers.boards, ui.selection],
+    [design.ok, design.layout, design.stairs, design.edgeBoardProductId, project.deck, project.details, project.houseEdges, project.params.edgeBoard, ui.detail, ui.layers.boards, ui.layers.frame, ui.selection],
   );
 
   // a breaker selection whose breaker is gone (another decking, another direction, breakers off) is dropped,
@@ -447,11 +506,15 @@ export function CanvasEditor() {
     const s0 = ui.selection;
     if (!s0) return;
     const lay = design.ok ? design.layout : undefined;
+    const kept = (list: Pt[] | undefined) => 'x' in s0 && (list ?? []).some((q) => Math.hypot(q.x - s0.x, q.y - s0.y) < 1);
     const gone =
       s0.type === 'post' ? !lay?.posts.some((q) => Math.hypot(q.pt.x - s0.x, q.pt.y - s0.y) < 1)
-      : s0.type === 'offSpot' ? !(project.details?.stumpsOff ?? []).some((q) => Math.hypot(q.x - s0.x, q.y - s0.y) < 1)
-      : s0.type === 'bearer' ? !lay?.bearers.some((b) => b.id === s0.id)
-      : s0.type === 'edgeBoard' ? !ui.detail
+      : s0.type === 'offSpot' ? !kept(project.details?.stumpsOff)
+      : s0.type === 'lineOff' ? !kept(project.details?.bearersOff)
+      : s0.type === 'joistOff' ? !kept(project.details?.joistsOff)
+      : s0.type === 'bearer' ? !bearerAt(lay, s0)
+      : s0.type === 'joist' ? !joistAt(lay, s0)
+      : s0.type === 'edgeBoard' || s0.type === 'spot' ? !ui.detail
       : false;
     if (gone) setUi({ selection: null });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -460,7 +523,7 @@ export function CanvasEditor() {
   const select = useCallback(
     (selection: NonNullable<UISelection>) => {
       // a part picked in detail mode is changed on the bar over the drawing, not in the side panel
-      const part = selection.type === 'edgeBoard' || selection.type === 'post' || selection.type === 'offSpot' || selection.type === 'bearer';
+      const part = ['edgeBoard', 'post', 'offSpot', 'bearer', 'joist', 'lineOff', 'joistOff', 'spot'].includes(selection.type);
       setUi(ui.advanced && !part ? { selection, panelTab: 'selection' } : { selection });
     },
     [setUi, ui.advanced],
@@ -545,7 +608,30 @@ export function CanvasEditor() {
       dragRef.current = { type: 'post', from: { x: hit.x, y: hit.y }, axis: horiz ? 'x' : 'y', lo, hi, at, last: at, grab: at - (horiz ? w.x : w.y), edit, sx: e.clientX, sy: e.clientY, moved: false };
       return;
     }
-    if (hit.type === 'offSpot' || hit.type === 'edgeBoard' || hit.type === 'bearer') {
+    if (hit.type === 'bearer' && design.layout) {
+      const lay = design.layout;
+      select(hit);
+      const b = bearerAt(lay, hit);
+      const line = b ? lay.supports[b.lineIndex] : undefined;
+      // a bearer line slides across the joists, within the deck (one along a slab edge stays with it)
+      if (!b || !line || line.kind === 'slab' || line.kind === 'wall') return;
+      const ax = lay.supportAxis;
+      const at = hit[ax];
+      const edit = lineEdits(lay, project.details).get(b.lineIndex);
+      dragRef.current = { type: 'line', from: { x: hit.x, y: hit.y }, axis: ax, lo: design.bb[ax === 'x' ? 'minX' : 'minY'], hi: design.bb[ax === 'x' ? 'maxX' : 'maxY'], at, last: at, grab: at - w[ax], edit, sx: e.clientX, sy: e.clientY, moved: false };
+      return;
+    }
+    if (hit.type === 'joist' && design.layout) {
+      const lay = design.layout;
+      select(hit);
+      // a joist slides across the boards, within the deck (a pair doubled by hand moves as one)
+      const ax = lay.boardAxis;
+      const target = joistTarget(lay, project.details, hit[ax]);
+      const from = ax === 'x' ? { x: target.pos, y: hit.y } : { x: hit.x, y: target.pos };
+      dragRef.current = { type: 'joist', from, axis: ax, lo: design.bb[ax === 'x' ? 'minX' : 'minY'], hi: design.bb[ax === 'x' ? 'maxX' : 'maxY'], at: from[ax], last: from[ax], grab: from[ax] - w[ax], edit: target.edit, sx: e.clientX, sy: e.clientY, moved: false };
+      return;
+    }
+    if (hit.type === 'offSpot' || hit.type === 'edgeBoard' || hit.type === 'lineOff' || hit.type === 'joistOff' || hit.type === 'spot') {
       select(hit);
       return;
     }
@@ -613,7 +699,9 @@ export function CanvasEditor() {
     const d = dragRef.current;
     if (!d) {
       if (ui.tool === 'select' && !touchRef.current) {
-        const h = hitTest(w);
+        // (an empty spot of the frame is not lit up)
+        const h0 = hitTest(w);
+        const h = h0?.type === 'spot' ? null : h0;
         const same =
           h?.type === hover?.type &&
           (h as { index?: number } | null)?.index === (hover as { index?: number } | null)?.index &&
@@ -644,7 +732,7 @@ export function CanvasEditor() {
       setView({ ...viewRef.current, ox: d.ox - (e.clientX - d.sx) / viewRef.current.scale, oy: d.oy - (e.clientY - d.sy) / viewRef.current.scale });
       return;
     }
-    if (d.type === 'edge' || d.type === 'vertex' || d.type === 'breaker' || d.type === 'breakerEnd' || d.type === 'post') {
+    if (d.type === 'edge' || d.type === 'vertex' || d.type === 'breaker' || d.type === 'breakerEnd' || d.type === 'post' || d.type === 'line' || d.type === 'joist') {
       // a tap must not move anything: wait for real movement before the live preview starts
       if (!d.moved && Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) <= slop) return;
       d.moved = true;
@@ -655,6 +743,16 @@ export function CanvasEditor() {
       if (pos !== d.last) {
         d.last = pos;
         setLiveDetails(moveStump(project.details, d.from, d.axis === 'x' ? { x: pos, y: d.from.y } : { x: d.from.x, y: pos }, d.edit));
+      }
+      return;
+    }
+    if (d.type === 'line' || d.type === 'joist') {
+      const raw = w[d.axis] + d.grab;
+      const pos = Math.max(d.lo, Math.min(d.hi, shiftRef.current ? Math.round(raw) : snapTo(raw, 10)));
+      if (pos !== d.last) {
+        d.last = pos;
+        const to = d.axis === 'x' ? { x: pos, y: d.from.y } : { x: d.from.x, y: pos };
+        setLiveDetails(d.type === 'line' ? moveLine(project.details, d.from, to, d.edit, d.axis) : moveJoist(project.details, d.from, to, d.edit, d.axis));
       }
       return;
     }
@@ -775,6 +873,22 @@ export function CanvasEditor() {
       }
       setLiveDetails(undefined);
     }
+    if (d?.type === 'line' || d?.type === 'joist') {
+      if (d.moved && Math.abs(d.last - d.at) >= 1) {
+        const to = d.axis === 'x' ? { x: d.last, y: d.from.y } : { x: d.from.x, y: d.last };
+        const { from, axis } = d;
+        if (d.type === 'line') {
+          const edit = d.edit;
+          updateProject((p) => ({ ...p, details: moveLine(p.details, from, to, edit, axis) }), 'h.moveBearer');
+          setUi({ selection: { type: 'bearer', id: '', x: to.x, y: to.y } });
+        } else {
+          const edit = d.edit;
+          updateProject((p) => ({ ...p, details: moveJoist(p.details, from, to, edit, axis) }), 'h.moveJoist');
+          setUi({ selection: { type: 'joist', x: to.x, y: to.y } });
+        }
+      }
+      setLiveDetails(undefined);
+    }
     if (d?.type === 'breaker' || d?.type === 'breakerEnd') {
       if (d.moved && d.last !== d.orig) {
         const next =
@@ -832,6 +946,34 @@ export function CanvasEditor() {
         const edit = stumpEdits(lay, project.details).get(post.id);
         updateProject((p) => ({ ...p, details: moveStump(p.details, post.pt, to, edit) }), 'h.moveStump', 1200);
         setUi({ selection: { type: 'post', x: to.x, y: to.y } });
+        return true;
+      }
+      if (sel.type === 'bearer' && design.layout) {
+        // a bearer line nudged across the joists (not one along a wall or a slab edge)
+        const lay = design.layout;
+        const b = bearerAt(lay, sel);
+        const kind = b ? lay.supports[b.lineIndex]?.kind : undefined;
+        const ax = lay.supportAxis;
+        const step = ax === 'x' ? dx : dy;
+        if (!b || !step || kind === 'slab' || kind === 'wall') return false;
+        const from = { x: sel.x, y: sel.y };
+        const to = ax === 'x' ? { x: from.x + step, y: from.y } : { x: from.x, y: from.y + step };
+        const edit = lineEdits(lay, project.details).get(b.lineIndex);
+        updateProject((p) => ({ ...p, details: moveLine(p.details, from, to, edit, ax) }), 'h.moveBearer', 1200);
+        setUi({ selection: { type: 'bearer', id: b.id, x: to.x, y: to.y } });
+        return true;
+      }
+      if (sel.type === 'joist' && design.layout) {
+        const lay = design.layout;
+        const ax = lay.boardAxis;
+        const step = ax === 'x' ? dx : dy;
+        if (!step || !joistAt(lay, sel)) return false;
+        const target = joistTarget(lay, project.details, sel[ax]);
+        const from = ax === 'x' ? { x: target.pos, y: sel.y } : { x: sel.x, y: target.pos };
+        const to = ax === 'x' ? { x: from.x + step, y: from.y } : { x: from.x, y: from.y + step };
+        const edit = target.edit;
+        updateProject((p) => ({ ...p, details: moveJoist(p.details, from, to, edit, ax) }), 'h.moveJoist', 1200);
+        setUi({ selection: { type: 'joist', x: to.x, y: to.y } });
         return true;
       }
       if (sel.type === 'breaker' && design.layout) {
@@ -902,6 +1044,31 @@ export function CanvasEditor() {
         } else if (ui.selection?.type === 'offSpot') {
           const spot = { x: ui.selection.x, y: ui.selection.y };
           updateProject((p) => ({ ...p, details: putBackStump(p.details, spot) }), 'h.putBackStump');
+          setUi({ selection: null });
+        } else if (ui.selection?.type === 'lineOff' || ui.selection?.type === 'joistOff') {
+          const spot = { x: ui.selection.x, y: ui.selection.y };
+          const line = ui.selection.type === 'lineOff';
+          updateProject((p) => ({ ...p, details: line ? putBackLine(p.details, spot) : putBackJoist(p.details, spot) }), line ? 'h.putBackBearer' : 'h.putBackJoist');
+          setUi({ selection: null });
+        } else if (ui.selection?.type === 'bearer' && design.layout) {
+          const lay = design.layout;
+          const at = { x: ui.selection.x, y: ui.selection.y };
+          const b = bearerAt(lay, at);
+          const kind = b ? lay.supports[b.lineIndex]?.kind : undefined;
+          if (b && kind !== 'slab' && kind !== 'wall') {
+            const edit = lineEdits(lay, project.details).get(b.lineIndex);
+            updateProject((p) => ({ ...p, details: removeLine(p.details, at, edit, lay.supportAxis) }), 'h.removeBearer');
+            setUi({ selection: null });
+          }
+        } else if (ui.selection?.type === 'joist' && design.layout) {
+          const lay = design.layout;
+          const ax = lay.boardAxis;
+          const sel = ui.selection;
+          if (joistAt(lay, sel)) {
+            const target = joistTarget(lay, project.details, sel[ax]);
+            const at = ax === 'x' ? { x: target.pos, y: sel.y } : { x: sel.x, y: target.pos };
+            updateProject((p) => ({ ...p, details: removeJoist(p.details, at, target.edit) }), 'h.removeJoist');
+          }
           setUi({ selection: null });
         } else if (ui.selection?.type === 'edgeBoard') {
           const index = ui.selection.index;
@@ -1001,11 +1168,14 @@ export function CanvasEditor() {
   // ---- detail mode: the parts changed by hand (as shown, the live preview while a stump is slid) and the one picked ----
   const shownDetails = liveDetails !== undefined ? liveDetails : project.details;
   const shownEdits = useMemo(() => stumpEdits(shownLay, shownDetails), [shownLay, shownDetails]);
+  const shownLineEdits = useMemo(() => lineEdits(shownLay, shownDetails), [shownLay, shownDetails]);
+  const shownJoistEdits = useMemo(() => joistEdits(shownLay, shownDetails), [shownLay, shownDetails]);
   const edgeBoardW = PRODUCT_MAP[design.edgeBoardProductId]?.width ?? 140;
   const selPost = sel?.type === 'post' && design.ok && design.layout ? design.layout.posts.find((q) => Math.hypot(q.pt.x - sel.x, q.pt.y - sel.y) < 1) : undefined;
   const selPostBearer = selPost ? design.layout?.bearers.find((b) => b.id === selPost.bearerId) : undefined;
   const selPostEdit = selPost && design.layout ? stumpEdits(design.layout, project.details).get(selPost.id) : undefined;
-  const selBearer = sel?.type === 'bearer' ? design.layout?.bearers.find((b) => b.id === sel.id) : undefined;
+  const selBearer = sel?.type === 'bearer' ? bearerAt(design.ok ? design.layout : undefined, sel) : undefined;
+  const selJoist = sel?.type === 'joist' ? joistAt(design.ok ? design.layout : undefined, sel) : undefined;
   const handChanges = detailCount(project.details);
   /** the strip an edge board covers along a side (inside the deck) */
   const ebStrip = (index: number): string => {
@@ -1056,8 +1226,8 @@ export function CanvasEditor() {
     : hover?.type === 'vertex' ? 'move'
     : hover?.type === 'stair' ? 'grab'
     : hover?.type === 'breaker' ? (hover.end ? (brkAxis === 'x' ? 'ns-resize' : 'ew-resize') : brkAxis === 'x' ? 'ew-resize' : 'ns-resize')
-    : hover?.type === 'post' ? 'grab'
-    : hover?.type === 'edgeBoard' || hover?.type === 'offSpot' || hover?.type === 'bearer' ? 'pointer'
+    : hover?.type === 'post' || hover?.type === 'bearer' || hover?.type === 'joist' ? 'grab'
+    : hover?.type === 'edgeBoard' || hover?.type === 'offSpot' || hover?.type === 'lineOff' || hover?.type === 'joistOff' ? 'pointer'
     : 'default';
   const lenAnchor = draft.length ? toScreen(draft[draft.length - 1]) : null;
   const zoomPct = Math.round(view.scale * 1000) / 10;
@@ -1301,35 +1471,101 @@ export function CanvasEditor() {
         )}
         {/* detail mode: what was changed by hand, and the part under the pointer or picked */}
         {ui.detail && !dragging && shownLay && (() => {
-          const live = dragRef.current?.type === 'post' && dragRef.current.moved ? dragRef.current : null;
-          const shownSel: Hover = live ? { type: 'post', ...(live.axis === 'x' ? { x: live.last, y: live.from.y } : { x: live.from.x, y: live.last }) } : sel && sel.type !== 'edge' && sel.type !== 'vertex' ? (sel as Hover) : null;
+          const dr = dragRef.current;
+          const live = dr && (dr.type === 'post' || dr.type === 'line' || dr.type === 'joist') && dr.moved ? dr : null;
+          const livePt = live ? (live.axis === 'x' ? { x: live.last, y: live.from.y } : { x: live.from.x, y: live.last }) : null;
+          const shownSel: Hover =
+            live && livePt ? (live.type === 'post' ? { type: 'post', ...livePt } : live.type === 'line' ? { type: 'bearer', id: '', ...livePt } : { type: 'joist', ...livePt })
+            : sel && sel.type !== 'edge' && sel.type !== 'vertex' ? (sel as Hover) : null;
           const tint = (strong: boolean) => `rgba(245,158,11,${strong ? 0.3 : 0.18})`;
+          const bb = shownDesign.bb;
+          /** a band across the deck at `c` along axis `ax`, `r` either side (where a part taken out keeps others clear) */
+          const band = (ax: 'x' | 'y', c: number, r: number) =>
+            ax === 'x' ? { x: c - r, y: bb.minY, width: 2 * r, height: bb.maxY - bb.minY } : { x: bb.minX, y: c - r, width: bb.maxX - bb.minX, height: 2 * r };
+          const cross = (o: Pt) => {
+            const k = Math.max(50, 7 / view.scale);
+            return (
+              <>
+                <line x1={o.x - k} y1={o.y - k} x2={o.x + k} y2={o.y + k} stroke="#dc2626" strokeWidth={sw * 2.5} />
+                <line x1={o.x - k} y1={o.y + k} x2={o.x + k} y2={o.y - k} stroke="#dc2626" strokeWidth={sw * 2.5} />
+              </>
+            );
+          };
+          const kept = { fill: 'rgba(220,38,38,.06)', stroke: '#dc2626', strokeWidth: sw, strokeDasharray: `${sw * 6} ${sw * 5}` };
+          const moves = [...(shownDetails?.stumpsMoved ?? []), ...(shownDetails?.bearersMoved ?? []), ...(shownDetails?.joistsMoved ?? [])];
+          const jt = shownLay.joistThickness;
+          const jax = shownLay.boardAxis;
+          /** the joist runs a pick acts on: the run picked, and the other of a pair doubled by hand beside it */
+          const joistRuns = (h: Pt) => {
+            const j = joistAt(shownLay, h);
+            if (!j) return [];
+            const e = shownJoistEdits.get(Math.round(j.pos * 10));
+            const al = jax === 'x' ? 'y' : 'x';
+            const lo = Math.min(j.seg.a[al], j.seg.b[al]);
+            return e?.double === undefined
+              ? [j]
+              : shownLay.joists.filter((o) => shownJoistEdits.get(Math.round(o.pos * 10))?.double === e.double && Math.abs(o.pos - j.pos) <= jt + 1 && Math.abs(Math.min(o.seg.a[al], o.seg.b[al]) - lo) < 1);
+          };
           return (
             <g>
               {(shownDetails?.noEdgeBoard ?? []).map((i) => (deckEdges[i] ? <polygon key={`neb${i}`} points={ebStrip(i)} fill="none" stroke={COLORS.select} strokeWidth={sw * 1.5} strokeDasharray={`${sw * 8} ${sw * 6}`} /> : null))}
-              {(shownDetails?.stumpsOff ?? []).map((o, i) => {
-                const k = Math.max(50, 7 / view.scale);
-                return (
-                  <g key={`off${i}`}>
-                    <circle cx={o.x} cy={o.y} r={project.rules.stumpOffClear ?? 300} fill="rgba(220,38,38,.06)" stroke="#dc2626" strokeWidth={sw} strokeDasharray={`${sw * 6} ${sw * 5}`} />
-                    <line x1={o.x - k} y1={o.y - k} x2={o.x + k} y2={o.y + k} stroke="#dc2626" strokeWidth={sw * 2.5} />
-                    <line x1={o.x - k} y1={o.y + k} x2={o.x + k} y2={o.y - k} stroke="#dc2626" strokeWidth={sw * 2.5} />
-                  </g>
-                );
-              })}
-              {(shownDetails?.stumpsMoved ?? []).map((m, i) => (
+              {(shownDetails?.stumpsOff ?? []).map((o, i) => (
+                <g key={`off${i}`}>
+                  <circle cx={o.x} cy={o.y} r={project.rules.stumpOffClear ?? 300} {...kept} />
+                  {cross(o)}
+                </g>
+              ))}
+              {(shownDetails?.bearersOff ?? []).map((o, i) => (
+                <g key={`loff${i}`}>
+                  <rect {...band(shownLay.supportAxis, o[shownLay.supportAxis], project.rules.bearerOffClear ?? 300)} {...kept} />
+                  {cross(o)}
+                </g>
+              ))}
+              {(shownDetails?.joistsOff ?? []).map((o, i) => (
+                <g key={`joff${i}`}>
+                  <rect {...band(jax, o[jax], project.rules.joistOffClear ?? 100)} {...kept} />
+                  {cross(o)}
+                </g>
+              ))}
+              {moves.map((m, i) => (
                 <line key={`mv${i}`} x1={m.from.x} y1={m.from.y} x2={m.to.x} y2={m.to.y} stroke={COLORS.select} strokeWidth={sw * 1.5} strokeDasharray={`${sw * 4} ${sw * 4}`} />
               ))}
               {shownLay.posts.map((q) => (shownEdits.has(q.id) ? <circle key={`pin${q.id}`} cx={q.pt.x} cy={q.pt.y} r={Math.max(90, 9 / view.scale)} fill="none" stroke={COLORS.select} strokeWidth={sw * 2.2} /> : null))}
+              {/* bearer lines and joists put there by hand */}
+              {shownLay.bearers.map((b) =>
+                shownLineEdits.has(b.lineIndex) ? <line key={`hb${b.id}`} x1={b.seg.a.x} y1={b.seg.a.y} x2={b.seg.b.x} y2={b.seg.b.y} stroke={COLORS.select} strokeWidth={Math.max(70, 8 / view.scale)} opacity={0.3} /> : null,
+              )}
+              {shownLay.joists.map((j) =>
+                shownJoistEdits.has(Math.round(j.pos * 10)) ? <line key={`hj${j.id}`} x1={j.seg.a.x} y1={j.seg.a.y} x2={j.seg.b.x} y2={j.seg.b.y} stroke={COLORS.select} strokeWidth={Math.max(45, 5 / view.scale)} opacity={0.35} /> : null,
+              )}
               {[hover, shownSel].map((h, k) => {
                 if (!h) return null;
                 const strong = k === 1;
                 const width = sw * (strong ? 3 : 1.8);
                 if (h.type === 'edgeBoard') return <polygon key={k} points={ebStrip(h.index)} fill={tint(strong)} stroke={COLORS.select} strokeWidth={width} />;
-                if (h.type === 'post' || h.type === 'offSpot') return <circle key={k} cx={h.x} cy={h.y} r={Math.max(110, 12 / view.scale)} fill={tint(strong)} stroke={COLORS.select} strokeWidth={width} />;
+                if (h.type === 'post' || h.type === 'offSpot' || h.type === 'lineOff' || h.type === 'joistOff') return <circle key={k} cx={h.x} cy={h.y} r={Math.max(110, 12 / view.scale)} fill={tint(strong)} stroke={COLORS.select} strokeWidth={width} />;
+                if (h.type === 'spot') {
+                  const r = Math.max(80, 9 / view.scale);
+                  return (
+                    <g key={k} stroke={COLORS.select} strokeWidth={width}>
+                      <circle cx={h.x} cy={h.y} r={r} fill={tint(strong)} />
+                      <line x1={h.x - r * 1.6} y1={h.y} x2={h.x + r * 1.6} y2={h.y} />
+                      <line x1={h.x} y1={h.y - r * 1.6} x2={h.x} y2={h.y + r * 1.6} />
+                    </g>
+                  );
+                }
                 if (h.type === 'bearer') {
-                  const b = shownLay.bearers.find((x) => x.id === h.id);
+                  const b = bearerAt(shownLay, h);
                   return b ? <line key={k} x1={b.seg.a.x} y1={b.seg.a.y} x2={b.seg.b.x} y2={b.seg.b.y} stroke={COLORS.select} strokeWidth={Math.max(90, 10 / view.scale)} strokeLinecap="round" opacity={strong ? 0.45 : 0.25} /> : null;
+                }
+                if (h.type === 'joist') {
+                  return (
+                    <g key={k}>
+                      {joistRuns(h).map((j) => (
+                        <line key={j.id} x1={j.seg.a.x} y1={j.seg.a.y} x2={j.seg.b.x} y2={j.seg.b.y} stroke={COLORS.select} strokeWidth={Math.max(70, 8 / view.scale)} strokeLinecap="round" opacity={strong ? 0.5 : 0.3} />
+                      ))}
+                    </g>
+                  );
                 }
                 return null;
               })}
@@ -1667,14 +1903,119 @@ export function CanvasEditor() {
           );
         }
         if (sel?.type === 'bearer' && selBearer) {
+          const lay = design.layout;
           const b = selBearer;
-          const horiz = Math.abs(b.seg.a.y - b.seg.b.y) < 1;
+          const ax = lay.supportAxis;
+          const horiz = ax === 'y';
           const at = horiz ? { x: snapTo(sel.x, 10), y: b.seg.a.y } : { x: b.seg.a.x, y: snapTo(sel.y, 10) };
+          // a bearer along a slab edge goes with it (one along the wall is not picked)
+          const kind = lay.supports[b.lineIndex]?.kind;
+          const fixed = kind === 'slab' || kind === 'wall';
+          const edit = lineEdits(lay, project.details).get(b.lineIndex);
+          const from = { x: sel.x, y: sel.y };
+          const lo = design.bb[horiz ? 'minY' : 'minX'];
+          const hi = design.bb[horiz ? 'maxY' : 'maxX'];
+          const moveTo = (v: number) => {
+            const pos = Math.max(lo, Math.min(hi, lo + v));
+            const to = horiz ? { x: from.x, y: pos } : { x: pos, y: from.y };
+            setDetails((d) => moveLine(d, from, to, edit, ax), 'h.moveBearer');
+            setUi({ selection: { type: 'bearer', id: b.id, x: to.x, y: to.y } });
+          };
           return (
             <div className="edgebar">
-              <span>{t('dm.bearer', { id: b.id, len: Math.round(b.length), n: b.posts.length })}</span>
+              <span>
+                {t('dm.bearer', { id: b.id, len: Math.round(b.length), n: b.posts.length })}
+                {edit ? ` · ${t(edit.kind === 'added' ? 'dm.stumpAdded' : 'dm.stumpMoved')}` : ''}
+              </span>
+              {fixed ? (
+                <span className="muted small">{t('dm.fixedLine')}</span>
+              ) : (
+                <>
+                  <label className="inline">
+                    {t(horiz ? 'dm.fromTop' : 'dm.fromLeft')}
+                    <NumInline value={Math.round(from[ax] - lo)} step={10} min={0} onCommit={moveTo} />
+                  </label>
+                  <span className="muted small phone-hide">{t('dm.dragAcross')}</span>
+                </>
+              )}
               <button className="tool primary" onClick={() => { setDetails((d) => addStump(d, at), 'h.addStump'); setUi({ selection: { type: 'post', x: at.x, y: at.y } }); }}>
                 {t('dm.addStump')}
+              </button>
+              {edit && (
+                <button className="tool" onClick={() => { setDetails((d) => unmoveLine(d, edit, from[ax], ax), 'h.unmoveBearer'); setUi({ selection: null }); }}>
+                  {t('dm.auto')}
+                </button>
+              )}
+              {!fixed && (
+                <button className="tool danger" onClick={() => { setDetails((d) => removeLine(d, from, edit, ax), 'h.removeBearer'); setUi({ selection: null }); }}>
+                  {t('dm.removeBearer')}
+                </button>
+              )}
+            </div>
+          );
+        }
+        if (sel?.type === 'joist' && selJoist) {
+          const lay = design.layout;
+          const ax = lay.boardAxis;
+          const target = joistTarget(lay, project.details, selJoist.pos);
+          const edit = target.edit;
+          const from = ax === 'x' ? { x: target.pos, y: sel.y } : { x: sel.x, y: target.pos };
+          const lo = design.bb[ax === 'x' ? 'minX' : 'minY'];
+          const hi = design.bb[ax === 'x' ? 'maxX' : 'maxY'];
+          const doubled = edit?.double !== undefined;
+          const moveTo = (v: number) => {
+            const pos = Math.max(lo, Math.min(hi, lo + v));
+            const to = ax === 'x' ? { x: pos, y: from.y } : { x: from.x, y: pos };
+            setDetails((d) => moveJoist(d, from, to, edit, ax), 'h.moveJoist');
+            setUi({ selection: { type: 'joist', x: to.x, y: to.y } });
+          };
+          return (
+            <div className="edgebar">
+              <span>
+                {t('dm.joist', { len: Math.round(selJoist.length) })}
+                {doubled ? ` · ${t('dm.joistDouble')}` : edit?.own ? ` · ${t(edit.own.kind === 'added' ? 'dm.stumpAdded' : 'dm.stumpMoved')}` : ''}
+              </span>
+              <label className="inline">
+                {t(ax === 'x' ? 'dm.fromLeft' : 'dm.fromTop')}
+                <NumInline value={Math.round(target.pos - lo)} step={10} min={0} onCommit={moveTo} />
+              </label>
+              <span className="muted small phone-hide">{t('dm.dragAcross')}</span>
+              <button className="tool primary" onClick={() => setDetails((d) => setDoubled(d, from, !doubled, edit), doubled ? 'h.undoubleJoist' : 'h.doubleJoist')}>
+                {t(doubled ? 'dm.undouble' : 'dm.double')}
+              </button>
+              {edit?.own && (
+                <button className="tool" onClick={() => { setDetails((d) => unmoveJoist(d, edit), 'h.unmoveJoist'); setUi({ selection: null }); }}>
+                  {t('dm.auto')}
+                </button>
+              )}
+              <button className="tool danger" onClick={() => { setDetails((d) => removeJoist(d, from, edit), 'h.removeJoist'); setUi({ selection: null }); }}>
+                {t('dm.removeJoist')}
+              </button>
+            </div>
+          );
+        }
+        if (sel?.type === 'lineOff' || sel?.type === 'joistOff') {
+          const spot = { x: sel.x, y: sel.y };
+          const line = sel.type === 'lineOff';
+          return (
+            <div className="edgebar">
+              <span>{t(line ? 'dm.lineOff' : 'dm.joistOff', { r: line ? project.rules.bearerOffClear ?? 300 : project.rules.joistOffClear ?? 100 })}</span>
+              <button className="tool primary" onClick={() => { setDetails((d) => (line ? putBackLine(d, spot) : putBackJoist(d, spot)), line ? 'h.putBackBearer' : 'h.putBackJoist'); setUi({ selection: null }); }}>
+                {t('dm.putBack')}
+              </button>
+            </div>
+          );
+        }
+        if (sel?.type === 'spot') {
+          const at = { x: snapTo(sel.x, 10), y: snapTo(sel.y, 10) };
+          return (
+            <div className="edgebar">
+              <span>{t('dm.spot')}</span>
+              <button className="tool primary" onClick={() => { setDetails((d) => addJoist(d, at), 'h.addJoist'); setUi({ selection: { type: 'joist', x: at.x, y: at.y } }); }}>
+                {t('dm.addJoist')}
+              </button>
+              <button className="tool primary" onClick={() => { setDetails((d) => addLine(d, at), 'h.addBearer'); setUi({ selection: { type: 'bearer', id: '', x: at.x, y: at.y } }); }}>
+                {t('dm.addBearer')}
               </button>
             </div>
           );
@@ -1682,7 +2023,10 @@ export function CanvasEditor() {
         if (sel) return null;
         return (
           <div className="edgebar">
-            <span>{t('dm.hint')}</span>
+            <span>{t(ui.layers.boards ? 'dm.hint' : 'dm.hintFrame')}</span>
+            <button className="tool" onClick={() => setUi({ layers: { ...ui.layers, boards: !ui.layers.boards, frame: true } })}>
+              {t(ui.layers.boards ? 'dm.showFrame' : 'dm.showBoards')}
+            </button>
             {handChanges > 0 && (
               <>
                 <span className="muted">{t('dm.count', { n: handChanges })}</span>

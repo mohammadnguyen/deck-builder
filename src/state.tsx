@@ -18,6 +18,11 @@ export type Selection =
   | { type: 'post'; x: number; y: number }
   | { type: 'offSpot'; x: number; y: number }
   | { type: 'bearer'; id: string; x: number; y: number }
+  // a joist (where it was picked), the spot a bearer line or a joist was taken out of, an empty spot of the frame
+  | { type: 'joist'; x: number; y: number }
+  | { type: 'lineOff'; x: number; y: number }
+  | { type: 'joistOff'; x: number; y: number }
+  | { type: 'spot'; x: number; y: number }
   | null;
 export interface Layers {
   frame: boolean;

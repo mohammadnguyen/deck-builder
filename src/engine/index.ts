@@ -171,12 +171,30 @@ export function frameCandidates(rules: RuleSet): FrameSizes[] {
   return out;
 }
 
+/** stumps, bearer lines or joists changed by hand */
+export function frameEdited(d: Project['details']): boolean {
+  if (!d) return false;
+  return [d.stumpsOff, d.stumpsAdded, d.stumpsMoved, d.bearersOff, d.bearersAdded, d.bearersMoved, d.joistsOff, d.joistsAdded, d.joistsMoved, d.joistsDoubled].some((list) => !!list?.length);
+}
+
+/** the frame chosen for a deck without its parts changed by hand, by everything else about it: the same while only
+ *  those parts change (as they do one by one in detail mode) */
+const frameCache = new Map<string, FrameInfo>();
+
 function autoFrame(project: Project): DesignResult {
-  // stumps changed by hand tune the frame chosen, they do not choose it (a frame chosen again round them would move
-  // the bearer lines they stand on): the frame is chosen without them and laid out with them
+  // parts of the frame changed by hand tune the frame chosen, they do not choose it (a frame chosen again round them
+  // would move the bearer lines and joists they are set out from): the frame is chosen without them, laid out with them
   const d = project.details;
-  if (d && (d.stumpsOff?.length || d.stumpsAdded?.length || d.stumpsMoved?.length)) {
-    const { frame } = autoFrame({ ...project, details: d.noEdgeBoard?.length ? { noEdgeBoard: d.noEdgeBoard } : null });
+  if (d && frameEdited(d)) {
+    const plain = { ...project, details: d.noEdgeBoard?.length ? { noEdgeBoard: d.noEdgeBoard } : null };
+    // (the frame chosen does not depend on hand edits to the order list)
+    const key = JSON.stringify({ ...plain, order: null });
+    let frame = frameCache.get(key);
+    if (!frame) {
+      frame = autoFrame(plain).frame;
+      if (frameCache.size > 20) frameCache.clear();
+      frameCache.set(key, frame);
+    }
     return designWith({ ...project, params: { ...project.params, joistProductId: frame.joistProductId, bearerProductId: frame.bearerProductId, bearerLaminations: frame.bearerLaminations } }, frame);
   }
   const { rules } = project;
@@ -330,6 +348,11 @@ function setup(project: Project) {
     noEdgeBoard: project.details?.noEdgeBoard ?? [],
     stumpsOff: [...(project.details?.stumpsOff ?? []), ...(project.details?.stumpsMoved ?? []).map((m) => m.from)],
     stumpsAdded: [...(project.details?.stumpsAdded ?? []), ...(project.details?.stumpsMoved ?? []).map((m) => m.to)],
+    linesOff: [...(project.details?.bearersOff ?? []), ...(project.details?.bearersMoved ?? []).map((m) => m.from)],
+    linesAdded: [...(project.details?.bearersAdded ?? []), ...(project.details?.bearersMoved ?? []).map((m) => m.to)],
+    joistsOff: [...(project.details?.joistsOff ?? []), ...(project.details?.joistsMoved ?? []).map((m) => m.from)],
+    joistsAdded: [...(project.details?.joistsAdded ?? []), ...(project.details?.joistsMoved ?? []).map((m) => m.to)],
+    joistsDoubled: project.details?.joistsDoubled ?? [],
   };
   return {
     params, rules, poly, valid, decking, joist, bearer, flush, boardT, joistD, bearerD, levels, concreteId,
@@ -372,7 +395,10 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
   const layout = computeLayout(poly, houseEdges, params, rules, ctx);
   const spMin = Math.round(layout.joistSpacingMin);
   const spMax = Math.round(layout.joistSpacingUsed);
-  const joistSpacingText = joistSetout ? `${Math.round(joistSetoutSpacing)}` : spMin === spMax ? `${spMax}` : `${spMin}-${spMax}`;
+  // (joists changed by hand: a bay set out round them is spread evenly, so the spacing is given as built)
+  const d = project.details;
+  const handJoists = !!(d?.joistsOff?.length || d?.joistsAdded?.length || d?.joistsMoved?.length || d?.joistsDoubled?.length);
+  const joistSpacingText = joistSetout && !handJoists ? `${Math.round(joistSetoutSpacing)}` : spMin === spMax ? `${spMax}` : `${spMin}-${spMax}`;
 
   // ---- stairs ----
   const clampedStairs = project.stairs
@@ -542,6 +568,8 @@ function designWith(project: Project, frame: FrameInfo): DesignResult {
     // two field joists lapped over a bearer are nailed together
     count('nail-75x3.05', layout.totals.joistLaps * (rules.lapNails ?? 3), 'joist');
   }
+  // a joist doubled by hand: the two nailed together, two nails every 600 along it
+  count('nail-75x3.05', layout.joists.filter((j) => j.twin).reduce((n, j) => n + 2 * (Math.ceil(j.length / 600) + 1), 0), 'joist');
   // ---- bearer to post ----
   if (params.bearerToPost === 'bolted') count('bolt-m12-hdg', postCount * rules.boltsPerPost, 'bearer');
   else if (params.bearerToPost === 'screwed' || params.bearerToPost === 'checked') count('screw-batten-14gx100', postCount * rules.battenScrewsPerPost, 'bearer');

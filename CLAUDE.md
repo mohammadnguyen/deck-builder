@@ -61,9 +61,12 @@ owner can change rather than a hidden constant.
 - Stairs to the NCC from the deck height; the last ripped board row is marked; the order list is editable.
 - Detail mode (owner's ask: every part can be changed): after the deck is drawn, single parts are picked and changed
   on the plan (`project.details`): an edge board taken off a side (the boards run out to the edge there), stumps taken
-  out (their spot kept clear, rule), moved along their bearer or put in. Everything else is laid out round them by the
-  rules; the frame size is chosen without the hand-changed stumps (they tune it); a change that breaks a rule is said,
-  not blocked. More parts (bearers, joists, joins) follow the same pattern.
+  out (their spot kept clear, rule), moved along their bearer or put in; bearer lines and joists taken out (a band kept
+  clear across the deck, rules 300 / 100; a joist under the deck edge, a board joint or a breaker just goes), moved or
+  put in; a joist doubled (a twin hard beside it, the pair butted at its joins and nailed). Everything else is laid out
+  round them by the rules (a bearer line moved carries the stumps put in on it); the frame size is chosen without the
+  hand-changed parts (they tune it); a change that breaks a rule is said, not blocked (joist span, joist spacing, joists
+  running past their last bearer more than a share of their span, rule 25%). Joins follow the same pattern next.
 
 ## Drawings (owner's ask)
 

@@ -31,10 +31,13 @@ export interface SupportLine {
   /** slab: along a slab edge inside the deck, on the slab, where the joists change from pedestals to bearers */
   kind: 'edge' | 'house' | 'inter' | 'wall' | 'slab';
   edgeIndex?: number;
+  /** put in (or moved) by hand */
+  hand?: boolean;
 }
 
-/** edge: flush with a deck edge; frame: under the edge board / field board joint; field: evenly spaced in between */
-export type JoistKind = 'edge' | 'frame' | 'field';
+/** edge: flush with a deck edge; frame: under the edge board / field board joint; field: evenly spaced in between;
+ *  double: one of a pair doubled by hand (butted at its joins, like the frame joists) */
+export type JoistKind = 'edge' | 'frame' | 'field' | 'double';
 
 export interface JoistRun {
   id: string;
@@ -47,6 +50,8 @@ export interface JoistRun {
   hangers: number;
   isEdge: boolean;
   kind: JoistKind;
+  /** the second joist of a pair doubled by hand, hard beside the first */
+  twin?: boolean;
   /** a field joist joined over a bearer is lapped side by side: every second piece sits this far over, across the
    *  joists (toward the start of its bay), each lapped end running on to the bearer's far face */
   lap?: number;
@@ -185,6 +190,8 @@ export interface LayoutResult {
   /** field board width and gap, so the editor can work out row edges and breaker strips */
   boardWidth: number;
   boardGap: number;
+  /** joist width, so the editor can tell a pair doubled by hand */
+  joistThickness: number;
   /** boards that have to be ripped to width (last row, or rows meeting a notch), grouped by row and width */
   rips: RipInfo[];
   edgeBoards: EdgeBoardRun[];
@@ -273,6 +280,13 @@ export interface LayoutContext {
   noEdgeBoard?: number[];
   stumpsOff?: Pt[];
   stumpsAdded?: Pt[];
+  /** bearer lines put in by hand (through the point, across the deck), and the spots lines were taken out of (none
+   *  within rules.bearerOffClear of them); joists likewise (rules.joistOffClear), and joists doubled */
+  linesAdded?: Pt[];
+  linesOff?: Pt[];
+  joistsAdded?: Pt[];
+  joistsOff?: Pt[];
+  joistsDoubled?: Pt[];
 }
 
 /**
@@ -684,6 +698,74 @@ function layoutImpl(
     if (!b.manual) b.id = `B${i + 1}`;
   });
 
+  /** the stretches of [lo, hi] clear of `keep` (a stretch may be a single point) */
+  const clearOf = (lo: number, hi: number, keep: [number, number][]): [number, number][] => {
+    const out: [number, number][] = [];
+    let cur = lo;
+    for (const [a, b] of keep) {
+      if (b <= cur) continue;
+      if (a >= hi) break;
+      if (a >= cur) out.push([cur, a]);
+      cur = b;
+    }
+    if (cur <= hi) out.push([cur, hi]);
+    return out;
+  };
+  /** stumps from the first clear spot to the last, at most a span apart and each on clear ground: evenly spaced where
+   *  that keeps them clear; otherwise as few as clear ground allows, each as near an even split of what is left as its
+   *  ground lets it, never closer than `room` to the one before (stumps: so their holes do not run together). Bearer
+   *  lines and joists set out round a spot kept clear the same way. */
+  const stumpsOn = (free: [number, number][], span: number, room = 250): number[] => {
+    const first = free[0][0];
+    const last = free[free.length - 1][1];
+    const isFree = (x: number) => free.some(([a, b]) => x >= a - 0.5 && x <= b + 0.5);
+    const n0 = Math.max(1, Math.ceil((last - first) / span - 1e-9));
+    const even = Array.from({ length: n0 + 1 }, (_, k) => first + ((last - first) * k) / n0);
+    if (even.every(isFree)) return even;
+    // as far as k spans can reach (each stump as far on as it can go): this many spans are needed
+    const fwd = [first];
+    while (fwd[fwd.length - 1] < last - 0.5) {
+      const cur = fwd[fwd.length - 1];
+      let next = cur;
+      for (const [a, b] of free) if (a <= cur + span + 0.5) next = Math.max(next, Math.min(b, cur + span));
+      if (next <= cur + 0.5) break;
+      fwd.push(next);
+    }
+    // stuck short of the end (more kept out than a span): the stumps as far as they reach, and the end
+    if (fwd[fwd.length - 1] < last - 0.5) return [...fwd, last];
+    const n = fwd.length - 1;
+    // the nearest the k-th stump may stand to the start and still leave the end within reach
+    const bwd: number[] = new Array(n + 1).fill(last);
+    for (let k = n - 1; k >= 0; k--) {
+      const lim = bwd[k + 1] - span;
+      let x = bwd[k + 1];
+      for (const [a, b] of free) if (b >= lim - 0.5) x = Math.min(x, Math.max(a, lim));
+      bwd[k] = x;
+    }
+    /** the clear spot within [lo, hi] nearest x */
+    const nearest = (x: number, lo: number, hi: number): number | null => {
+      let best: number | null = null;
+      for (const [a, b] of free) {
+        const a2 = Math.max(a, lo);
+        const b2 = Math.min(b, hi);
+        if (b2 < a2 - 0.01) continue;
+        const c = Math.min(Math.max(x, a2), b2);
+        if (best === null || Math.abs(c - x) < Math.abs(best - x)) best = c;
+      }
+      return best;
+    };
+    const pos = [first];
+    for (let k = 1; k < n; k++) {
+      const prev = pos[k - 1];
+      const target = prev + (last - prev) / (n - k + 1);
+      const hi = Math.min(fwd[k], prev + span);
+      const x = nearest(target, Math.max(bwd[k], prev + room), hi) ?? nearest(target, bwd[k], hi);
+      if (x === null) return [...fwd.slice(0, -1), last];
+      pos.push(x);
+    }
+    pos.push(last);
+    return pos;
+  };
   // ---- joist positions along x: edge joists, double joists under the edge board joint, then even fill per bay ----
   const fixedXs: { x: number; kind: JoistKind }[] = [];
   for (const e of E) {
@@ -731,7 +813,7 @@ function layoutImpl(
     }
   }
   fixedXs.sort((p, q) => p.x - q.x);
-  const fixedSorted: { x: number; kind: JoistKind }[] = [];
+  let fixedSorted: { x: number; kind: JoistKind; twin?: boolean }[] = [];
   for (const f of fixedXs) {
     const last = fixedSorted[fixedSorted.length - 1];
     // exact duplicates merge; two edge joists from a small jog merge; frame joists keep their place
@@ -743,7 +825,74 @@ function layoutImpl(
     }
     fixedSorted.push({ ...f });
   }
-  const joistXs: { x: number; kind: JoistKind }[] = [];
+  // ---- detail mode: joists changed by hand. A joist under the deck edge, a board joint or a breaker taken out goes; a
+  //      joist put in stands where it was put (hard beside a joist it would overlap); a joist doubled gets a second one
+  //      hard beside it, on the side with more room, the two butted at their joins. The field joists keep clear of every
+  //      spot a joist was taken out of and are set out again round the rest ----
+  const toLay = (q: Pt): Pt => (swapped ? swapPt(q) : q);
+  const jOff = (ctx.joistsOff ?? []).map((q) => toLay(q).x);
+  const jPins = (ctx.joistsAdded ?? []).map((q) => toLay(q).x);
+  const jDoubles = (ctx.joistsDoubled ?? []).map((q) => toLay(q).x);
+  const handJoists = jOff.length + jPins.length + jDoubles.length > 0;
+  const jOffR = rules.joistOffClear ?? 100;
+  const joistKeep = mergeIntervals(jOff.map((x) => [x - jOffR, x + jOffR] as [number, number]));
+  let lostJoists = 0;
+  let fixedGone = 0;
+  if (handJoists) {
+    const removed = fixedSorted.filter((f) => jOff.some((x) => Math.abs(x - f.x) <= 2));
+    const fixed = fixedSorted.filter((f) => !removed.includes(f));
+    const inDeck = (x: number) => clipVertical(poly, x).some(([a, b]) => b - a >= 100);
+    const clashOf = (x: number, skip?: (typeof fixed)[number]) => fixed.find((f) => f !== skip && Math.abs(f.x - x) < jt - 0.5);
+    /** where a joist put in at x goes: there, or where it would overlap a joist, at the nearest spot hard beside one
+     *  (null: off the deck, or no room near) */
+    const place = (x: number): number | null => {
+      if (!inDeck(x)) return null;
+      if (!clashOf(x)) return x;
+      let best: number | null = null;
+      for (const f of fixed) {
+        for (const c of [f.x - jt, f.x + jt]) {
+          if (Math.abs(c - x) > 4 * jt || clashOf(c) || !inDeck(c)) continue;
+          if (best === null || Math.abs(c - x) < Math.abs(best - x)) best = c;
+        }
+      }
+      return best;
+    };
+    const put = (f: (typeof fixed)[number]) => {
+      fixed.push(f);
+      fixed.sort((p, q) => p.x - q.x);
+    };
+    for (const x of jPins) {
+      const at = place(x);
+      if (at === null) lostJoists++;
+      else put({ x: at, kind: 'field' });
+    }
+    for (const x of jDoubles) {
+      let m = fixed.find((f) => Math.abs(f.x - x) <= jt / 2 + 0.5);
+      if (!m) {
+        const at = place(x);
+        if (at === null) {
+          lostJoists++;
+          continue;
+        }
+        m = { x: at, kind: 'double' };
+        put(m);
+      } else if (m.kind === 'field') m.kind = 'double';
+      const pair = m;
+      // the room on a side: to the next joist that way
+      const room = (tx: number): number => {
+        const dir = Math.sign(tx - pair.x);
+        const next = fixed.filter((f) => (f.x - pair.x) * dir > 0.5).map((f) => Math.abs(f.x - pair.x));
+        return next.length ? Math.min(...next) : bb.maxX - bb.minX;
+      };
+      const sides = [pair.x + jt, pair.x - jt].filter((tx) => inDeck(tx) && !clashOf(tx, pair)).sort((p, q) => room(q) - room(p));
+      if (!sides.length) lostJoists++;
+      else put({ x: sides[0], kind: 'double', twin: true });
+    }
+    // a joist taken out from under the boards' edge or a joint, with no joist left under the strip it carried
+    fixedGone = removed.filter((r) => !fixed.some((f) => Math.abs(f.x - r.x) <= jt / 2 + 0.5)).length;
+    fixedSorted = fixed;
+  }
+  const joistXs: { x: number; kind: JoistKind; twin?: boolean }[] = [];
   const joistBays: JoistBay[] = [];
   // a field joist longer than a stick is lapped side by side over a bearer: every second piece sits a joist's
   // thickness toward the start of its bay, which opens the bay's last space by as much; such a bay is spaced so that
@@ -757,8 +906,9 @@ function layoutImpl(
       const x0 = fixedSorted[i].x;
       const x1 = fixedSorted[i + 1].x;
       const w = x1 - x0;
-      const xs: number[] = [];
-      const lapped = lappedBay(x0, x1);
+      let xs: number[] = [];
+      // the laps open the bay's last space, unless the bay ends at a joist put in by hand that is lapped as well
+      const lapped = lappedBay(x0, x1) && !(fixedSorted[i + 1].kind === 'field' && clipVertical(poly, x1).some(([a, b]) => b - a > jMaxLen + 0.5));
       if (ctx.joistSetout) {
         // set out at exact centres from the start of the bay; whatever is left over is the last space
         for (let x = x0 + setoutSpacing; x < x1 - 0.5; x += setoutSpacing) xs.push(x);
@@ -769,6 +919,14 @@ function layoutImpl(
       } else {
         const n = joistSpaces(w, params, rules, lapped ? spacingCap - jt : spacingCap);
         for (let k = 1; k < n; k++) xs.push(x0 + (w * k) / n);
+      }
+      // a spot a joist was taken out of that one of these lands on: the field joists keep clear of it, as few as clear
+      // ground allows, every space within the set-out spacing and the decking's limit (less what a lap opens)
+      const kept = handJoists ? joistKeep.filter(([a, b]) => b > x0 + 0.5 && a < x1 - 0.5) : [];
+      if (kept.length && xs.some((x) => kept.some(([a, b]) => x > a + 0.5 && x < b - 0.5))) {
+        const cap = Math.min(ctx.joistSetout ? setoutSpacing : Infinity, lapped ? spacingCap - jt : spacingCap);
+        const room = 2 * jt;
+        xs = w > room ? stumpsOn([[x0, x0], ...clearOf(x0 + room, x1 - room, kept), [x1, x1]], cap, room).slice(1, -1) : [];
       }
       for (const x of xs) joistXs.push({ x, kind: 'field' });
       // the edge-to-frame double is structural, not a spacing bay
@@ -823,11 +981,20 @@ function layoutImpl(
   for (const l of lines) {
     const last = mergedLines[mergedLines.length - 1];
     if (last && last.kind !== 'wall' && l.kind !== 'wall' && l.pos - last.pos < rules.minBearerGap) {
-      // a slab edge's row keeps its place on the slab
+      // a slab edge's row keeps its place on the slab, unless that is past the edge line it takes in (beyond the deck's
+      // edge there, the joists ending at that edge left without it): then the edge line's place serves both
+      const slabLine = l.kind === 'slab' ? l : last.kind === 'slab' ? last : undefined;
+      const other = slabLine === l ? last : l;
+      const e = slabLine && other.edgeIndex !== undefined ? E[other.edgeIndex] : undefined;
+      const pastEdge = !!e && !!slabLine && (slabLine.pos - other.pos) * e.outward.y > 0.5;
       if (l.kind === 'slab') {
-        last.pos = l.pos;
+        if (!pastEdge) last.pos = l.pos;
         last.kind = 'slab';
-      } else if (last.kind !== 'slab') {
+      } else if (last.kind === 'slab') {
+        if (pastEdge) last.pos = l.pos;
+        // the edge it took in is still served from here
+        if (last.edgeIndex === undefined && l.edgeIndex !== undefined) last.edgeIndex = l.edgeIndex;
+      } else {
         last.pos = (last.pos + l.pos) / 2;
         if (l.kind === 'house') last.kind = 'house';
       }
@@ -836,18 +1003,67 @@ function layoutImpl(
     if (last && Math.abs(l.pos - last.pos) < 1) continue;
     mergedLines.push({ ...l });
   }
+  // detail mode: a bearer line put in by hand runs where it was put, taking the place of an edge or house line within the
+  // least gap of it (a wall bearer or a slab's row keeps its own, and the line is not used); a spot a line was taken out
+  // of keeps lines clear: an edge or house line there moves in from its edge to clear ground, and the lines between are
+  // set out again round it, within the joists' span
+  const lineR = rules.bearerOffClear ?? 300;
+  const linePinYs = (ctx.linesAdded ?? []).map((q) => toLay(q).y);
+  const lineKeep = mergeIntervals((ctx.linesOff ?? []).map((q) => toLay(q).y).map((y) => [y - lineR, y + lineR] as [number, number]));
+  const handLines = linePinYs.length + lineKeep.length > 0;
+  let lostLines = 0;
+  let anchors = mergedLines;
+  if (handLines) {
+    anchors = mergedLines.map((l) => ({ ...l }));
+    const shifted = new Set<SupportLine>();
+    for (const l of anchors) {
+      if (l.kind !== 'edge' && l.kind !== 'house') continue;
+      const band = lineKeep.find(([a, b]) => l.pos > a + 0.5 && l.pos < b - 0.5);
+      if (!band) continue;
+      const e = l.edgeIndex !== undefined ? E[l.edgeIndex] : undefined;
+      const inward = e ? -e.outward.y : l.pos < (bb.minY + bb.maxY) / 2 ? 1 : -1;
+      l.pos = inward > 0 ? band[1] : band[0];
+      shifted.add(l);
+    }
+    // a line moved in on to another (a narrow strip): the other one serves
+    anchors.sort((p, q) => p.pos - q.pos);
+    anchors = anchors.filter((l) => !shifted.has(l) || !anchors.some((o) => o !== l && Math.abs(o.pos - l.pos) < rules.minBearerGap));
+    for (const y of linePinYs) {
+      const near = anchors.filter((l) => Math.abs(l.pos - y) < rules.minBearerGap);
+      if (y <= bb.minY + 1 || y >= bb.maxY - 1 || near.some((l) => l.kind === 'wall' || l.kind === 'slab' || l.hand)) {
+        lostLines++;
+        continue;
+      }
+      const edge = near.find((l) => l.kind === 'edge' || l.kind === 'house');
+      anchors = anchors.filter((l) => !near.includes(l));
+      anchors.push({ pos: y, kind: edge?.kind ?? 'inter', ...(edge?.edgeIndex !== undefined ? { edgeIndex: edge.edgeIndex } : {}), hand: true });
+      anchors.sort((p, q) => p.pos - q.pos);
+    }
+  }
   lines = [];
-  for (let i = 0; i < mergedLines.length; i++) {
-    lines.push(mergedLines[i]);
-    if (i + 1 < mergedLines.length) {
-      const gapY = mergedLines[i + 1].pos - mergedLines[i].pos;
+  for (let i = 0; i < anchors.length; i++) {
+    lines.push(anchors[i]);
+    if (i + 1 < anchors.length) {
+      const a = anchors[i].pos;
+      const b = anchors[i + 1].pos;
+      const gapY = b - a;
+      const kept = handLines ? lineKeep.filter(([c, d]) => d > a + 0.5 && c < b - 0.5) : [];
+      if (kept.length) {
+        const room = rules.minBearerGap;
+        if (gapY > room) for (const y of stumpsOn([[a, a], ...clearOf(a + room, b - room, kept), [b, b]], maxJoistSpan, room).slice(1, -1)) lines.push({ pos: y, kind: 'inter' });
+        continue;
+      }
       const n = Math.ceil(gapY / maxJoistSpan);
-      for (let k = 1; k < n; k++) lines.push({ pos: mergedLines[i].pos + (gapY * k) / n, kind: 'inter' });
+      for (let k = 1; k < n; k++) lines.push({ pos: a + (gapY * k) / n, kind: 'inter' });
     }
   }
   lines.sort((p, q) => p.pos - q.pos);
   let joistSpanUsed = 0;
   for (let i = 0; i + 1 < lines.length; i++) joistSpanUsed = Math.max(joistSpanUsed, lines[i + 1].pos - lines[i].pos);
+  if (handLines && joistSpanUsed > maxJoistSpan + 0.5) warnings.push({ severity: 'warn', key: 'layout.handJoistSpan', params: { mm: Math.round(joistSpanUsed), max: maxJoistSpan } });
+  if (lostLines) warnings.push({ severity: 'warn', key: 'layout.lineLost', params: { n: lostLines } });
+  if (lostJoists) warnings.push({ severity: 'warn', key: 'layout.joistLost', params: { n: lostJoists } });
+  if (fixedGone) warnings.push({ severity: 'warn', key: 'layout.handFixedJoist', params: { n: fixedGone } });
 
   const onHouseVertical = (x: number, y: number): boolean =>
     houseY.some((i) => {
@@ -930,73 +1146,6 @@ function layoutImpl(
           return [q.x - w, q.x + w] as [number, number];
         }),
     );
-  /** the stretches of [lo, hi] clear of `keep` (a stretch may be a single point) */
-  const clearOf = (lo: number, hi: number, keep: [number, number][]): [number, number][] => {
-    const out: [number, number][] = [];
-    let cur = lo;
-    for (const [a, b] of keep) {
-      if (b <= cur) continue;
-      if (a >= hi) break;
-      if (a >= cur) out.push([cur, a]);
-      cur = b;
-    }
-    if (cur <= hi) out.push([cur, hi]);
-    return out;
-  };
-  /** stumps from the first clear spot to the last, at most a span apart and each on clear ground: evenly spaced where
-   *  that keeps them clear; otherwise as few as clear ground allows, each as near an even split of what is left as its
-   *  ground lets it, never so close to the one before that their holes run together */
-  const stumpsOn = (free: [number, number][], span: number): number[] => {
-    const first = free[0][0];
-    const last = free[free.length - 1][1];
-    const isFree = (x: number) => free.some(([a, b]) => x >= a - 0.5 && x <= b + 0.5);
-    const n0 = Math.max(1, Math.ceil((last - first) / span - 1e-9));
-    const even = Array.from({ length: n0 + 1 }, (_, k) => first + ((last - first) * k) / n0);
-    if (even.every(isFree)) return even;
-    // as far as k spans can reach (each stump as far on as it can go): this many spans are needed
-    const fwd = [first];
-    while (fwd[fwd.length - 1] < last - 0.5) {
-      const cur = fwd[fwd.length - 1];
-      let next = cur;
-      for (const [a, b] of free) if (a <= cur + span + 0.5) next = Math.max(next, Math.min(b, cur + span));
-      if (next <= cur + 0.5) break;
-      fwd.push(next);
-    }
-    // stuck short of the end (more kept out than a span): the stumps as far as they reach, and the end
-    if (fwd[fwd.length - 1] < last - 0.5) return [...fwd, last];
-    const n = fwd.length - 1;
-    // the nearest the k-th stump may stand to the start and still leave the end within reach
-    const bwd: number[] = new Array(n + 1).fill(last);
-    for (let k = n - 1; k >= 0; k--) {
-      const lim = bwd[k + 1] - span;
-      let x = bwd[k + 1];
-      for (const [a, b] of free) if (b >= lim - 0.5) x = Math.min(x, Math.max(a, lim));
-      bwd[k] = x;
-    }
-    /** the clear spot within [lo, hi] nearest x */
-    const nearest = (x: number, lo: number, hi: number): number | null => {
-      let best: number | null = null;
-      for (const [a, b] of free) {
-        const a2 = Math.max(a, lo);
-        const b2 = Math.min(b, hi);
-        if (b2 < a2 - 0.01) continue;
-        const c = Math.min(Math.max(x, a2), b2);
-        if (best === null || Math.abs(c - x) < Math.abs(best - x)) best = c;
-      }
-      return best;
-    };
-    const pos = [first];
-    for (let k = 1; k < n; k++) {
-      const prev = pos[k - 1];
-      const target = prev + (last - prev) / (n - k + 1);
-      const hi = Math.min(fwd[k], prev + span);
-      const x = nearest(target, Math.max(bwd[k], prev + 250), hi) ?? nearest(target, bwd[k], hi);
-      if (x === null) return [...fwd.slice(0, -1), last];
-      pos.push(x);
-    }
-    pos.push(last);
-    return pos;
-  };
   /** stumps through the ones put in by hand (`at`): set out between each two of them, and on to the ends, as above */
   const stumpsThrough = (free: [number, number][], at: number[], span: number): number[] => {
     const cuts = [-Infinity, ...at, Infinity];
@@ -1400,8 +1549,25 @@ function layoutImpl(
   // joist runs; outside flush framing a run longer than a stick is joined only over a bearer (the two pieces
   // half each), every end landing on a bearer: the fewest joins (pieces up to the longest stick), over the
   // bearers whose pieces cut cleanly from the stocked lengths (two 2.5 m joists from a 5.4)
-  const jruns: { c: { x: number; kind: JoistKind }; y0: number; y1: number }[] = [];
+  const jruns: { c: { x: number; kind: JoistKind; twin?: boolean }; y0: number; y1: number }[] = [];
   for (const c of joistXs) for (const [y0, y1] of clipVertical(poly, c.x)) if (y1 - y0 >= 100) jruns.push({ c, y0, y1 });
+  // bearer lines changed by hand: a joist that runs on past its last bearer further than it may (on top), or a part of
+  // the deck past a bearer that flush joists, hung between bearers, cannot reach
+  if (handLines) {
+    const maxRun = ((rules.joistCantileverPct ?? 25) / 100) * maxJoistSpan;
+    const usual = (x: number, y: number): number => {
+      const atHouse = houseX.some((i) => Math.abs(E[i].a.y - y) < 1 && x >= Math.min(E[i].a.x, E[i].b.x) - 1 && x <= Math.max(E[i].a.x, E[i].b.x) + 1);
+      if (atHouse) return attachment === 'wall' ? ctx.bearerWidth / 2 : ctx.flush ? rules.flushHouseInset : rules.houseBearerInset;
+      return ctx.flush ? Math.max(ctx.bearerWidth / 2, 45) : rules.bearerEdgeInset;
+    };
+    let worst = 0;
+    for (const r of jruns) {
+      const sup = lines.filter((l) => l.pos > r.y0 - 1 && l.pos < r.y1 + 1).map((l) => l.pos);
+      const ends: [number, number][] = sup.length ? [[sup[0] - r.y0, usual(r.c.x, r.y0)], [r.y1 - sup[sup.length - 1], usual(r.c.x, r.y1)]] : [[r.y1 - r.y0, 0]];
+      for (const [run, usualRun] of ends) if (run > Math.max(ctx.flush ? 0 : maxRun, usualRun) + 0.5) worst = Math.max(worst, run);
+    }
+    if (worst) warnings.push({ severity: 'warn', key: ctx.flush ? 'layout.handFlushEdge' : 'layout.handCantilever', params: { mm: Math.round(worst), max: Math.floor(maxRun), pct: rules.joistCantileverPct ?? 25 } });
+  }
   // a field joist is lapped side by side over the bearer, each lapped end running on to the bearer's far face (fully
   // on the bearer); the joists under the edge boards and the breakers stay in line under the board joints, butted
   const lapRun = ctx.bearerWidth / 2;
@@ -1492,6 +1658,7 @@ function layoutImpl(
           hangers,
           isEdge: c.kind === 'edge',
           kind: c.kind,
+          ...(c.twin ? { twin: true } : {}),
         });
         continue;
       }
@@ -1521,6 +1688,7 @@ function layoutImpl(
         hangers,
         isEdge: c.kind === 'edge',
         kind: c.kind,
+        ...(c.twin ? { twin: true } : {}),
         ...(laps ? { lap: -jt } : {}),
       });
     }
@@ -1814,6 +1982,7 @@ function layoutImpl(
     breakerMode: manualItems ? 'manual' : 'auto',
     boardWidth: bw,
     boardGap: gap,
+    joistThickness: jt,
     rips,
     edgeBoards: edgeBoards.map((eb) => ({ ...fix(eb), joinPts: swapped ? eb.joinPts.map(swapPt) : eb.joinPts })),
     breakers: breakers.map(fix),

@@ -161,6 +161,11 @@ export interface RuleSet {
   slabPadDepth?: number;
   /** a stump taken out by hand: no new hole within this of its spot */
   stumpOffClear?: number;
+  /** a bearer line or a joist taken out by hand: no other within this of its spot */
+  bearerOffClear?: number;
+  joistOffClear?: number;
+  /** joists may run past their last bearer by at most this share of their span (%), where bearers were changed by hand */
+  joistCantileverPct?: number;
   braceHeight: number;
   engineerHeight: number;
   lowDeckClearance: number;
@@ -327,6 +332,18 @@ export interface DetailEdits {
   stumpsAdded?: Pt[];
   /** stumps moved by hand along their bearer: the spot they left stays clear, they stand where they were put */
   stumpsMoved?: { from: Pt; to: Pt }[];
+  /** bearer lines the same way, each across the deck: the spots lines were taken out of (no line within the rule's
+   *  clearance), lines put in by hand (through the point), lines moved (the spot they left stays clear) */
+  bearersOff?: Pt[];
+  bearersAdded?: Pt[];
+  bearersMoved?: { from: Pt; to: Pt }[];
+  /** joists the same way, each along the deck: a joist under the deck edge, a board joint or a breaker taken out goes,
+   *  and no field joist comes within the rule's clearance of the spot */
+  joistsOff?: Pt[];
+  joistsAdded?: Pt[];
+  joistsMoved?: { from: Pt; to: Pt }[];
+  /** joists doubled: a second joist hard beside the one there, the two nailed together */
+  joistsDoubled?: Pt[];
 }
 
 /** Hand-placed breakers, valid for the board direction they were laid out for. */

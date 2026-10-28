@@ -1063,6 +1063,19 @@ describe('existing concrete under part of the deck', () => {
     }
   });
 
+  it('a slab edge just past a step in the deck: the row there stays under the joists that end at the step', () => {
+    // an L, the boards along y: the step's joists end at x 3600; the slab runs on to 3709, its edge row would be at 3634
+    const p = newProject('step', false);
+    p.deck = [{ x: 0, y: 0 }, { x: 6000, y: 0 }, { x: 6000, y: 2400 }, { x: 3600, y: 2400 }, { x: 3600, y: 4200 }, { x: 0, y: 4200 }];
+    p.params.deckHeight = 450;
+    p.params.boardAxis = 'y';
+    p.slabs = [{ id: 'S1', height: 300, poly: [{ x: -77, y: 365 }, { x: 3709, y: 365 }, { x: 3709, y: 4018 }, { x: -77, y: 4018 }] }];
+    const lay = computeDesign(p).layout!;
+    const lastRow = Math.max(...lay.supports.map((s) => s.pos).filter((x) => x < 3600));
+    expect(3600 - lastRow).toBeLessThanOrEqual(100);
+    expect(lay.supports.some((s) => s.pos > 3600 && s.pos < 3600 + 300)).toBe(false);
+  });
+
   it('says so when the slab is too close below the deck for a pedestal', () => {
     const p = sketch();
     p.slabs![0].height = 120;
@@ -1152,6 +1165,119 @@ describe('detail mode: parts changed by hand, the rest laid out round them', () 
     expect(d.warnings.find((w) => w.key === 'layout.pinOffBearer')).toMatchObject({ params: { n: 1 } });
   });
 
+  const gaps = (d: ReturnType<typeof computeDesign>) => {
+    const ys = d.layout!.supports.map((s) => s.pos);
+    return ys.slice(1).map((y, k) => y - ys[k]);
+  };
+
+  it('a bearer line taken out: none near its spot, the lines between set out again within the joist span', () => {
+    const base = computeDesign(deck());
+    const inter = base.layout!.supports.find((s) => s.kind === 'inter')!;
+    const p = deck();
+    p.details = { bearersOff: [{ x: 3000, y: Math.round(inter.pos) }] };
+    const d = computeDesign(p);
+    const lay = d.layout!;
+    for (const s of lay.supports) expect(Math.abs(s.pos - Math.round(inter.pos))).toBeGreaterThanOrEqual(300 - 0.5);
+    for (const g of gaps(d)) expect(g).toBeLessThanOrEqual(lay.maxJoistSpan + 0.5);
+    expect(lay.supports.length).toBe(base.layout!.supports.length);
+    expect(d.frame).toEqual(base.frame);
+    for (const b of lay.bearers.filter((x) => !x.onWall)) expect(b.posts.length).toBeGreaterThanOrEqual(2);
+    expect(d.warnings.some((w) => w.key.startsWith('layout.hand') || w.key === 'layout.lineLost')).toBe(false);
+  });
+
+  it('a bearer line put in by hand runs where it was put, on its stumps; one moved leaves its spot clear', () => {
+    const p = deck();
+    p.details = { bearersAdded: [{ x: 3000, y: 1000 }] };
+    const d = computeDesign(p);
+    const lay = d.layout!;
+    expect(lay.supports.find((s) => s.pos === 1000)?.hand).toBe(true);
+    expect(bearerOf(d, 1000).posts.length).toBeGreaterThanOrEqual(2);
+    for (const g of gaps(d)) expect(g).toBeLessThanOrEqual(lay.maxJoistSpan + 0.5);
+    const inter = Math.round(computeDesign(deck()).layout!.supports.find((s) => s.kind === 'inter')!.pos);
+    const q = deck();
+    q.details = { bearersMoved: [{ from: { x: 3000, y: inter }, to: { x: 3000, y: inter - 200 } }] };
+    const m = computeDesign(q).layout!;
+    expect(m.supports.some((s) => s.pos === inter - 200)).toBe(true);
+    expect(m.supports.filter((s) => Math.abs(s.pos - inter) < 300 && s.pos !== inter - 200)).toEqual([]);
+  });
+
+  it('the edge bearer taken out moves in to clear ground; moved in further, the joists run past it, said so', () => {
+    const edge = Math.round(computeDesign(deck()).layout!.supports.find((s) => s.kind === 'edge')!.pos);
+    const p = deck();
+    p.details = { bearersOff: [{ x: 3000, y: edge }] };
+    const d = computeDesign(p);
+    expect(Math.max(...d.layout!.supports.map((s) => s.pos))).toBe(edge - 300);
+    // 325 mm past it, within a quarter of the joists' 1500 span
+    expect(d.warnings.some((w) => w.key === 'layout.handCantilever')).toBe(false);
+    const q = deck();
+    q.details = { bearersMoved: [{ from: { x: 3000, y: edge }, to: { x: 3000, y: 3400 } }] };
+    expect(computeDesign(q).warnings.find((w) => w.key === 'layout.handCantilever')).toMatchObject({ params: { mm: 600, max: 375 } });
+  });
+
+  it('a joist taken out: the field joists keep clear of its spot, the bay set out again within the spacing', () => {
+    const base = computeDesign(deck());
+    const field = base.layout!.joists.find((j) => j.kind === 'field')!;
+    const p = deck();
+    p.details = { joistsOff: [{ x: field.pos, y: 2000 }] };
+    const d = computeDesign(p);
+    const lay = d.layout!;
+    for (const j of lay.joists) expect(Math.abs(j.pos - field.pos)).toBeGreaterThanOrEqual(100 - 0.5);
+    for (const b of lay.joistBays) for (const s of b.spaces) expect(s).toBeLessThanOrEqual(d.joistSetoutSpacing + 0.5);
+    // the bays it is not in keep their set-out
+    const bay = base.layout!.joistBays.find((b) => field.pos > b.from && field.pos < b.to)!;
+    const others = (x: ReturnType<typeof computeDesign>) => x.layout!.joistBays.filter((b) => b.from !== bay.from).map((b) => b.spaces);
+    expect(others(d)).toEqual(others(base));
+    expect(d.warnings.some((w) => w.key.startsWith('layout.hand') || w.key.startsWith('compliance.joistSpacing'))).toBe(false);
+  });
+
+  it('a joist under the edge board joint taken out goes, said so; a joist put in stands where it was put', () => {
+    const base = computeDesign(deck());
+    const frame = base.layout!.joists.find((j) => j.kind === 'frame' && j.pos > 5000)!;
+    const p = deck();
+    p.details = { joistsOff: [{ x: frame.pos, y: 2000 }], joistsAdded: [{ x: 2000, y: 1200 }] };
+    const d = computeDesign(p);
+    expect(d.layout!.joists.some((j) => Math.abs(j.pos - frame.pos) < 1)).toBe(false);
+    expect(d.warnings.find((w) => w.key === 'layout.handFixedJoist')).toMatchObject({ params: { n: 1 } });
+    expect(d.layout!.joists.some((j) => j.pos === 2000)).toBe(true);
+    // put in on top of another joist: hard beside it instead
+    const q = deck();
+    q.details = { joistsAdded: [{ x: Math.round(frame.pos) + 10, y: 2000 }] };
+    const xs = computeDesign(q).layout!.joists.map((j) => j.pos).sort((a, b) => a - b);
+    for (let k = 1; k < xs.length; k++) expect(xs[k] - xs[k - 1]).toBeGreaterThanOrEqual(45 - 0.5);
+  });
+
+  it('a joist doubled gets a second one hard beside it, the pair butted at its joins and nailed; the method says so', () => {
+    const long = (): Project => {
+      const p = deck();
+      p.deck = [{ x: 0, y: 0 }, { x: 6000, y: 0 }, { x: 6000, y: 7500 }, { x: 0, y: 7500 }];
+      return p;
+    };
+    const base = computeDesign(long());
+    const field = base.layout!.joists.filter((j) => j.kind === 'field')[2];
+    expect(field.lap).toBe(-45);
+    const p = long();
+    p.details = { joistsDoubled: [{ x: field.pos, y: 2000 }] };
+    const d = computeDesign(p);
+    const pair = d.layout!.joists.filter((j) => Math.abs(j.pos - field.pos) < 46);
+    expect(pair.length).toBe(2);
+    expect(pair.every((j) => j.kind === 'double' && !j.lap)).toBe(true);
+    expect(pair.filter((j) => j.twin).length).toBe(1);
+    expect(Math.abs(pair[0].pos - pair[1].pos)).toBeCloseTo(45, 5);
+    expect(d.method.some((s) => s.notes?.some((n) => n.key === 'm.joists.double' && n.params?.n === 1))).toBe(true);
+    const nails = (x: ReturnType<typeof computeDesign>) => x.bom.lines.find((l) => l.productId === 'nail-75x3.05')?.qty ?? 0;
+    expect(nails(d)).toBeGreaterThanOrEqual(nails(base));
+    expect(d.bom.total).toBeGreaterThan(base.bom.total);
+  });
+
+  it('bearer lines and joists changed by hand where the boards run the other way', () => {
+    const p = deck();
+    p.params.boardAxis = 'y';
+    p.details = { joistsAdded: [{ x: 1500, y: 2000 }], bearersAdded: [{ x: 2200, y: 1500 }] };
+    const lay = computeDesign(p).layout!;
+    expect(lay.joists.some((j) => j.seg.a.y === 2000 && j.seg.b.y === 2000)).toBe(true);
+    expect(lay.bearers.some((b) => b.seg.a.x === 2200 && b.seg.b.x === 2200)).toBe(true);
+  });
+
   it('keeps the hand changes through outline edits and mirroring, and drops what cannot be read', async () => {
     const { remapEdgeData, mirrorProject } = await import('../../utils/shapes');
     const { migrateProject } = await import('../../state');
@@ -1165,7 +1291,10 @@ describe('detail mode: parts changed by hand, the rest laid out round them', () 
     const m = mirrorProject(p);
     expect(m.details!.stumpsAdded).toEqual([{ x: 2000, y: 1340 }]);
     const bad = migrateProject({ ...p, details: { noEdgeBoard: [1, -1, 1.5, 1] as number[], stumpsOff: [{ x: 1, y: NaN }] as never, stumpsAdded: 'x' as never } });
-    expect(bad.details).toEqual({ noEdgeBoard: [1], stumpsOff: [], stumpsAdded: [], stumpsMoved: [] });
+    expect(bad.details).toEqual({ noEdgeBoard: [1] });
+    const kept = migrateProject({ ...p, details: { bearersMoved: [{ from: { x: 1, y: 2 }, to: { x: 1, y: 3 } }, { from: null }] as never, joistsDoubled: [{ x: 5, y: 6 }, 7] as never } });
+    expect(kept.details).toEqual({ bearersMoved: [{ from: { x: 1, y: 2 }, to: { x: 1, y: 3 } }], joistsDoubled: [{ x: 5, y: 6 }] });
+    expect(mirrorProject({ ...p, details: { joistsAdded: [{ x: 1000, y: 50 }], bearersOff: [{ x: 500, y: 2000 }] } }).details).toMatchObject({ joistsAdded: [{ x: 5000, y: 50 }], bearersOff: [{ x: 5500, y: 2000 }] });
     expect(migrateProject({ ...p, details: { stumpsOff: [] } }).details).toBeNull();
   });
 });

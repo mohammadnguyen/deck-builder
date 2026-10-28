@@ -18,6 +18,11 @@ export type Selection =
   | { type: 'post'; x: number; y: number }
   | { type: 'offSpot'; x: number; y: number }
   | { type: 'bearer'; id: string; x: number; y: number }
+  // a joist (where it was picked), the spot a bearer line or a joist was taken out of, an empty spot of the frame
+  | { type: 'joist'; x: number; y: number }
+  | { type: 'lineOff'; x: number; y: number }
+  | { type: 'joistOff'; x: number; y: number }
+  | { type: 'spot'; x: number; y: number }
   | null;
 export interface Layers {
   frame: boolean;
@@ -153,20 +158,30 @@ function migrateDetails(d: DetailEdits | null | undefined): DetailEdits | null {
   if (!d || typeof d !== 'object') return null;
   const pts = (list: unknown): Pt[] => (Array.isArray(list) ? list.filter((q): q is Pt => !!q && Number.isFinite(q.x) && Number.isFinite(q.y)).map((q) => ({ x: q.x, y: q.y })) : []);
   const pt = (q: unknown): Pt | null => (pts([q])[0] ?? null);
-  const moved = Array.isArray(d.stumpsMoved)
-    ? d.stumpsMoved.flatMap((m) => {
-        const from = m && pt(m.from);
-        const to = m && pt(m.to);
-        return from && to ? [{ from, to }] : [];
-      })
-    : [];
+  const moves = (list: unknown): { from: Pt; to: Pt }[] =>
+    Array.isArray(list)
+      ? list.flatMap((m) => {
+          const from = m && pt(m.from);
+          const to = m && pt(m.to);
+          return from && to ? [{ from, to }] : [];
+        })
+      : [];
   const out: DetailEdits = {
     noEdgeBoard: Array.isArray(d.noEdgeBoard) ? [...new Set(d.noEdgeBoard.filter((i) => Number.isInteger(i) && i >= 0))] : [],
     stumpsOff: pts(d.stumpsOff),
     stumpsAdded: pts(d.stumpsAdded),
-    stumpsMoved: moved,
+    stumpsMoved: moves(d.stumpsMoved),
+    bearersOff: pts(d.bearersOff),
+    bearersAdded: pts(d.bearersAdded),
+    bearersMoved: moves(d.bearersMoved),
+    joistsOff: pts(d.joistsOff),
+    joistsAdded: pts(d.joistsAdded),
+    joistsMoved: moves(d.joistsMoved),
+    joistsDoubled: pts(d.joistsDoubled),
   };
-  return out.noEdgeBoard!.length || out.stumpsOff!.length || out.stumpsAdded!.length || out.stumpsMoved!.length ? out : null;
+  // only the changes there are
+  for (const k of Object.keys(out) as (keyof DetailEdits)[]) if (!out[k]?.length) delete out[k];
+  return Object.keys(out).length ? out : null;
 }
 
 /**

@@ -59,6 +59,11 @@ owner can change rather than a hidden constant.
   wall over a slab. Stump holes keep clear of every slab (rule); where the ground beside a slab is too narrow for a
   stump, the joists there stand on pedestals on pads poured beside it, level with it (rule: pad size).
 - Stairs to the NCC from the deck height; the last ripped board row is marked; the order list is editable.
+- Detail mode (owner's ask: every part can be changed): after the deck is drawn, single parts are picked and changed
+  on the plan (`project.details`): an edge board taken off a side (the boards run out to the edge there), stumps taken
+  out (their spot kept clear, rule), moved along their bearer or put in. Everything else is laid out round them by the
+  rules; the frame size is chosen without the hand-changed stumps (they tune it); a change that breaks a rule is said,
+  not blocked. More parts (bearers, joists, joins) follow the same pattern.
 
 ## Drawings (owner's ask)
 

@@ -268,6 +268,11 @@ export interface LayoutContext {
   /** existing concrete under part of the deck (outlines): no bearers or stumps over it, the joists sit on a pedestal at
    *  each support line */
   slabs?: Pt[][];
+  /** detail mode: exposed edges left without an edge board; spots stumps were taken out of (none within
+   *  rules.stumpOffClear of them); stumps put in by hand (each on a bearer line) */
+  noEdgeBoard?: number[];
+  stumpsOff?: Pt[];
+  stumpsAdded?: Pt[];
 }
 
 /**
@@ -467,6 +472,9 @@ function layoutImpl(
   const elevated = params.deckHeight >= ELEVATED_HEIGHT;
   const factor = elevated ? rules.elevatedFactor : 1;
   const exposed = (e: Edge): boolean => !houseEdges.includes(e.index);
+  // an exposed edge takes an edge board unless it was taken off by hand (the boards then run out to the edge)
+  const noEdgeBoard = new Set(ctx.noEdgeBoard ?? []);
+  const boarded = (e: Edge): boolean => exposed(e) && !noEdgeBoard.has(e.index);
   const bw = ctx.boardWidth;
   const ebw = ctx.edgeBoardWidth || bw;
   const gap = ctx.boardGap;
@@ -476,10 +484,10 @@ function layoutImpl(
   const slabRanges = (y: number): [number, number][] => slabs.flatMap((s) => clipHorizontal(s, y)).sort((p, q) => p[0] - q[0]);
 
   // ---- picture-frame edge boards: field polygon inset behind them ----
-  let edgeBoardOn = ctx.edgeBoard && E.some(exposed);
+  let edgeBoardOn = ctx.edgeBoard && E.some(boarded);
   let fieldPoly: Pt[] = poly;
   if (edgeBoardOn) {
-    const inset = insetPolygon(poly, E, (e) => (exposed(e) ? ebw + gap : 0));
+    const inset = insetPolygon(poly, E, (e) => (boarded(e) ? ebw + gap : 0));
     const fE = edges(inset);
     const ok = validatePolygon(inset).ok && fE.every((e) => e.length > 2 * (ebw + gap) + 50) && fE.length === E.length;
     if (ok) fieldPoly = inset;
@@ -681,7 +689,7 @@ function layoutImpl(
   for (const e of E) {
     if (e.axis !== 'y') continue;
     fixedXs.push({ x: e.a.x - e.outward.x * (jt / 2), kind: 'edge' });
-    if (edgeBoardOn && rules.frameJoist && exposed(e)) {
+    if (edgeBoardOn && rules.frameJoist && boarded(e)) {
       // a pair of joists touching each other, the joint (edge board width + gap from the edge) falls between them
       const joint = e.a.x - e.outward.x * (ebw + gap);
       fixedXs.push({ x: joint - jt / 2, kind: 'frame' });
@@ -851,7 +859,7 @@ function layoutImpl(
   const bearers: BearerRun[] = [];
   let maxBearerSpanUsed = 0;
   let bearerCounter = 0;
-  const bearerJobs: { index: number; xs: number; xe: number; postXs: number[]; onWall: boolean; keep: [number, number][] }[] = [];
+  const bearerJobs: { index: number; xs: number; xe: number; postXs: number[]; onWall: boolean; keep: [number, number][]; pinned: boolean }[] = [];
   // over a slab a line is a row of pedestals, one under each joist; the bearer only where there is ground (the parts,
   // each end that stops at a slab marked). Where the ground beside a slab is too narrow for a stump clear of it, the
   // joists there stand on pedestals on pads poured beside the slab, level with it (`pad`: that slab; -1 for a row on
@@ -872,6 +880,9 @@ function layoutImpl(
   };
   let bearerAtSlab = false;
   let padStrip = 0;
+  // bearers that run on past their last stump, or span further than they may, because of stumps changed by hand
+  const handOver: { id: string; mm: number }[] = [];
+  const handSpan: { id: string; mm: number; max: number }[] = [];
   // a bearer end sits fully on its stump (the stump's outer face under the bearer end); a stump's hole keeps clear of
   // every slab, a bearer end beside one running on past its stump by at most that clearance
   const endSet = (ctx.postWidth ?? 100) / 2 + rules.postEndSetback;
@@ -903,6 +914,22 @@ function layoutImpl(
     }
     return mergeIntervals(out);
   };
+  // detail mode: a stump taken out by hand leaves its spot clear (a pipe or a root there, say); a stump put in by hand
+  // stands where it was put (on the bearer line within reach of it), the others set out round it
+  const offR = rules.stumpOffClear ?? 300;
+  const offSpots = (ctx.stumpsOff ?? []).map((q) => (swapped ? swapPt(q) : q));
+  const pins = (ctx.stumpsAdded ?? []).map((q) => (swapped ? swapPt(q) : q));
+  const pinUsed = pins.map(() => false);
+  /** the stretches of support line y within the clearance of a spot a stump was taken out of */
+  const offKeep = (y: number): [number, number][] =>
+    mergeIntervals(
+      offSpots
+        .filter((q) => Math.abs(q.y - y) < offR)
+        .map((q) => {
+          const w = Math.sqrt(offR * offR - (q.y - y) ** 2);
+          return [q.x - w, q.x + w] as [number, number];
+        }),
+    );
   /** the stretches of [lo, hi] clear of `keep` (a stretch may be a single point) */
   const clearOf = (lo: number, hi: number, keep: [number, number][]): [number, number][] => {
     const out: [number, number][] = [];
@@ -917,26 +944,77 @@ function layoutImpl(
     return out;
   };
   /** stumps from the first clear spot to the last, at most a span apart and each on clear ground: evenly spaced where
-   *  that keeps them clear, otherwise each as far on as it can go */
+   *  that keeps them clear; otherwise as few as clear ground allows, each as near an even split of what is left as its
+   *  ground lets it, never so close to the one before that their holes run together */
   const stumpsOn = (free: [number, number][], span: number): number[] => {
     const first = free[0][0];
     const last = free[free.length - 1][1];
-    const n = Math.max(1, Math.ceil((last - first) / span - 1e-9));
-    const even = Array.from({ length: n + 1 }, (_, k) => first + ((last - first) * k) / n);
-    if (even.every((x) => free.some(([a, b]) => x >= a - 0.5 && x <= b + 0.5))) return even;
-    const out = [first];
-    let cur = first;
-    while (last - cur > span + 0.5) {
+    const isFree = (x: number) => free.some(([a, b]) => x >= a - 0.5 && x <= b + 0.5);
+    const n0 = Math.max(1, Math.ceil((last - first) / span - 1e-9));
+    const even = Array.from({ length: n0 + 1 }, (_, k) => first + ((last - first) * k) / n0);
+    if (even.every(isFree)) return even;
+    // as far as k spans can reach (each stump as far on as it can go): this many spans are needed
+    const fwd = [first];
+    while (fwd[fwd.length - 1] < last - 0.5) {
+      const cur = fwd[fwd.length - 1];
       let next = cur;
       for (const [a, b] of free) if (a <= cur + span + 0.5) next = Math.max(next, Math.min(b, cur + span));
       if (next <= cur + 0.5) break;
-      out.push(next);
-      cur = next;
+      fwd.push(next);
     }
-    // the last one too close behind the one before (their holes would run together): that one goes
-    if (out.length > 1 && last - out[out.length - 1] < 250 && last - out[out.length - 2] <= span + 0.5) out.pop();
-    out.push(last);
-    return out;
+    // stuck short of the end (more kept out than a span): the stumps as far as they reach, and the end
+    if (fwd[fwd.length - 1] < last - 0.5) return [...fwd, last];
+    const n = fwd.length - 1;
+    // the nearest the k-th stump may stand to the start and still leave the end within reach
+    const bwd: number[] = new Array(n + 1).fill(last);
+    for (let k = n - 1; k >= 0; k--) {
+      const lim = bwd[k + 1] - span;
+      let x = bwd[k + 1];
+      for (const [a, b] of free) if (b >= lim - 0.5) x = Math.min(x, Math.max(a, lim));
+      bwd[k] = x;
+    }
+    /** the clear spot within [lo, hi] nearest x */
+    const nearest = (x: number, lo: number, hi: number): number | null => {
+      let best: number | null = null;
+      for (const [a, b] of free) {
+        const a2 = Math.max(a, lo);
+        const b2 = Math.min(b, hi);
+        if (b2 < a2 - 0.01) continue;
+        const c = Math.min(Math.max(x, a2), b2);
+        if (best === null || Math.abs(c - x) < Math.abs(best - x)) best = c;
+      }
+      return best;
+    };
+    const pos = [first];
+    for (let k = 1; k < n; k++) {
+      const prev = pos[k - 1];
+      const target = prev + (last - prev) / (n - k + 1);
+      const hi = Math.min(fwd[k], prev + span);
+      const x = nearest(target, Math.max(bwd[k], prev + 250), hi) ?? nearest(target, bwd[k], hi);
+      if (x === null) return [...fwd.slice(0, -1), last];
+      pos.push(x);
+    }
+    pos.push(last);
+    return pos;
+  };
+  /** stumps through the ones put in by hand (`at`): set out between each two of them, and on to the ends, as above */
+  const stumpsThrough = (free: [number, number][], at: number[], span: number): number[] => {
+    const cuts = [-Infinity, ...at, Infinity];
+    const out: number[] = [];
+    for (let i = 0; i + 1 < cuts.length; i++) {
+      const lo = cuts[i];
+      const hi = cuts[i + 1];
+      const pts: [number, number][] = Number.isFinite(lo) ? [[lo, lo]] : [];
+      for (const [a, b] of free) {
+        const a2 = Math.max(a, lo);
+        const b2 = Math.min(b, hi);
+        if (b2 >= a2 && b2 - a2 + Math.min(Math.abs(a2 - lo), Math.abs(b2 - hi)) > 0.5) pts.push([a2, b2]);
+      }
+      if (Number.isFinite(hi)) pts.push([hi, hi]);
+      if (!pts.length) continue;
+      for (const x of stumpsOn(pts, span)) if (!out.some((y) => Math.abs(y - x) < 1)) out.push(x);
+    }
+    return out.sort((p, q) => p - q);
   };
   lines.forEach((line, li) => {
     const prevGap = li > 0 ? line.pos - lines[li - 1].pos : line.pos - bb.minY;
@@ -989,14 +1067,19 @@ function layoutImpl(
         for (const part of offSlab(m.iv, line.pos)) segs.push({ iv: part.iv, wall: false, insetS: m.insetS && !part.slabS, insetE: m.insetE && !part.slabE });
       }
     }
-    const keep = slabs.length ? keepOut(line.pos) : [];
+    // where a stump may not go along this line: on or by a slab, by a spot a stump was taken out of
+    const slabKeep = slabs.length ? keepOut(line.pos) : [];
+    const keep = offSpots.length ? mergeIntervals([...slabKeep, ...offKeep(line.pos)]) : slabKeep;
+    const bySlab = (a: number, b: number): boolean => slabKeep.some(([c, d]) => Math.min(b, d) - Math.max(a, c) > -1);
+    // the stumps put in by hand on this line
+    const linePins = pins.map((q, k) => ({ q, k })).filter(({ q }) => Math.abs(q.y - line.pos) <= Math.min(150, rules.minBearerGap / 2));
     /** a bearer from xs to xe, on stumps at postXs (or bolted along the wall) */
-    const addBearer = (xs: number, xe: number, postXs: number[], postSpacing: number, onWall: boolean, edgeIndex: number | undefined, houseStart: boolean, houseEnd: boolean) => {
+    const addBearer = (xs: number, xe: number, postXs: number[], postSpacing: number, onWall: boolean, edgeIndex: number | undefined, houseStart: boolean, houseEnd: boolean, pinned = false): string => {
       const length = xe - xs;
       maxBearerSpanUsed = Math.max(maxBearerSpanUsed, postSpacing);
       const id = `B${++bearerCounter}`;
       // pieces are cut once the stock length is chosen (below), from these
-      bearerJobs.push({ index: bearers.length, xs, xe, postXs, onWall, keep });
+      bearerJobs.push({ index: bearers.length, xs, xe, postXs, onWall, keep, pinned });
       if (onWall) {
         ledgers.push({
           edgeIndex: edgeIndex ?? line.edgeIndex ?? -1,
@@ -1021,6 +1104,7 @@ function layoutImpl(
         houseStart,
         houseEnd,
       });
+      return id;
     };
     for (const { iv, wall, edgeIndex, insetS, insetE } of segs) {
       const [x0, x1] = iv;
@@ -1032,14 +1116,22 @@ function layoutImpl(
       // at a house wall the stump keeps the house inset clear of the wall footing
       const pStart = xs + (houseStart ? rules.houseBearerInset : endSet);
       const pEnd = xe - (houseEnd ? rules.houseBearerInset : endSet);
-      if (!wall && keep.some(([a, b]) => b > x0 - 1 && a < x1 + 1)) {
-        // by a slab: stumps only where their holes keep clear of it, each bearer end running on past its stump by at
-        // most that clearance; joists left beyond a bearer's reach stand on pedestals on pads poured beside the slab
-        const free = pStart <= pEnd ? clearOf(pStart, pEnd, keep) : [];
+      const myPins = wall ? [] : linePins.filter(({ q }) => q.x >= x0 - 1 && q.x <= x1 + 1);
+      for (const { k } of myPins) pinUsed[k] = true;
+      if (!wall && (myPins.length || keep.some(([a, b]) => b > x0 - 1 && a < x1 + 1))) {
+        // by a slab (or a spot a stump was taken out of): stumps only where their holes keep clear of it, each bearer
+        // end running on past its stump by at most that clearance; joists left beyond a bearer's reach by a slab
+        // stand on pedestals on pads poured beside it. Stumps put in by hand stand where they were put, with no other
+        // hole within 250 of them, the rest set out round them
+        const pinXs = [...new Set(myPins.map(({ q }) => Math.min(Math.max(q.x, xs), xe)))].sort((p, q) => p - q);
+        const keepHere = pinXs.length ? mergeIntervals([...keep, ...pinXs.map((x) => [x - 250, x + 250] as [number, number])]) : keep;
+        const free = [...(pStart <= pEnd ? clearOf(pStart, pEnd, keepHere) : []), ...pinXs.map((x) => [x, x] as [number, number])].sort((p, q) => p[0] - q[0]);
+        // a gap too long to span splits the bearer only by a slab (the joists there on pads); elsewhere the bearer
+        // spans it, said so
         const groups: [number, number][][] = [];
         for (const f of free) {
           const g = groups[groups.length - 1];
-          if (g && f[0] - g[g.length - 1][1] <= maxSpan) g.push(f);
+          if (g && (f[0] - g[g.length - 1][1] <= maxSpan || !bySlab(g[g.length - 1][1], f[0]))) g.push(f);
           else groups.push([f]);
         }
         const pads = (a: number, b: number) => {
@@ -1054,23 +1146,34 @@ function layoutImpl(
           // a short stretch of clear ground takes one stump, as near the middle of what it carries as clear ground
           // allows, the bearer running on either side of it as a short bearer does (up to 400)
           const lastGroup = gi === groups.length - 1;
-          const single = last - first < 300;
+          const groupPins = pinXs.filter((x) => x >= first - 0.5 && x <= last + 0.5);
+          const single = !groupPins.length && last - first < 300;
           const mid = (covered + (lastGroup ? xe : last + slabSet)) / 2;
-          const posts = single
-            ? [g.reduce((best, [a, b]) => {
-                const x = Math.min(Math.max(mid, a), b);
-                return Math.abs(x - mid) < Math.abs(best - mid) ? x : best;
-              }, first)]
-            : stumpsOn(g, maxSpan);
+          const posts = groupPins.length
+            ? stumpsThrough(g, groupPins, maxSpan)
+            : single
+              ? [g.reduce((best, [a, b]) => {
+                  const x = Math.min(Math.max(mid, a), b);
+                  return Math.abs(x - mid) < Math.abs(best - mid) ? x : best;
+                }, first)]
+              : stumpsOn(g, maxSpan);
           // (at a house wall the stump is set back clear of the house footing, the bearer running on to the wall)
           const reachS = single ? 400 : Math.max(slabSet, gi === 0 && houseStart ? rules.houseBearerInset : 0);
           const reachE = single ? 400 : Math.max(slabSet, lastGroup && houseEnd ? rules.houseBearerInset : 0);
-          const from = Math.max(covered, posts[0] - reachS);
-          const to = Math.min(xe, posts[posts.length - 1] + reachE);
+          let from = Math.max(covered, posts[0] - reachS);
+          let to = Math.min(xe, posts[posts.length - 1] + reachE);
+          // no slab there (a stump taken out by hand): the bearer runs on to its end all the same, said so
+          if (from > covered + 1 && !bySlab(covered, from)) from = covered;
+          if (lastGroup && to < xe - 1 && !bySlab(to, xe)) to = xe;
           pads(covered, from);
-          if (posts[0] - from > endSet + 1 || to - posts[posts.length - 1] > endSet + 1) bearerAtSlab = true;
+          const overS = posts[0] - from;
+          const overE = to - posts[posts.length - 1];
+          if ((overS > endSet + 1 && bySlab(from, posts[0])) || (overE > endSet + 1 && bySlab(posts[posts.length - 1], to))) bearerAtSlab = true;
           const spacing = posts.length > 1 ? Math.max(...posts.slice(1).map((x, k) => x - posts[k])) : 0;
-          addBearer(from, to, posts, spacing, false, undefined, from === xs && houseStart, to === xe && houseEnd);
+          const id = addBearer(from, to, posts, spacing, false, undefined, from === xs && houseStart, to === xe && houseEnd, groupPins.length > 0);
+          const reachHere = Math.max(reachS, reachE);
+          if (Math.max(overS, overE) > reachHere + 1) handOver.push({ id, mm: Math.round(Math.max(overS, overE)) });
+          if (spacing > maxSpan + 1) handSpan.push({ id, mm: Math.round(spacing), max: maxSpan });
           covered = to;
         }
         pads(covered, xe);
@@ -1102,11 +1205,13 @@ function layoutImpl(
     for (const i of order) {
       const b = bearers[i];
       const even = b.posts.map((q) => q.x);
-      if (even.length > 2) {
+      // stumps put in by hand stay where they are
+      const job = bearerJobs.find((j) => j.index === i);
+      if (even.length > 2 && !job?.pinned) {
         const p0 = even[0];
         const p1 = even[even.length - 1];
-        // grid lines clear of this bearer's end stumps (and of any slab)
-        const keep = bearerJobs.find((j) => j.index === i)?.keep ?? [];
+        // grid lines clear of this bearer's end stumps (and of any slab or spot a stump was taken out of)
+        const keep = job?.keep ?? [];
         const cands = grid.filter((g) => g > p0 + 300 && g < p1 - 300 && !keep.some(([a, c]) => g > a + 0.5 && g < c - 0.5)).sort((u, v) => u - v);
         const aligned = [p0];
         let cur = p0;
@@ -1116,11 +1221,11 @@ function layoutImpl(
           aligned.push(next);
           cur = next;
         }
-        if (p1 - cur <= b.maxSpan + 0.5 && aligned.length + 1 <= even.length) {
+        // (never two stumps so close their holes run together)
+        if (p1 - cur <= b.maxSpan + 0.5 && p1 - cur >= 250 && aligned.length + 1 <= even.length && aligned.every((x, k) => k === 0 || x - aligned[k - 1] >= 250)) {
           aligned.push(p1);
           b.posts = aligned.map((x) => ({ x, y: b.seg.a.y }));
           b.postSpacing = Math.max(...aligned.slice(1).map((x, k) => x - aligned[k]));
-          const job = bearerJobs.find((j) => j.index === i);
           if (job) job.postXs = aligned;
         }
       }
@@ -1129,6 +1234,11 @@ function layoutImpl(
     maxBearerSpanUsed = bearers.reduce((m, b) => Math.max(m, b.postSpacing), 0);
   }
   if (bearerAtSlab) warnings.push({ severity: 'warn', key: 'layout.bearerAtSlab' });
+  // what stumps changed by hand leave behind
+  for (const h of handSpan) warnings.push({ severity: 'warn', key: 'layout.handSpan', params: { id: h.id, mm: h.mm, max: h.max } });
+  for (const h of handOver) warnings.push({ severity: 'warn', key: 'layout.handOverhang', params: { id: h.id, mm: h.mm } });
+  const lostPins = pinUsed.filter((u) => !u).length;
+  if (lostPins) warnings.push({ severity: 'warn', key: 'layout.pinOffBearer', params: { n: lostPins } });
   /** the pedestal row at (x, y) on support line y */
   const rowAt = (x: number, y: number) => pedestalRows.find((q) => Math.abs(q.y - y) < 1 && x >= q.x0 - 1 && x <= q.x1 + 1);
   /** the slab of the pedestal at (x, y) (on a pad, the slab it is level with), or -1 where there is none */
@@ -1592,7 +1702,7 @@ function layoutImpl(
   const lastRow = boards[boards.length - 1];
   if (lastRow && lastRow.ripped && lastRow.width < bw / 2) warnings.push({ severity: 'warn', key: 'layout.narrowRip', params: { width: Math.round(lastRow.width) } });
 
-  // ---- edge boards: one run per exposed edge, mitred where two exposed edges meet ----
+  // ---- edge boards: one run per exposed edge that has one, mitred where two of them meet ----
   const edgeBoards: EdgeBoardRun[] = [];
   let edgeBoardLm = 0;
   let edgeBoardPieces = 0;
@@ -1604,11 +1714,11 @@ function layoutImpl(
     const cornerAt = (i: number): CornerKind => {
       const prev = E[(i - 1 + n) % n];
       const cur = E[i];
-      if (!exposed(prev) || !exposed(cur)) return 'butt';
+      if (!boarded(prev) || !boarded(cur)) return 'butt';
       return cornerShape(poly, i);
     };
     for (const e of E) {
-      if (!exposed(e)) continue;
+      if (!boarded(e)) continue;
       const startCorner = cornerAt(e.index);
       const endCorner = cornerAt((e.index + 1) % n);
       const extra = (startCorner === 'concave' ? ebw : 0) + (endCorner === 'concave' ? ebw : 0);

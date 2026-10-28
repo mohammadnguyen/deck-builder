@@ -3,7 +3,7 @@ import { computeDesign, type DesignResult } from './engine';
 import { LangContext, translate } from './i18n';
 import { defaultParams, defaultRules, newProject } from './model/defaults';
 import { PRODUCT_MAP, resolveProductId, CATALOG } from './model/catalog';
-import type { DeckParams, Lang, OrderEdits, Project, RuleSet } from './model/types';
+import type { DeckParams, DetailEdits, Lang, OrderEdits, Project, Pt, RuleSet } from './model/types';
 import { canRedo as hCanRedo, canUndo as hCanUndo, currentState, initHistory, jumpHistory, pushHistory, redoHistory, undoHistory, type History } from './utils/history';
 import { isShareHash, sharedProject } from './utils/share';
 
@@ -13,6 +13,11 @@ export type Selection =
   | { type: 'vertex'; index: number }
   | { type: 'stair'; id: string }
   | { type: 'breaker'; id: string }
+  // detail mode: single parts of the frame
+  | { type: 'edgeBoard'; index: number }
+  | { type: 'post'; x: number; y: number }
+  | { type: 'offSpot'; x: number; y: number }
+  | { type: 'bearer'; id: string; x: number; y: number }
   | null;
 export interface Layers {
   frame: boolean;
@@ -37,6 +42,8 @@ export interface UIState {
   advanced: boolean;
   /** free drawing tools shown on the canvas */
   drawMode: boolean;
+  /** detail mode: the parts of the frame and boards are picked and changed one by one (the outline stays as it is) */
+  detail: boolean;
 }
 
 /** what undo / redo / jump just did, so the canvas can confirm it in a toast */
@@ -136,8 +143,30 @@ export function migrateProject(p: Partial<Project>): Project {
     progress: p.progress ?? {},
     breakers: p.breakers && Array.isArray(p.breakers.items) ? p.breakers : null,
     slabs: Array.isArray(p.slabs) ? p.slabs.filter((s) => s && Array.isArray(s.poly) && s.poly.length >= 3 && Number.isFinite(s.height)) : [],
+    details: migrateDetails(p.details),
     order: migrateOrder(p.order),
   } as Project;
+}
+
+/** Hand changes made in detail mode, as saved (or brought by a link): whatever cannot be read is left out. */
+function migrateDetails(d: DetailEdits | null | undefined): DetailEdits | null {
+  if (!d || typeof d !== 'object') return null;
+  const pts = (list: unknown): Pt[] => (Array.isArray(list) ? list.filter((q): q is Pt => !!q && Number.isFinite(q.x) && Number.isFinite(q.y)).map((q) => ({ x: q.x, y: q.y })) : []);
+  const pt = (q: unknown): Pt | null => (pts([q])[0] ?? null);
+  const moved = Array.isArray(d.stumpsMoved)
+    ? d.stumpsMoved.flatMap((m) => {
+        const from = m && pt(m.from);
+        const to = m && pt(m.to);
+        return from && to ? [{ from, to }] : [];
+      })
+    : [];
+  const out: DetailEdits = {
+    noEdgeBoard: Array.isArray(d.noEdgeBoard) ? [...new Set(d.noEdgeBoard.filter((i) => Number.isInteger(i) && i >= 0))] : [],
+    stumpsOff: pts(d.stumpsOff),
+    stumpsAdded: pts(d.stumpsAdded),
+    stumpsMoved: moved,
+  };
+  return out.noEdgeBoard!.length || out.stumpsOff!.length || out.stumpsAdded!.length || out.stumpsMoved!.length ? out : null;
 }
 
 /**
@@ -282,6 +311,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     panelTab: 'params',
     advanced: false,
     drawMode: false,
+    detail: false,
   });
   const [lastHistoryAction, setLastHistoryAction] = useState<HistoryAction | null>(null);
   const [saveOk, setSaveOk] = useState(true);

@@ -378,6 +378,7 @@ export function mirrorProject(p: Project): Project {
         stumpsOff: d.stumpsOff?.map(m), stumpsAdded: d.stumpsAdded?.map(m), stumpsMoved: mv(d.stumpsMoved),
         bearersOff: d.bearersOff?.map(m), bearersAdded: d.bearersAdded?.map(m), bearersMoved: mv(d.bearersMoved),
         joistsOff: d.joistsOff?.map(m), joistsAdded: d.joistsAdded?.map(m), joistsMoved: mv(d.joistsMoved), joistsDoubled: d.joistsDoubled?.map(m),
+        edgeJoins: d.edgeJoins?.map(m), bearerJoins: d.bearerJoins?.map(m), joistJoinLines: d.joistJoinLines?.map(m),
       }
     : d;
   return { ...p, deck, stairs, house, breakers: mirrorBreakers(p.breakers, mx), ...(slabs ? { slabs } : {}), details };

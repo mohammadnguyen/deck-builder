@@ -15,7 +15,7 @@ type Axis = 'x' | 'y';
 function tidy(d: DetailEdits): DetailEdits | null {
   const out: DetailEdits = {};
   if (d.noEdgeBoard?.length) out.noEdgeBoard = [...d.noEdgeBoard].sort((a, b) => a - b);
-  for (const k of ['stumpsOff', 'stumpsAdded', 'stumpsMoved', 'bearersOff', 'bearersAdded', 'bearersMoved', 'joistsOff', 'joistsAdded', 'joistsMoved', 'joistsDoubled'] as const) {
+  for (const k of ['stumpsOff', 'stumpsAdded', 'stumpsMoved', 'bearersOff', 'bearersAdded', 'bearersMoved', 'joistsOff', 'joistsAdded', 'joistsMoved', 'joistsDoubled', 'edgeJoins', 'bearerJoins', 'joistJoinLines'] as const) {
     const list = d[k];
     if (list?.length) (out as Record<string, unknown>)[k] = list;
   }
@@ -310,4 +310,58 @@ export function joistTarget(layout: LayoutResult | undefined, d: DetailEdits | n
   const e = edits.get(Math.round(pos * 10));
   if (e?.twin) for (const [key, m] of edits) if (!m.twin && m.double === e.double) return { pos: key / 10, edit: m };
   return { pos, edit: e };
+}
+
+// ---- joins ----
+
+/** a point on a side of the deck (between its ends) */
+const onSide = (q: Pt, side: { a: Pt; b: Pt }): boolean => {
+  const vert = Math.abs(side.a.x - side.b.x) < 1;
+  const [c, lo, hi, at] = vert ? [side.a.x, Math.min(side.a.y, side.b.y), Math.max(side.a.y, side.b.y), q.y] : [side.a.y, Math.min(side.a.x, side.b.x), Math.max(side.a.x, side.b.x), q.x];
+  return Math.abs((vert ? q.x : q.y) - c) < 2 && at > lo + 1 && at < hi - 1;
+};
+
+/** the edge board joins put by hand on a side */
+export function sideHandJoins(d: DetailEdits | null | undefined, side: { a: Pt; b: Pt }): Pt[] {
+  return (d?.edgeJoins ?? []).filter((q) => onSide(q, side));
+}
+
+/** a side's edge board joins put by hand, all of them (none: back to the rules) */
+export function setSideJoins(d: DetailEdits | null | undefined, side: { a: Pt; b: Pt }, joins: Pt[]): DetailEdits | null {
+  const cur = d ?? {};
+  return tidy({ ...cur, edgeJoins: [...(cur.edgeJoins ?? []).filter((q) => !onSide(q, side)), ...joins.map(round)] });
+}
+
+/** a point on a bearer (its line within the snap of a stump put in, and along it) */
+const onBearer = (q: Pt, seg: { a: Pt; b: Pt }, ax: Axis): boolean => {
+  const al: Axis = ax === 'x' ? 'y' : 'x';
+  return Math.abs(q[ax] - seg.a[ax]) <= 150 && q[al] >= Math.min(seg.a[al], seg.b[al]) - 1 && q[al] <= Math.max(seg.a[al], seg.b[al]) + 1;
+};
+
+/** the bearer joins put by hand on a bearer (`ax`: the axis its line is placed along) */
+export function bearerHandJoins(d: DetailEdits | null | undefined, seg: { a: Pt; b: Pt }, ax: Axis): Pt[] {
+  return (d?.bearerJoins ?? []).filter((q) => onBearer(q, seg, ax));
+}
+
+/** a bearer's joins put by hand, all of them (none: back to the rules) */
+export function setBearerJoins(d: DetailEdits | null | undefined, seg: { a: Pt; b: Pt }, ax: Axis, joins: Pt[]): DetailEdits | null {
+  const cur = d ?? {};
+  return tidy({ ...cur, bearerJoins: [...(cur.bearerJoins ?? []).filter((q) => !onBearer(q, seg, ax)), ...joins.map(round)] });
+}
+
+/** is the bearer line at `pos` one the joists join over by hand */
+export function joistJoinLineAt(d: DetailEdits | null | undefined, pos: number, ax: Axis): boolean {
+  return (d?.joistJoinLines ?? []).some((q) => Math.abs(q[ax] - pos) <= 150);
+}
+
+/** the joists join over this bearer line (or no longer), `at` a point on it */
+export function setJoistJoinLine(d: DetailEdits | null | undefined, at: Pt, ax: Axis, on: boolean): DetailEdits | null {
+  const cur = d ?? {};
+  const rest = (cur.joistJoinLines ?? []).filter((q) => Math.abs(q[ax] - at[ax]) > 150);
+  return tidy({ ...cur, joistJoinLines: on ? [...rest, round(at)] : rest });
+}
+
+/** the joists back to joining where the rules put them */
+export function clearJoistJoinLines(d: DetailEdits | null | undefined): DetailEdits | null {
+  return tidy({ ...(d ?? {}), joistJoinLines: [] });
 }

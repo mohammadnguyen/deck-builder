@@ -166,6 +166,8 @@ export interface RuleSet {
   joistOffClear?: number;
   /** joists may run past their last bearer by at most this share of their span (%), where bearers were changed by hand */
   joistCantileverPct?: number;
+  /** edge boards joined where the boards waste least (else evenly along the joists, longest first across them) */
+  edgeJoinsLeastWaste?: boolean;
   braceHeight: number;
   engineerHeight: number;
   lowDeckClearance: number;
@@ -344,6 +346,12 @@ export interface DetailEdits {
   joistsMoved?: { from: Pt; to: Pt }[];
   /** joists doubled: a second joist hard beside the one there, the two nailed together */
   joistsDoubled?: Pt[];
+  /** joins put where they are by hand: edge board joins (points on the deck's outline; a side with any takes exactly
+   *  those), bearer joins (at stumps; a bearer with any takes exactly those in its first ply) and the bearer lines the
+   *  joists join over (points on them) */
+  edgeJoins?: Pt[];
+  bearerJoins?: Pt[];
+  joistJoinLines?: Pt[];
 }
 
 /** Hand-placed breakers, valid for the board direction they were laid out for. */

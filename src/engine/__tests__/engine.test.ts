@@ -1072,3 +1072,100 @@ describe('existing concrete under part of the deck', () => {
   });
 });
 
+
+describe('detail mode: parts changed by hand, the rest laid out round them', () => {
+  /** a 6 x 4 m deck against the house along the top, 600 high */
+  function deck(): Project {
+    const p = newProject('detail', false);
+    p.deck = [{ x: 0, y: 0 }, { x: 6000, y: 0 }, { x: 6000, y: 4000 }, { x: 0, y: 4000 }];
+    p.house = [[{ x: -500, y: 0 }, { x: 6500, y: 0 }]];
+    p.houseEdges = detectHouseEdges(p.deck, p.house);
+    p.params.deckHeight = 600;
+    return p;
+  }
+  const bearerOf = (d: ReturnType<typeof computeDesign>, y: number) => d.layout!.bearers.find((b) => !b.onWall && Math.abs(b.seg.a.y - y) < 1)!;
+
+  it('an edge board taken off one side: the boards run out to that edge, the corners there butt', () => {
+    const base = computeDesign(deck());
+    const p = deck();
+    p.details = { noEdgeBoard: [1] };
+    const d = computeDesign(p);
+    const lay = d.layout!;
+    expect(lay.edgeBoards.map((e) => e.edgeIndex)).toEqual([2, 3]);
+    expect(lay.edgeBoards.find((e) => e.edgeIndex === 2)!.startCorner).toBe('butt');
+    // the boards reach the right edge now (the edge board's width further than before)
+    const reach = (x: ReturnType<typeof computeDesign>) => Math.max(...x.layout!.boards.flatMap((r) => r.runs.flatMap((run) => [run.seg.a.x, run.seg.b.x])));
+    expect(reach(d)).toBeGreaterThan(reach(base) + 100);
+    expect(reach(d)).toBeLessThanOrEqual(6000 + 1);
+    // no double joist under an edge board that is not there, one edge board less on the order
+    expect(lay.totals.frameJoists).toBeLessThan(base.layout!.totals.frameJoists);
+    const pieces = (x: ReturnType<typeof computeDesign>) => x.layout!.edgeBoards.reduce((n, e) => n + e.pieces.length, 0);
+    expect(pieces(d)).toBeLessThan(pieces(base));
+    expect(d.bom.total).toBeLessThan(base.bom.total);
+  });
+
+  it('a stump taken out: none near its spot, the others on that bearer evened out, within their span', () => {
+    const base = computeDesign(deck());
+    const b0 = bearerOf(base, base.layout!.bearers.find((b) => !b.onWall)!.seg.a.y);
+    const spot = b0.posts[1];
+    const p = deck();
+    p.details = { stumpsOff: [spot] };
+    const d = computeDesign(p);
+    const b = bearerOf(d, spot.y);
+    expect(b.seg.a.x).toBe(b0.seg.a.x);
+    expect(b.seg.b.x).toBe(b0.seg.b.x);
+    for (const q of b.posts) expect(Math.abs(q.x - spot.x)).toBeGreaterThanOrEqual(300 - 1);
+    const xs = b.posts.map((q) => q.x).sort((u, v) => u - v);
+    const spans = xs.slice(1).map((x, k) => x - xs[k]);
+    for (const s of spans) {
+      expect(s).toBeLessThanOrEqual(b.maxSpan + 0.5);
+      expect(s).toBeGreaterThan(b.maxSpan / 2);
+    }
+    // the other bearers keep theirs
+    const other = base.layout!.bearers.filter((x) => !x.onWall && Math.abs(x.seg.a.y - spot.y) > 1);
+    for (const o of other) expect(bearerOf(d, o.seg.a.y).posts).toEqual(o.posts);
+    expect(d.warnings.some((w) => w.key.startsWith('layout.hand'))).toBe(false);
+  });
+
+  it('a stump put in by hand stands where it was put, the others set out round it', () => {
+    const base = computeDesign(deck());
+    const y = base.layout!.bearers.find((b) => !b.onWall)!.seg.a.y;
+    const p = deck();
+    p.details = { stumpsAdded: [{ x: 2500, y: y + 40 }] };
+    const d = computeDesign(p);
+    const b = bearerOf(d, y);
+    expect(b.posts.some((q) => q.x === 2500 && q.y === y)).toBe(true);
+    const xs = b.posts.map((q) => q.x).sort((u, v) => u - v);
+    for (let k = 1; k < xs.length; k++) {
+      expect(xs[k] - xs[k - 1]).toBeGreaterThanOrEqual(250);
+      expect(xs[k] - xs[k - 1]).toBeLessThanOrEqual(b.maxSpan + 0.5);
+    }
+  });
+
+  it('says so when a stump changed by hand leaves a bearer end hanging, or a stump put in is off every bearer', () => {
+    const base = computeDesign(deck());
+    const b0 = base.layout!.bearers.find((b) => !b.onWall)!;
+    const p = deck();
+    p.details = { stumpsOff: [b0.posts[b0.posts.length - 1]], stumpsAdded: [{ x: 3000, y: (b0.seg.a.y + base.layout!.bearers.filter((b) => !b.onWall)[1].seg.a.y) / 2 }] };
+    const d = computeDesign(p);
+    expect(d.warnings.find((w) => w.key === 'layout.handOverhang')).toMatchObject({ params: { id: bearerOf(d, b0.seg.a.y).id } });
+    expect(d.warnings.find((w) => w.key === 'layout.pinOffBearer')).toMatchObject({ params: { n: 1 } });
+  });
+
+  it('keeps the hand changes through outline edits and mirroring, and drops what cannot be read', async () => {
+    const { remapEdgeData, mirrorProject } = await import('../../utils/shapes');
+    const { migrateProject } = await import('../../state');
+    const p = deck();
+    p.details = { noEdgeBoard: [2], stumpsOff: [{ x: 1525, y: 1340 }], stumpsAdded: [{ x: 4000, y: 1340 }] };
+    // a notch in the bottom edge splits it: both parts stay without an edge board
+    const notched = normalizePolygon([{ x: 0, y: 0 }, { x: 6000, y: 0 }, { x: 6000, y: 4000 }, { x: 3500, y: 4000 }, { x: 3500, y: 3500 }, { x: 2500, y: 3500 }, { x: 2500, y: 4000 }, { x: 0, y: 4000 }]);
+    const carried = remapEdgeData(p, notched).details!;
+    const bottom = edges(notched).filter((e) => e.axis === 'x' && Math.abs(e.a.y - 4000) < 1).map((e) => e.index);
+    expect(carried.noEdgeBoard).toEqual(bottom.sort((a, b) => a - b));
+    const m = mirrorProject(p);
+    expect(m.details!.stumpsAdded).toEqual([{ x: 2000, y: 1340 }]);
+    const bad = migrateProject({ ...p, details: { noEdgeBoard: [1, -1, 1.5, 1] as number[], stumpsOff: [{ x: 1, y: NaN }] as never, stumpsAdded: 'x' as never } });
+    expect(bad.details).toEqual({ noEdgeBoard: [1], stumpsOff: [], stumpsAdded: [], stumpsMoved: [] });
+    expect(migrateProject({ ...p, details: { stumpsOff: [] } }).details).toBeNull();
+  });
+});

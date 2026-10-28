@@ -3,10 +3,12 @@ import { computeDesign } from '../engine';
 import { detectHouseEdges, dist, edges as polyEdges, normalizePolygon, pointInPolygon, projectOnEdge, validatePolygon } from '../engine/geometry';
 import type { LayoutResult } from '../engine/layout';
 import { useT } from '../i18n';
-import type { BreakerLayout, Pt } from '../model/types';
+import type { BreakerLayout, DetailEdits, Pt } from '../model/types';
+import { PRODUCT_MAP } from '../model/catalog';
 import { useApp, type Selection as UISelection, type Tool } from '../state';
 import { acrossOf, alongOf, breakerBays, breakerRoom, breakerSpans, currentBreakers, extendedBreaker, mainBay, movedBreaker, removeBreaker, snapBreakerEnd, stripWidth, updateBreaker, type BreakerSpan } from '../utils/breakers';
 import type { ManualBreaker } from '../model/types';
+import { addStump, detailCount, moveStump, putBackStump, removeStump, setEdgeBoard, stumpEdits, unmoveStump, type StumpEdit } from '../utils/details';
 import { applyDeckMove, carryEdgeData, housePolylineFor, insertNotch, isJogEdge, mirrorProject, moveEdgeTo, moveVertexTo, nextStairId, removeJog, samePoly, setEdgeLengthAnchored } from '../utils/shapes';
 import { NumInline } from './fields';
 import { COLORS, DesignLayers } from './PlanLayers';
@@ -24,9 +26,20 @@ type Drag =
   | { type: 'stair'; id: string; grab: number; offset: number; orig: number }
   | { type: 'breaker'; id: string; grab: number; base: BreakerLayout; item: ManualBreaker; span: BreakerSpan; room: [number, number]; centre: number | null; orig: number; last: number; sx: number; sy: number; moved: boolean }
   | { type: 'breakerEnd'; id: string; end: 'from' | 'to'; base: BreakerLayout; pos: number; other: number; at: number; orig: number | null; last: number | null; sx: number; sy: number; moved: boolean }
-  | { type: 'pinch'; d0: number; scale0: number; mid0: { x: number; y: number }; ox0: number; oy0: number };
+  | { type: 'pinch'; d0: number; scale0: number; mid0: { x: number; y: number }; ox0: number; oy0: number }
+  // detail mode: a stump slid along its bearer (`at`, `last`: its place along the bearer's axis)
+  | { type: 'post'; from: Pt; axis: 'x' | 'y'; lo: number; hi: number; at: number; last: number; grab: number; edit: StumpEdit | undefined; sx: number; sy: number; moved: boolean };
 
-type Hover = { type: 'edge'; index: number } | { type: 'vertex'; index: number } | { type: 'stair'; id: string } | { type: 'breaker'; id: string; end?: 'from' | 'to'; c0?: number } | null;
+type Hover =
+  | { type: 'edge'; index: number }
+  | { type: 'vertex'; index: number }
+  | { type: 'stair'; id: string }
+  | { type: 'breaker'; id: string; end?: 'from' | 'to'; c0?: number }
+  | { type: 'edgeBoard'; index: number }
+  | { type: 'post'; x: number; y: number }
+  | { type: 'offSpot'; x: number; y: number }
+  | { type: 'bearer'; id: string; x: number; y: number }
+  | null;
 type Dir = 'auto' | 'E' | 'W' | 'N' | 'S';
 
 const MIN_SCALE = 0.004;
@@ -108,13 +121,15 @@ export function CanvasEditor() {
   const [liveStair, setLiveStair] = useState<{ id: string; offset: number } | null>(null);
   // breakers being dragged: the whole layout is recomputed live (a design takes a few ms)
   const [liveBreakers, setLiveBreakers] = useState<BreakerLayout | null>(null);
-  // the live preview of a breaker drag keeps the frame already chosen (it is chosen again when the edit lands)
+  // a stump being slid along its bearer in detail mode: the hand changes as they would land (undefined: none)
+  const [liveDetails, setLiveDetails] = useState<DetailEdits | null | undefined>(undefined);
+  // the live preview of a breaker or stump drag keeps the frame already chosen (it is chosen again when the edit lands)
   const preview = useMemo(() => {
-    if (!liveBreakers) return null;
+    if (!liveBreakers && liveDetails === undefined) return null;
     const f = design.frame;
     const params = { ...project.params, frameSizing: 'fixed' as const, joistProductId: f.joistProductId, bearerProductId: f.bearerProductId, bearerLaminations: f.bearerLaminations };
-    return computeDesign({ ...project, params, breakers: liveBreakers });
-  }, [liveBreakers, project, design.frame]);
+    return computeDesign({ ...project, params, ...(liveBreakers ? { breakers: liveBreakers } : {}), ...(liveDetails !== undefined ? { details: liveDetails } : {}) });
+  }, [liveBreakers, liveDetails, project, design.frame]);
   const shownDesign = preview && preview.ok ? preview : design;
   const [guides, setGuides] = useState<{ x?: number; y?: number }>({});
   const [hover, setHover] = useState<Hover>(null);
@@ -232,7 +247,7 @@ export function CanvasEditor() {
       if (!v.ok) return false;
       updateProject((p) => {
         if (resetDependents) {
-          return { ...p, deck: norm, houseEdges: detectHouseEdges(norm, p.house), stairs: [], breakers: null, params: { ...p.params, balustrade: { ...p.params.balustrade, edgeOverride: {} } } };
+          return { ...p, deck: norm, houseEdges: detectHouseEdges(norm, p.house), stairs: [], breakers: null, details: null, params: { ...p.params, balustrade: { ...p.params.balustrade, edgeOverride: {} } } };
         }
         // with the same corners the edge indices are stable (a length change only translates edges); when
         // corners were inserted or removed, house flags, stairs and balustrade overrides follow their edges by geometry
@@ -334,6 +349,48 @@ export function CanvasEditor() {
     (w: Pt): Hover => {
       const tol = (touchRef.current ? 20 : 9) / viewRef.current.scale;
       const poly = project.deck;
+      if (ui.detail) {
+        // detail mode: the parts, smallest first (a stump over its bearer, an edge board over the boards); the outline
+        // itself is not picked, so nothing about the shape changes by accident
+        const lay = design.ok ? design.layout : undefined;
+        if (!lay) return null;
+        const reach = Math.max(tol, 60);
+        let best: { q: Pt; d: number } | null = null;
+        for (const q of lay.posts) {
+          const dd = dist(q.pt, w);
+          if (dd < reach && (!best || dd < best.d)) best = { q: q.pt, d: dd };
+        }
+        if (best) return { type: 'post', x: best.q.x, y: best.q.y };
+        for (const o of project.details?.stumpsOff ?? []) if (dist(o, w) < reach) return { type: 'offSpot', x: o.x, y: o.y };
+        for (const s of design.stairs) if (pointInPolygon(w, s.outline)) return { type: 'stair', id: s.id };
+        if (ui.layers.boards) {
+          const ax = lay.boardAxis;
+          const half = stripWidth(lay) / 2;
+          const wa = alongOf(ax, w);
+          const wc = acrossOf(ax, w);
+          for (const b of breakerSpans(lay)) if (Math.abs(wa - b.pos) <= half + tol * 0.4 && wc >= b.c0 && wc <= b.c1) return { type: 'breaker', id: b.id, c0: b.c0 };
+        }
+        // an edge board's strip along each side off the house, whether its edge board is on or taken off
+        const ebw = PRODUCT_MAP[design.edgeBoardProductId]?.width ?? 140;
+        if (project.params.edgeBoard && ui.layers.boards && poly.length >= 4) {
+          for (const e of polyEdges(poly)) {
+            if (project.houseEdges.includes(e.index)) continue;
+            const pr = projectOnEdge(e, w);
+            if (pr.t <= 0 || pr.t >= e.length) continue;
+            if (pr.d <= tol || (pr.d <= ebw + tol * 0.5 && pointInPolygon(w, poly))) return { type: 'edgeBoard', index: e.index };
+          }
+        }
+        for (const b of lay.bearers) {
+          if (b.onWall) continue;
+          const horiz = Math.abs(b.seg.a.y - b.seg.b.y) < 1;
+          const along = horiz ? w.x : w.y;
+          const line = horiz ? b.seg.a.y : b.seg.a.x;
+          const lo = Math.min(horiz ? b.seg.a.x : b.seg.a.y, horiz ? b.seg.b.x : b.seg.b.y);
+          const hi = Math.max(horiz ? b.seg.a.x : b.seg.a.y, horiz ? b.seg.b.x : b.seg.b.y);
+          if (along >= lo && along <= hi && Math.abs((horiz ? w.y : w.x) - line) <= 35 + tol) return { type: 'bearer', id: b.id, x: horiz ? along : line, y: horiz ? line : along };
+        }
+        return null;
+      }
       let vertex: { index: number; d: number } | null = null;
       for (let i = 0; i < poly.length; i++) {
         const dd = dist(poly[i], w);
@@ -372,7 +429,7 @@ export function CanvasEditor() {
       }
       return null;
     },
-    [design.ok, design.layout, design.stairs, project.deck, ui.layers.boards, ui.selection],
+    [design.ok, design.layout, design.stairs, design.edgeBoardProductId, project.deck, project.details, project.houseEdges, project.params.edgeBoard, ui.detail, ui.layers.boards, ui.selection],
   );
 
   // a breaker selection whose breaker is gone (another decking, another direction, breakers off) is dropped,
@@ -384,8 +441,28 @@ export function CanvasEditor() {
     if (!lay || !breakerSpans(lay).some((b) => b.id === selBreakerId)) setUi({ selection: null });
   }, [design.ok, design.layout, selBreakerId, setUi]);
 
+  // a part picked in detail mode that is no longer on the plan (the frame changed round it) is dropped
+  const selKey = JSON.stringify(ui.selection);
+  useEffect(() => {
+    const s0 = ui.selection;
+    if (!s0) return;
+    const lay = design.ok ? design.layout : undefined;
+    const gone =
+      s0.type === 'post' ? !lay?.posts.some((q) => Math.hypot(q.pt.x - s0.x, q.pt.y - s0.y) < 1)
+      : s0.type === 'offSpot' ? !(project.details?.stumpsOff ?? []).some((q) => Math.hypot(q.x - s0.x, q.y - s0.y) < 1)
+      : s0.type === 'bearer' ? !lay?.bearers.some((b) => b.id === s0.id)
+      : s0.type === 'edgeBoard' ? !ui.detail
+      : false;
+    if (gone) setUi({ selection: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [design.ok, design.layout, project.details, selKey, ui.detail, setUi]);
+
   const select = useCallback(
-    (selection: NonNullable<UISelection>) => setUi(ui.advanced ? { selection, panelTab: 'selection' } : { selection }),
+    (selection: NonNullable<UISelection>) => {
+      // a part picked in detail mode is changed on the bar over the drawing, not in the side panel
+      const part = selection.type === 'edgeBoard' || selection.type === 'post' || selection.type === 'offSpot' || selection.type === 'bearer';
+      setUi(ui.advanced && !part ? { selection, panelTab: 'selection' } : { selection });
+    },
     [setUi, ui.advanced],
   );
 
@@ -433,6 +510,7 @@ export function CanvasEditor() {
       setLivePoly(null);
       setLiveStair(null);
       setLiveBreakers(null);
+      setLiveDetails(undefined);
       setGuides({});
       return;
     }
@@ -450,6 +528,25 @@ export function CanvasEditor() {
       setUi({ selection: null });
       // empty space drags the view, like a map
       dragRef.current = { type: 'pan', sx: e.clientX, sy: e.clientY, ox: view.ox, oy: view.oy, moved: false, tap: false };
+      return;
+    }
+    if (hit.type === 'post' && design.layout) {
+      const lay = design.layout;
+      const post = lay.posts.find((q) => Math.abs(q.pt.x - hit.x) < 0.5 && Math.abs(q.pt.y - hit.y) < 0.5);
+      const b = post ? lay.bearers.find((x) => x.id === post.bearerId) : undefined;
+      select({ type: 'post', x: hit.x, y: hit.y });
+      if (!post || !b) return;
+      // a stump slides along its bearer, from end to end
+      const horiz = Math.abs(b.seg.a.y - b.seg.b.y) < 1;
+      const at = horiz ? hit.x : hit.y;
+      const lo = Math.min(horiz ? b.seg.a.x : b.seg.a.y, horiz ? b.seg.b.x : b.seg.b.y);
+      const hi = Math.max(horiz ? b.seg.a.x : b.seg.a.y, horiz ? b.seg.b.x : b.seg.b.y);
+      const edit = stumpEdits(lay, project.details).get(post.id);
+      dragRef.current = { type: 'post', from: { x: hit.x, y: hit.y }, axis: horiz ? 'x' : 'y', lo, hi, at, last: at, grab: at - (horiz ? w.x : w.y), edit, sx: e.clientX, sy: e.clientY, moved: false };
+      return;
+    }
+    if (hit.type === 'offSpot' || hit.type === 'edgeBoard' || hit.type === 'bearer') {
+      select(hit);
       return;
     }
     if (hit.type === 'vertex') {
@@ -521,7 +618,9 @@ export function CanvasEditor() {
           h?.type === hover?.type &&
           (h as { index?: number } | null)?.index === (hover as { index?: number } | null)?.index &&
           (h as { id?: string } | null)?.id === (hover as { id?: string } | null)?.id &&
-          (h as { end?: string } | null)?.end === (hover as { end?: string } | null)?.end;
+          (h as { end?: string } | null)?.end === (hover as { end?: string } | null)?.end &&
+          (h as { x?: number } | null)?.x === (hover as { x?: number } | null)?.x &&
+          (h as { y?: number } | null)?.y === (hover as { y?: number } | null)?.y;
         if (!same) setHover(h);
       }
       return;
@@ -545,10 +644,19 @@ export function CanvasEditor() {
       setView({ ...viewRef.current, ox: d.ox - (e.clientX - d.sx) / viewRef.current.scale, oy: d.oy - (e.clientY - d.sy) / viewRef.current.scale });
       return;
     }
-    if (d.type === 'edge' || d.type === 'vertex' || d.type === 'breaker' || d.type === 'breakerEnd') {
+    if (d.type === 'edge' || d.type === 'vertex' || d.type === 'breaker' || d.type === 'breakerEnd' || d.type === 'post') {
       // a tap must not move anything: wait for real movement before the live preview starts
       if (!d.moved && Math.abs(e.clientX - d.sx) + Math.abs(e.clientY - d.sy) <= slop) return;
       d.moved = true;
+    }
+    if (d.type === 'post') {
+      const raw = (d.axis === 'x' ? w.x : w.y) + d.grab;
+      const pos = Math.max(d.lo, Math.min(d.hi, shiftRef.current ? Math.round(raw) : snapTo(raw, 10)));
+      if (pos !== d.last) {
+        d.last = pos;
+        setLiveDetails(moveStump(project.details, d.from, d.axis === 'x' ? { x: pos, y: d.from.y } : { x: d.from.x, y: pos }, d.edit));
+      }
+      return;
     }
     if (d.type === 'breaker' && design.layout) {
       const raw = alongOf(design.layout.boardAxis, w) + d.grab;
@@ -658,6 +766,15 @@ export function CanvasEditor() {
       }
       setLiveStair(null);
     }
+    if (d?.type === 'post') {
+      if (d.moved && Math.abs(d.last - d.at) >= 1) {
+        const to = d.axis === 'x' ? { x: d.last, y: d.from.y } : { x: d.from.x, y: d.last };
+        const { from, edit } = d;
+        updateProject((p) => ({ ...p, details: moveStump(p.details, from, to, edit) }), 'h.moveStump');
+        setUi({ selection: { type: 'post', x: to.x, y: to.y } });
+      }
+      setLiveDetails(undefined);
+    }
     if (d?.type === 'breaker' || d?.type === 'breakerEnd') {
       if (d.moved && d.last !== d.orig) {
         const next =
@@ -698,6 +815,23 @@ export function CanvasEditor() {
         const n = project.deck.length;
         const touched = [(sel.index - 1 + n) % n, sel.index];
         if (next) updateProject((p) => applyDeckMove(p, next, touched), 'h.nudge');
+        return true;
+      }
+      if (sel.type === 'post' && design.layout) {
+        const lay = design.layout;
+        const post = lay.posts.find((q) => Math.hypot(q.pt.x - sel.x, q.pt.y - sel.y) < 1);
+        const b = post ? lay.bearers.find((x) => x.id === post.bearerId) : undefined;
+        if (!post || !b) return false;
+        const horiz = Math.abs(b.seg.a.y - b.seg.b.y) < 1;
+        const step = horiz ? dx : dy;
+        if (!step) return false;
+        const lo = Math.min(horiz ? b.seg.a.x : b.seg.a.y, horiz ? b.seg.b.x : b.seg.b.y);
+        const hi = Math.max(horiz ? b.seg.a.x : b.seg.a.y, horiz ? b.seg.b.x : b.seg.b.y);
+        const at = Math.max(lo, Math.min(hi, (horiz ? post.pt.x : post.pt.y) + step));
+        const to = horiz ? { x: at, y: post.pt.y } : { x: post.pt.x, y: at };
+        const edit = stumpEdits(lay, project.details).get(post.id);
+        updateProject((p) => ({ ...p, details: moveStump(p.details, post.pt, to, edit) }), 'h.moveStump', 1200);
+        setUi({ selection: { type: 'post', x: to.x, y: to.y } });
         return true;
       }
       if (sel.type === 'breaker' && design.layout) {
@@ -756,6 +890,22 @@ export function CanvasEditor() {
           const lay = design.layout;
           if (breakerSpans(lay).some((b) => b.id === id)) updateProject((p) => ({ ...p, breakers: removeBreaker(currentBreakers(p, lay), id) }), 'h.deleteBreaker');
           setUi({ selection: null });
+        } else if (ui.selection?.type === 'post' && design.layout) {
+          const { x, y } = ui.selection;
+          const lay = design.layout;
+          const post = lay.posts.find((q) => Math.hypot(q.pt.x - x, q.pt.y - y) < 1);
+          if (post) {
+            const edit = stumpEdits(lay, project.details).get(post.id);
+            updateProject((p) => ({ ...p, details: removeStump(p.details, post.pt, edit) }), 'h.removeStump');
+          }
+          setUi({ selection: null });
+        } else if (ui.selection?.type === 'offSpot') {
+          const spot = { x: ui.selection.x, y: ui.selection.y };
+          updateProject((p) => ({ ...p, details: putBackStump(p.details, spot) }), 'h.putBackStump');
+          setUi({ selection: null });
+        } else if (ui.selection?.type === 'edgeBoard') {
+          const index = ui.selection.index;
+          updateProject((p) => ({ ...p, details: setEdgeBoard(p.details, index, false) }), 'h.edgeBoardOff');
         }
         return;
       }
@@ -793,7 +943,7 @@ export function CanvasEditor() {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('keyup', onKeyUp);
     };
-  }, [design.layout, draft, finishDeck, finishHouse, fit, project.deck, setUi, ui.drawMode, ui.selection, ui.snap, ui.tool, updateProject, zoomAt]);
+  }, [design.layout, draft, finishDeck, finishHouse, fit, project.deck, project.details, setUi, ui.drawMode, ui.selection, ui.snap, ui.tool, updateProject, zoomAt]);
 
   // reset the draft when leaving the drawing tools
   useEffect(() => {
@@ -848,6 +998,23 @@ export function CanvasEditor() {
   const canExtend = (it: { from: number | null; to: number | null }, ext: { from?: number | null; to?: number | null }) => !sameEnd(it.from, ext.from) || !sameEnd(it.to, ext.to);
   const selectedEdge = sel?.type === 'edge' ? deckEdges[sel.index] : undefined;
   const selectedIsHouse = sel?.type === 'edge' ? project.houseEdges.includes(sel.index) : false;
+  // ---- detail mode: the parts changed by hand (as shown, the live preview while a stump is slid) and the one picked ----
+  const shownDetails = liveDetails !== undefined ? liveDetails : project.details;
+  const shownEdits = useMemo(() => stumpEdits(shownLay, shownDetails), [shownLay, shownDetails]);
+  const edgeBoardW = PRODUCT_MAP[design.edgeBoardProductId]?.width ?? 140;
+  const selPost = sel?.type === 'post' && design.ok && design.layout ? design.layout.posts.find((q) => Math.hypot(q.pt.x - sel.x, q.pt.y - sel.y) < 1) : undefined;
+  const selPostBearer = selPost ? design.layout?.bearers.find((b) => b.id === selPost.bearerId) : undefined;
+  const selPostEdit = selPost && design.layout ? stumpEdits(design.layout, project.details).get(selPost.id) : undefined;
+  const selBearer = sel?.type === 'bearer' ? design.layout?.bearers.find((b) => b.id === sel.id) : undefined;
+  const handChanges = detailCount(project.details);
+  /** the strip an edge board covers along a side (inside the deck) */
+  const ebStrip = (index: number): string => {
+    const e = deckEdges[index];
+    if (!e) return '';
+    const ix = -e.outward.x * edgeBoardW;
+    const iy = -e.outward.y * edgeBoardW;
+    return `${e.a.x},${e.a.y} ${e.b.x},${e.b.y} ${e.b.x + ix},${e.b.y + iy} ${e.a.x + ix},${e.a.y + iy}`;
+  };
   const layerFlags = useMemo(
     () => ({
       house: ui.layers.house,
@@ -879,6 +1046,7 @@ export function CanvasEditor() {
     : ui.tool === 'pan' ? t('tool.pan')
     : ui.drawMode && project.deck.length >= 4 ? t('canvas.editExisting')
     : sel?.type === 'breaker' && selBrk ? t('status.hintBreaker')
+    : ui.detail ? t('status.hintDetail')
     : t('status.hintSelect');
   const brkAxis = design.layout?.boardAxis ?? 'x';
   const cursorStyle =
@@ -888,14 +1056,16 @@ export function CanvasEditor() {
     : hover?.type === 'vertex' ? 'move'
     : hover?.type === 'stair' ? 'grab'
     : hover?.type === 'breaker' ? (hover.end ? (brkAxis === 'x' ? 'ns-resize' : 'ew-resize') : brkAxis === 'x' ? 'ew-resize' : 'ns-resize')
+    : hover?.type === 'post' ? 'grab'
+    : hover?.type === 'edgeBoard' || hover?.type === 'offSpot' || hover?.type === 'bearer' ? 'pointer'
     : 'default';
   const lenAnchor = draft.length ? toScreen(draft[draft.length - 1]) : null;
   const zoomPct = Math.round(view.scale * 1000) / 10;
 
-  const enterDraw = () => setUi({ drawMode: true, tool: project.deck.length >= 4 ? 'select' : 'deck', selection: null });
+  const enterDraw = () => setUi({ drawMode: true, detail: false, tool: project.deck.length >= 4 ? 'select' : 'deck', selection: null });
   const redraw = () => {
     if (project.deck.length && !window.confirm(t('tool.clearDeck') + '?')) return;
-    updateProject((p) => ({ ...p, deck: [], houseEdges: [], stairs: [], breakers: null }), 'h.clear');
+    updateProject((p) => ({ ...p, deck: [], houseEdges: [], stairs: [], breakers: null, details: null }), 'h.clear');
     setUi({ tool: 'deck', selection: null, drawMode: true });
   };
   const finishDrawing = () => {
@@ -1001,6 +1171,16 @@ export function CanvasEditor() {
             </button>
             {historyMenu}
             <span className="grow" />
+            {project.deck.length >= 4 && design.ok && (
+              <button
+                className={`tool ${ui.detail ? 'active' : ''}`}
+                onClick={() => setUi({ detail: !ui.detail, selection: null })}
+                aria-pressed={ui.detail}
+                title={t('dm.modeTitle')}
+              >
+                ⚙ {t('dm.mode')}
+              </button>
+            )}
             <button className="tool" onClick={enterDraw}>
               ✎ {t('g.shape.custom')}
             </button>
@@ -1119,7 +1299,44 @@ export function CanvasEditor() {
         {!dragging && sel?.type === 'stair' && design.stairs.find((s) => s.id === sel.id) && !liveStair && (
           <polygon points={design.stairs.find((s) => s.id === sel.id)!.outline.map((p) => `${p.x},${p.y}`).join(' ')} fill="none" stroke={COLORS.select} strokeWidth={sw * 4} />
         )}
-        {ui.tool === 'select' &&
+        {/* detail mode: what was changed by hand, and the part under the pointer or picked */}
+        {ui.detail && !dragging && shownLay && (() => {
+          const live = dragRef.current?.type === 'post' && dragRef.current.moved ? dragRef.current : null;
+          const shownSel: Hover = live ? { type: 'post', ...(live.axis === 'x' ? { x: live.last, y: live.from.y } : { x: live.from.x, y: live.last }) } : sel && sel.type !== 'edge' && sel.type !== 'vertex' ? (sel as Hover) : null;
+          const tint = (strong: boolean) => `rgba(245,158,11,${strong ? 0.3 : 0.18})`;
+          return (
+            <g>
+              {(shownDetails?.noEdgeBoard ?? []).map((i) => (deckEdges[i] ? <polygon key={`neb${i}`} points={ebStrip(i)} fill="none" stroke={COLORS.select} strokeWidth={sw * 1.5} strokeDasharray={`${sw * 8} ${sw * 6}`} /> : null))}
+              {(shownDetails?.stumpsOff ?? []).map((o, i) => {
+                const k = Math.max(50, 7 / view.scale);
+                return (
+                  <g key={`off${i}`}>
+                    <circle cx={o.x} cy={o.y} r={project.rules.stumpOffClear ?? 300} fill="rgba(220,38,38,.06)" stroke="#dc2626" strokeWidth={sw} strokeDasharray={`${sw * 6} ${sw * 5}`} />
+                    <line x1={o.x - k} y1={o.y - k} x2={o.x + k} y2={o.y + k} stroke="#dc2626" strokeWidth={sw * 2.5} />
+                    <line x1={o.x - k} y1={o.y + k} x2={o.x + k} y2={o.y - k} stroke="#dc2626" strokeWidth={sw * 2.5} />
+                  </g>
+                );
+              })}
+              {(shownDetails?.stumpsMoved ?? []).map((m, i) => (
+                <line key={`mv${i}`} x1={m.from.x} y1={m.from.y} x2={m.to.x} y2={m.to.y} stroke={COLORS.select} strokeWidth={sw * 1.5} strokeDasharray={`${sw * 4} ${sw * 4}`} />
+              ))}
+              {shownLay.posts.map((q) => (shownEdits.has(q.id) ? <circle key={`pin${q.id}`} cx={q.pt.x} cy={q.pt.y} r={Math.max(90, 9 / view.scale)} fill="none" stroke={COLORS.select} strokeWidth={sw * 2.2} /> : null))}
+              {[hover, shownSel].map((h, k) => {
+                if (!h) return null;
+                const strong = k === 1;
+                const width = sw * (strong ? 3 : 1.8);
+                if (h.type === 'edgeBoard') return <polygon key={k} points={ebStrip(h.index)} fill={tint(strong)} stroke={COLORS.select} strokeWidth={width} />;
+                if (h.type === 'post' || h.type === 'offSpot') return <circle key={k} cx={h.x} cy={h.y} r={Math.max(110, 12 / view.scale)} fill={tint(strong)} stroke={COLORS.select} strokeWidth={width} />;
+                if (h.type === 'bearer') {
+                  const b = shownLay.bearers.find((x) => x.id === h.id);
+                  return b ? <line key={k} x1={b.seg.a.x} y1={b.seg.a.y} x2={b.seg.b.x} y2={b.seg.b.y} stroke={COLORS.select} strokeWidth={Math.max(90, 10 / view.scale)} strokeLinecap="round" opacity={strong ? 0.45 : 0.25} /> : null;
+                }
+                return null;
+              })}
+            </g>
+          );
+        })()}
+        {ui.tool === 'select' && !ui.detail &&
           shownPoly.map((p, i) => {
             const isSel = sel?.type === 'vertex' && sel.index === i;
             const isHover = hover?.type === 'vertex' && hover.index === i;
@@ -1198,7 +1415,7 @@ export function CanvasEditor() {
         </div>
       )}
 
-      {!ui.drawMode && !dragging && design.ok &&
+      {!ui.drawMode && !ui.detail && !dragging && design.ok &&
         deckEdges.map((e) => {
           if (e.length < 250 || e.length * view.scale < 70) return null;
           const off = 42 / view.scale;
@@ -1376,6 +1593,107 @@ export function CanvasEditor() {
                 {t('canvas.autoBreakers')}
               </button>
             )}
+          </div>
+        );
+      })()}
+      {ui.detail && !ui.drawMode && design.ok && design.layout && (() => {
+        const setDetails = (fn: (d: typeof project.details) => typeof project.details, label: string) => updateProject((p) => ({ ...p, details: fn(p.details) }), label);
+        if (sel?.type === 'edgeBoard' && deckEdges[sel.index]) {
+          const index = sel.index;
+          const off = (project.details?.noEdgeBoard ?? []).includes(index);
+          return (
+            <div className="edgebar">
+              <span>{t('dm.edgeBoard', { n: index + 1, len: Math.round(deckEdges[index].length) })}</span>
+              {off ? (
+                <>
+                  <span className="muted small">{t('dm.edgeBoardOffNote')}</span>
+                  <button className="tool primary" onClick={() => setDetails((d) => setEdgeBoard(d, index, true), 'h.edgeBoardOn')}>
+                    {t('dm.edgeBoardOn')}
+                  </button>
+                </>
+              ) : (
+                <button className="tool danger" onClick={() => setDetails((d) => setEdgeBoard(d, index, false), 'h.edgeBoardOff')}>
+                  {t('dm.edgeBoardOff')}
+                </button>
+              )}
+            </div>
+          );
+        }
+        if (sel?.type === 'post' && selPost && selPostBearer) {
+          const b = selPostBearer;
+          const horiz = Math.abs(b.seg.a.y - b.seg.b.y) < 1;
+          const lo = Math.min(horiz ? b.seg.a.x : b.seg.a.y, horiz ? b.seg.b.x : b.seg.b.y);
+          const hi = Math.max(horiz ? b.seg.a.x : b.seg.a.y, horiz ? b.seg.b.x : b.seg.b.y);
+          const at = horiz ? selPost.pt.x : selPost.pt.y;
+          const post = selPost;
+          const edit = selPostEdit;
+          const moveTo = (v: number) => {
+            const p1 = Math.max(lo, Math.min(hi, lo + v));
+            const to = horiz ? { x: p1, y: post.pt.y } : { x: post.pt.x, y: p1 };
+            setDetails((d) => moveStump(d, post.pt, to, edit), 'h.moveStump');
+            setUi({ selection: { type: 'post', x: to.x, y: to.y } });
+          };
+          return (
+            <div className="edgebar">
+              <span>
+                {t('dm.stump', { id: post.id, bearer: b.id })}
+                {edit ? ` · ${t(edit.kind === 'added' ? 'dm.stumpAdded' : 'dm.stumpMoved')}` : ''}
+              </span>
+              <label className="inline">
+                {t('dm.along')}
+                <NumInline value={Math.round(at - lo)} step={10} min={0} onCommit={moveTo} />
+              </label>
+              <span className="muted small phone-hide">{t('dm.dragHint')}</span>
+              {edit?.kind === 'moved' && (
+                <button className="tool" onClick={() => { setDetails((d) => unmoveStump(d, edit), 'h.unmoveStump'); setUi({ selection: null }); }}>
+                  {t('dm.auto')}
+                </button>
+              )}
+              <button className="tool danger" onClick={() => { setDetails((d) => removeStump(d, post.pt, edit), 'h.removeStump'); setUi({ selection: null }); }}>
+                {t('dm.removeStump')}
+              </button>
+            </div>
+          );
+        }
+        if (sel?.type === 'offSpot') {
+          const spot = { x: sel.x, y: sel.y };
+          return (
+            <div className="edgebar">
+              <span>{t('dm.offSpot', { r: project.rules.stumpOffClear ?? 300 })}</span>
+              <button className="tool primary" onClick={() => { setDetails((d) => putBackStump(d, spot), 'h.putBackStump'); setUi({ selection: null }); }}>
+                {t('dm.putBack')}
+              </button>
+            </div>
+          );
+        }
+        if (sel?.type === 'bearer' && selBearer) {
+          const b = selBearer;
+          const horiz = Math.abs(b.seg.a.y - b.seg.b.y) < 1;
+          const at = horiz ? { x: snapTo(sel.x, 10), y: b.seg.a.y } : { x: b.seg.a.x, y: snapTo(sel.y, 10) };
+          return (
+            <div className="edgebar">
+              <span>{t('dm.bearer', { id: b.id, len: Math.round(b.length), n: b.posts.length })}</span>
+              <button className="tool primary" onClick={() => { setDetails((d) => addStump(d, at), 'h.addStump'); setUi({ selection: { type: 'post', x: at.x, y: at.y } }); }}>
+                {t('dm.addStump')}
+              </button>
+            </div>
+          );
+        }
+        if (sel) return null;
+        return (
+          <div className="edgebar">
+            <span>{t('dm.hint')}</span>
+            {handChanges > 0 && (
+              <>
+                <span className="muted">{t('dm.count', { n: handChanges })}</span>
+                <button className="tool" onClick={() => setDetails(() => null, 'h.detailsReset')}>
+                  {t('dm.resetAll')}
+                </button>
+              </>
+            )}
+            <button className="tool primary" onClick={() => setUi({ detail: false, selection: null })}>
+              {t('dm.done')}
+            </button>
           </div>
         );
       })()}

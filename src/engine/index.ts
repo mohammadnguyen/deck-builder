@@ -172,6 +172,13 @@ export function frameCandidates(rules: RuleSet): FrameSizes[] {
 }
 
 function autoFrame(project: Project): DesignResult {
+  // stumps changed by hand tune the frame chosen, they do not choose it (a frame chosen again round them would move
+  // the bearer lines they stand on): the frame is chosen without them and laid out with them
+  const d = project.details;
+  if (d && (d.stumpsOff?.length || d.stumpsAdded?.length || d.stumpsMoved?.length)) {
+    const { frame } = autoFrame({ ...project, details: d.noEdgeBoard?.length ? { noEdgeBoard: d.noEdgeBoard } : null });
+    return designWith({ ...project, params: { ...project.params, joistProductId: frame.joistProductId, bearerProductId: frame.bearerProductId, bearerLaminations: frame.bearerLaminations } }, frame);
+  }
   const { rules } = project;
   const std = standardFrame(rules);
   const labour = rules.stumpLabour ?? 40;
@@ -320,6 +327,9 @@ function setup(project: Project) {
     postWidth: postW,
     simpleCutting: rules.cutting === 'cheapest' ? undefined : { joist: extraLength(joist), bearer: extraLength(bearer) },
     slabs: (project.slabs ?? []).map((s) => normalizePolygon(s.poly)),
+    noEdgeBoard: project.details?.noEdgeBoard ?? [],
+    stumpsOff: [...(project.details?.stumpsOff ?? []), ...(project.details?.stumpsMoved ?? []).map((m) => m.from)],
+    stumpsAdded: [...(project.details?.stumpsAdded ?? []), ...(project.details?.stumpsMoved ?? []).map((m) => m.to)],
   };
   return {
     params, rules, poly, valid, decking, joist, bearer, flush, boardT, joistD, bearerD, levels, concreteId,

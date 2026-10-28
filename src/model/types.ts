@@ -159,6 +159,8 @@ export interface RuleSet {
   pedestalScrews?: number;
   slabPadSize?: number;
   slabPadDepth?: number;
+  /** a stump taken out by hand: no new hole within this of its spot */
+  stumpOffClear?: number;
   braceHeight: number;
   engineerHeight: number;
   lowDeckClearance: number;
@@ -315,6 +317,18 @@ export interface OrderEdits {
   note?: string;
 }
 
+/** Hand changes to single parts, made in detail mode; everything else is laid out round them. */
+export interface DetailEdits {
+  /** exposed edges (by index) without an edge board: the boards run out to the edge there */
+  noEdgeBoard?: number[];
+  /** spots a stump was taken out of: no stump goes within the rule's clearance of them */
+  stumpsOff?: Pt[];
+  /** stumps put in by hand, each on a bearer line */
+  stumpsAdded?: Pt[];
+  /** stumps moved by hand along their bearer: the spot they left stays clear, they stand where they were put */
+  stumpsMoved?: { from: Pt; to: Pt }[];
+}
+
 /** Hand-placed breakers, valid for the board direction they were laid out for. */
 export interface BreakerLayout {
   axis: Axis;
@@ -344,4 +358,6 @@ export interface Project {
   order?: OrderEdits | null;
   /** existing concrete under part of the deck: the joists sit on pedestals there, no bearers or stumps */
   slabs?: SlabArea[];
+  /** parts changed by hand in detail mode; null / absent = all laid out by the rules */
+  details?: DetailEdits | null;
 }

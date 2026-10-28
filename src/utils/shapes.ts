@@ -231,7 +231,7 @@ export function setEdgeLengthAnchored(poly: Pt[], i: number, length: number, hou
 }
 
 /** Edge-indexed data after an outline change: unchanged with the same corners (edges only translate), remapped by geometry otherwise. */
-export function carryEdgeData(p: Project, deck: Pt[]): Partial<Pick<Project, 'houseEdges' | 'stairs' | 'params'>> {
+export function carryEdgeData(p: Project, deck: Pt[]): Partial<Pick<Project, 'houseEdges' | 'stairs' | 'params' | 'details'>> {
   return deck.length === p.deck.length ? {} : remapEdgeData(p, deck);
 }
 
@@ -265,10 +265,10 @@ export function shiftHouseLine(house: Pt[][], axis: 'x' | 'y', oldCoord: number,
 }
 
 /**
- * Carry edge-indexed data (house flags, stairs, balustrade overrides) across an outline change by
- * geometry: an old edge maps to every new edge lying on the same line that overlaps it.
+ * Carry edge-indexed data (house flags, stairs, balustrade overrides, edge boards taken off) across an outline change
+ * by geometry: an old edge maps to every new edge lying on the same line that overlaps it.
  */
-export function remapEdgeData(p: Project, deck: Pt[]): Pick<Project, 'houseEdges' | 'stairs' | 'params'> {
+export function remapEdgeData(p: Project, deck: Pt[]): Pick<Project, 'houseEdges' | 'stairs' | 'params' | 'details'> {
   const oldE = edges(p.deck);
   const newE = edges(deck);
   const span = (e: Edge): [number, number] => (e.axis === 'x' ? [Math.min(e.a.x, e.b.x), Math.max(e.a.x, e.b.x)] : [Math.min(e.a.y, e.b.y), Math.max(e.a.y, e.b.y)]);
@@ -297,7 +297,10 @@ export function remapEdgeData(p: Project, deck: Pt[]): Pick<Project, 'houseEdges
   for (const [k, v] of Object.entries(p.params.balustrade.edgeOverride)) {
     for (const e of overlapping(oldE[Number(k)])) edgeOverride[String(e.index)] = v;
   }
-  return { houseEdges, stairs, params: { ...p.params, balustrade: { ...p.params.balustrade, edgeOverride } } };
+  const details = p.details?.noEdgeBoard?.length
+    ? { ...p.details, noEdgeBoard: [...new Set(p.details.noEdgeBoard.flatMap((i) => overlapping(oldE[i]).map((e) => e.index)))].sort((a, b) => a - b) }
+    : p.details;
+  return { houseEdges, stairs, params: { ...p.params, balustrade: { ...p.params.balustrade, edgeOverride } }, details };
 }
 
 /**
@@ -364,5 +367,11 @@ export function mirrorProject(p: Project): Project {
     return e && e.axis === 'x' ? { ...s, offset: Math.max(0, e.length - s.offset - s.width) } : s;
   });
   const house = p.house.map((pl) => pl.map((q) => ({ x: mx(q.x), y: q.y })));
-  return { ...p, deck, stairs, house, breakers: mirrorBreakers(p.breakers, mx) };
+  const m = (q: Pt): Pt => ({ x: mx(q.x), y: q.y });
+  // slabs and stumps changed by hand go with the deck
+  const slabs = p.slabs?.map((s) => ({ ...s, poly: s.poly.map(m) }));
+  const details = p.details
+    ? { ...p.details, stumpsOff: p.details.stumpsOff?.map(m), stumpsAdded: p.details.stumpsAdded?.map(m), stumpsMoved: p.details.stumpsMoved?.map((s) => ({ from: m(s.from), to: m(s.to) })) }
+    : p.details;
+  return { ...p, deck, stairs, house, breakers: mirrorBreakers(p.breakers, mx), ...(slabs ? { slabs } : {}), details };
 }

@@ -67,6 +67,7 @@ export function GuidePanel() {
         house: wallKind === 'none' ? [] : [housePolylineFor(deck, 0)],
         stairs: [],
         breakers: null,
+        details: null,
         params: { ...pr.params, balustrade: { ...pr.params.balustrade, edgeOverride: {} } },
       };
       for (let i = 0; i < pr.stairs.length; i++) next = addStairOnLongestEdge(next);

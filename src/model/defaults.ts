@@ -63,6 +63,7 @@ export function defaultRules(): RuleSet {
     pedestalScrews: 2,
     slabPadSize: 300,
     slabPadDepth: 200,
+    stumpOffClear: 300,
     braceHeight: 1200,
     engineerHeight: 3000,
     lowDeckClearance: 400,

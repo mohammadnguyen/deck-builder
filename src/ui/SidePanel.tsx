@@ -493,7 +493,7 @@ function RulesPanel() {
     'kerf', 'staggerOffset', 'minBoardPiece', 'breakerMinSaving', 'boardEndAllowance', 'joistEndAllowance', 'screwsPerCrossing', 'boltsPerPost',
     'ledgerBoltSpacing', 'oilCoverage', 'oilCoats', 'stirrupLift', 'concreteBagYield', 'flushHouseInset', 'battenScrewsPerPost',
     'hangerNails', 'skewNailsPerCrossing', 'lapNails', 'joistSpacingTarget', 'slabEdgeInset', 'slabStumpClear', 'pedestalScrews',
-    'slabPadSize', 'slabPadDepth',
+    'slabPadSize', 'slabPadDepth', 'stumpOffClear',
   ];
   const stairKeys = ['minRiser', 'maxRiser', 'targetRiser', 'minGoing', 'maxGoing', 'min2RG', 'max2RG', 'maxRisers', 'stringerSpacing', 'nosing'] as const;
   const framingOpts = FRAMING_PRODUCTS.map((d) => ({ value: d.id, label: productName(d, lang) }));

@@ -20,7 +20,7 @@ export function exportProjectJson(project: Project): void {
   downloadBlob(`${safeName(project.name)}.deck.json`, new Blob([JSON.stringify(project, null, 2)], { type: 'application/json' }));
 }
 
-function safeName(s: string): string {
+export function safeName(s: string): string {
   return (s || 'deck').replace(/[^\w一-龥-]+/g, '_');
 }
 

@@ -50,6 +50,8 @@ export interface UIState {
   drawMode: boolean;
   /** detail mode: the parts of the frame and boards are picked and changed one by one (the outline stays as it is) */
   detail: boolean;
+  /** the drawings asked for as a PDF from elsewhere (when): the drawings page makes it once it is open */
+  pdfAsked?: number;
 }
 
 /** what undo / redo / jump just did, so the canvas can confirm it in a toast */

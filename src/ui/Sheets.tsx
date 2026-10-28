@@ -1,11 +1,12 @@
-import { Fragment, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
 import type { DesignResult } from '../engine';
 import { productName, useT } from '../i18n';
 import { PRODUCT_MAP, sizeLabel } from '../model/catalog';
 import type { Project } from '../model/types';
 import { useApp } from '../state';
-import { exportCsv, exportProjectJson, exportXlsx } from '../utils/export';
+import { downloadBlob, exportCsv, exportProjectJson, exportXlsx, safeName } from '../utils/export';
 import { stockLabel, today } from '../utils/format';
+import { sheetsPdf } from '../utils/pdf';
 import { BomTable } from './BomTable';
 import { CutDiagrams, isFramingCut } from './CutDiagram';
 import { DetailsGrid } from './Details';
@@ -103,11 +104,107 @@ function Legend({ items }: { items: { color: string; label: string; shape?: 'lin
   );
 }
 
+/** a PDF made of the sheets, and its file */
+interface MadePdf {
+  url: string;
+  file: File;
+}
+
+/**
+ * The drawings as a PDF file, made here: Safari's print cannot be counted on for it. A computer saves it at once; a
+ * phone or tablet gets buttons to save or share it (saving could leave the app, so it is the person's tap).
+ */
+function usePdf(sheetsRef: RefObject<HTMLDivElement>, project: Project) {
+  const { t } = useT();
+  const [making, setMaking] = useState<number | null>(null);
+  const [made, setMade] = useState<MadePdf | null>(null);
+  const [failed, setFailed] = useState(false);
+  const busy = useRef(false);
+  // the file's address goes with it: a new PDF made, or the page left
+  useEffect(
+    () => () => {
+      if (made) URL.revokeObjectURL(made.url);
+    },
+    [made],
+  );
+  const make = useCallback(async () => {
+    const box = sheetsRef.current;
+    if (!box || busy.current) return;
+    busy.current = true;
+    setFailed(false);
+    setMaking(0);
+    try {
+      const name = `${safeName(project.name)}-${t('pdf.file')}-${today()}.pdf`;
+      const blob = await sheetsPdf([...box.querySelectorAll<HTMLElement>('.sheet')], `${project.name} · ${t('pdf.file')}`, setMaking);
+      const file = new File([blob], name, { type: 'application/pdf' });
+      setMade({ url: URL.createObjectURL(file), file });
+      if (navigator.maxTouchPoints === 0) downloadBlob(name, blob);
+    } catch {
+      setFailed(true);
+    } finally {
+      busy.current = false;
+      setMaking(null);
+    }
+  }, [sheetsRef, project.name, t]);
+  return { making, made, failed, make };
+}
+
+/** Safari and every iPhone browser: their print lays the A3 sheets on their own paper, cut and shrunk, so the
+ *  drawings are printed from the PDF there */
+const printCutsSheets = (): boolean => /AppleWebKit/.test(navigator.userAgent) && !/(Chrome|Chromium|Edg|OPR)\//.test(navigator.userAgent);
+
+const canShareFile = (file: File): boolean => typeof navigator.canShare === 'function' && navigator.canShare({ files: [file] });
+
+function PdfBar({ making, made, failed, total }: { making: number | null; made: MadePdf | null; failed: boolean; total: number }) {
+  const { t } = useT();
+  if (making === null && !made && !failed) return null;
+  const share = async (file: File) => {
+    try {
+      await navigator.share({ files: [file] });
+    } catch {
+      /* closed, or the share was not allowed: the save button stays */
+    }
+  };
+  return (
+    <div className="pdf-bar no-print" role="status">
+      {making !== null ? (
+        <span>{t('pdf.making', { n: Math.min(making + 1, total), total })}</span>
+      ) : failed ? (
+        <span className="pdf-failed">{t('pdf.failed')}</span>
+      ) : (
+        made && (
+          <>
+            <span>{t('pdf.ready', { pages: total, mb: (made.file.size / 1e6).toFixed(1) })}</span>
+            <a className="btn primary" href={made.url} download={made.file.name}>
+              {t('pdf.save')}
+            </a>
+            {canShareFile(made.file) && (
+              <button className="btn" onClick={() => void share(made.file)}>
+                {t('pdf.share')}
+              </button>
+            )}
+            {navigator.maxTouchPoints > 0 ? <span className="muted">{t('pdf.phoneHint')}</span> : printCutsSheets() && <span className="muted">{t('pdf.printHint')}</span>}
+          </>
+        )
+      )}
+    </div>
+  );
+}
+
 export function SheetsView() {
-  const { project, design, lang, setUi } = useApp();
+  const { project, design, lang, ui, setUi } = useApp();
   const { t } = useT();
   const wrapRef = useRef<HTMLDivElement>(null);
+  const sheetsRef = useRef<HTMLDivElement>(null);
   const [zoom, setZoom] = useState(0.6);
+  const pdf = usePdf(sheetsRef, project);
+  // asked for from the results panel: made as soon as the sheets are here
+  useEffect(() => {
+    if (!ui.pdfAsked) return;
+    setUi({ pdfAsked: undefined });
+    void pdf.make();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ui.pdfAsked]);
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
@@ -155,9 +252,14 @@ export function SheetsView() {
   return (
     <div className="sheets-wrap" ref={wrapRef}>
       <div className="sheets-toolbar no-print">
-        <button className="btn primary" onClick={() => window.print()}>
-          {t('app.print')}
+        <button className="btn primary" onClick={() => void pdf.make()} disabled={pdf.making !== null}>
+          {t('pdf.make')}
         </button>
+        {!printCutsSheets() && (
+          <button className="btn" onClick={() => window.print()}>
+            {t('app.print')}
+          </button>
+        )}
         <button className="btn" onClick={() => void exportXlsx(project, design, lang)}>
           {t('app.exportXlsx')}
         </button>
@@ -169,7 +271,8 @@ export function SheetsView() {
         </button>
         <span className="muted">{scaleLabel}</span>
       </div>
-      <div className="sheets" style={{ zoom }}>
+      <PdfBar making={pdf.making} made={pdf.made} failed={pdf.failed} total={total} />
+      <div className="sheets" style={{ zoom }} ref={sheetsRef}>
         <Sheet n={1} total={total} title={t('sheet.setout')} project={project} scale={scaleLabel}>
           <div className="plan-area">
             <PlanSvg project={project} design={design} S={S} vb={vb} layers={{ frame: false, boards: false, balustrade: false, fascia: false, stairs: true, posts: true, dims: false, grid: true, labels: false }} />
@@ -378,7 +481,7 @@ export function SheetsView() {
           <div className="cut-sheet">
             <p className="small">{t('cut.introDrawn')}</p>
             {lay.rips.length > 0 && <p className="small">{lay.rips.map((r) => t('cut.rip', { n: r.boards, width: r.width })).join(t('list.sep'))}</p>}
-            <CutDiagrams design={design} project={project} />
+            <CutDiagrams design={design} project={project} columns={2} />
           </div>
         </Sheet>
 
